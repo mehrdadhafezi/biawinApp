@@ -8,25 +8,57 @@
 | Staging | `https://staging.biawin.ir` / `https://api-staging.biawin.ir` | `production` (with `STAGING_TEST_AUTH=true`) | [08-staging-deployment.md](08-staging-deployment.md) |
 | Production | `https://biawin.ir` / `https://api.biawin.ir` | `production` | Not live yet |
 
-## One-time server setup (manual — needs a human at the WHM/cPanel UI)
+## One-time server setup
 
-These steps cannot be done over SSH/CLI and need to be performed once by
-whoever has WHM access:
+Done (2026-08-22): both subdomains created under the `biawin` cPanel account
+via `uapi SubDomain addsubdomain`, and reverse-proxied to their backend ports
+using `mod_proxy` — **not** `.htaccess`'s `RewriteRule ... [P]`, which this
+server silently ignores for reasons never fully root-caused (AllowOverride
+is globally `All`, yet even an intentionally-invalid `.htaccess` produces no
+error, on every vhost tested — this appears to be a server-wide behavior,
+not specific to these two subdomains). The proven-working pattern instead
+lives in cPanel's official per-vhost include hook, mirroring an existing
+working example on this same server (`merchant-api.rominaclub.ir`):
 
-1. **DNS** — confirm `staging.biawin.ir` and `api-staging.biawin.ir` both
-   resolve to `62.204.61.18` (already reported as done).
-2. **Create two vhosts in WHM** (or via LiteSpeed WebAdmin), each a reverse
-   proxy:
-   - `staging.biawin.ir` → `http://127.0.0.1:3001`
-   - `api-staging.biawin.ir` → `http://127.0.0.1:4001`
-   In LiteSpeed's rewrite/proxy config, the equivalent rule is:
-   ```
-   RewriteEngine On
-   RewriteRule ^/(.*)$ http://127.0.0.1:3001/$1 [P,L]
-   ```
-   (replace `3001` with `4001` for the API vhost).
-3. **Issue SSL** for both domains via WHM's AutoSSL (Let's Encrypt) — no
-   manual certificate handling needed once the vhosts exist and DNS resolves.
+```
+/etc/apache2/conf.d/userdata/std/2_4/biawin/staging.biawin.ir/proxy.conf
+/etc/apache2/conf.d/userdata/ssl/2_4/biawin/staging.biawin.ir/proxy.conf
+/etc/apache2/conf.d/userdata/std/2_4/biawin/api-staging.biawin.ir/proxy.conf
+/etc/apache2/conf.d/userdata/ssl/2_4/biawin/api-staging.biawin.ir/proxy.conf
+```
+
+Each `proxy.conf` (the `ssl/` copy additionally has `SSLProxyEngine On` first):
+
+```apache
+ProxyPass /.well-known/acme-challenge/ !
+ProxyPreserveHost On
+ProxyPass / http://127.0.0.1:3001/
+ProxyPassReverse / http://127.0.0.1:3001/
+```
+
+(`4001` for `api-staging.biawin.ir`.) The `/.well-known/acme-challenge/`
+exclusion is required — without it, `ProxyPass /` would swallow AutoSSL's
+own HTTP-01 domain-validation requests and every future cert renewal would
+fail. These files survive `/scripts/rebuildhttpdconf` (cPanel's official
+customization mechanism) — after editing them, always run:
+
+```bash
+/scripts/rebuildhttpdconf && /scripts/restartsrv_httpd
+```
+
+**Remaining manual step — DNS**: `staging.biawin.ir` / `api-staging.biawin.ir`
+currently resolve (confirmed via `dig @8.8.8.8`) to `185.226.140.40` /
+`185.226.142.42` — MizbanCDN, **not** `62.204.61.18`. `biawin.ir`'s
+authoritative nameservers are MizbanCDN's (`d.dns.mizbancdn.com/net`), so DNS
+for these two subdomains must be corrected in MizbanCDN's own panel (DNS-only
+record, or origin IP if using their proxy/CDN mode), not on this WHM server.
+AutoSSL (`/usr/local/cpanel/bin/autossl_check --user=biawin`) already
+confirmed everything else is ready — CAA records, CA authorization, and both
+vhosts all pass; the only failure is `TOTAL_DCV_FAILURE` because Let's
+Encrypt's validation request lands on MizbanCDN's IP instead of this server.
+Once DNS is corrected, re-run the same `autossl_check` command (or wait for
+cPanel's next scheduled AutoSSL pass) and both certs will issue automatically
+— no further server-side action needed.
 4. **Clone the repo** on the server:
    ```bash
    mkdir -p /srv/biawin-staging

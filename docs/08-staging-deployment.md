@@ -138,15 +138,17 @@ silently drift.
 ## LiteSpeed / domains
 
 Nginx is not used — this server runs LiteSpeed Enterprise via WHM/cPanel.
-Two reverse-proxy vhosts are needed (exact WHM steps in
-docs/10-release-process.md since they require manual action in the WHM UI):
+Both subdomains exist as vhosts under the `biawin` cPanel account, reverse
+proxying via `mod_proxy` (`ProxyPass`/`ProxyPassReverse` in cPanel's
+per-vhost include hook — see [10-release-process.md](10-release-process.md)
+"One-time server setup" for the exact files and why `.htaccess`-based
+proxying doesn't work on this server):
 
 - `staging.biawin.ir` → reverse proxy → `http://127.0.0.1:3001`
 - `api-staging.biawin.ir` → reverse proxy → `http://127.0.0.1:4001`
 
-Both need a Let's Encrypt (AutoSSL) certificate issued through WHM once DNS
-(`staging.biawin.ir` / `api-staging.biawin.ir` → `62.204.61.18`) has
-propagated.
+Both are pending a Let's Encrypt (AutoSSL) certificate — blocked purely on
+DNS (see 10-release-process.md), not on any server-side config.
 
 ## CI/CD
 
