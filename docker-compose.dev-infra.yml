@@ -1,0 +1,78 @@
+name: biawin
+
+# Canonical infra-only Development stack: `pnpm dev:infra` (== `docker compose
+# -f docker-compose.dev-infra.yml up -d`). Backend/Web run on the Windows host
+# via `pnpm dev:backend` / `pnpm dev:web` — see docs/05-development-guide.md.
+#
+# Postgres is published on host port 55433 (NOT 5432). This is deliberate:
+# a native PostgreSQL install on the Windows host can already be listening on
+# 5432, silently intercepting connections meant for this container and
+# producing a P1000 "Authentication failed" from Prisma that looks like a
+# credential problem but is actually a port collision (docs/07-security.md /
+# docs/05-development-guide.md "Root Cause: P1000").
+#
+# `docker-compose.yml` (full containerized stack, optional) `include:`s this
+# file rather than redefining these services — one source of truth for ports.
+
+services:
+  postgres:
+    image: postgres:16-alpine
+    environment:
+      POSTGRES_USER: biawin
+      POSTGRES_PASSWORD: biawin
+      POSTGRES_DB: biawin
+    ports:
+      - "55433:5432" # host:container — container-internal callers still use 5432
+    volumes:
+      - postgres-data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U biawin"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+
+  redis:
+    image: redis:7-alpine
+    ports:
+      - "6379:6379"
+    volumes:
+      - redis-data:/data
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+
+  minio:
+    image: minio/minio:latest
+    command: server /data --console-address ":9001"
+    environment:
+      MINIO_ROOT_USER: biawin
+      MINIO_ROOT_PASSWORD: biawin12345
+    ports:
+      - "9000:9000" # S3 API
+      - "9001:9001" # Web console
+    volumes:
+      - minio-data:/data
+    healthcheck:
+      test: ["CMD", "mc", "ready", "local"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+
+  minio-init:
+    image: minio/mc:latest
+    depends_on:
+      minio:
+        condition: service_healthy
+    entrypoint: >
+      /bin/sh -c "
+      mc alias set local http://minio:9000 biawin biawin12345 &&
+      mc mb -p local/biawin-dev &&
+      mc anonymous set download local/biawin-dev
+      "
+
+volumes:
+  postgres-data:
+  redis-data:
+  minio-data:

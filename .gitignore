@@ -1,0 +1,55 @@
+# Dependencies
+node_modules/
+.pnpm-store/
+
+# Build outputs
+.next/
+out/
+dist/
+build/
+.expo/
+.expo-shared/
+web-build/
+
+# Turborepo
+.turbo/
+
+# Env files — anything named .env* is ignored by default; only *.env.example
+# files are ever meant to be committed (see docs/09-git-workflow.md).
+.env*
+!.env.example
+!**/.env.example
+
+# Prisma
+backend/generated/
+
+# Logs
+*.log
+npm-debug.log*
+pnpm-debug.log*
+
+# Editor / OS
+.DS_Store
+Thumbs.db
+.vscode/*
+!.vscode/extensions.json
+.idea/
+
+# Testing
+coverage/
+
+# Misc
+*.tsbuildinfo
+.eslintcache
+
+# Credentials / secrets — never committed under any name
+*.pem
+*.key
+*.p12
+*.pfx
+credentials.json
+secrets.*
+*.secret
+
+# Claude local workspace
+.claude/

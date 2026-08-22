@@ -1,0 +1,36 @@
+import { Test, type TestingModule } from '@nestjs/testing';
+import { PrismaService } from '../../infra/prisma/prisma.service';
+import { MembershipController } from './membership.controller';
+import { MembershipService } from './membership.service';
+
+describe('MembershipController', () => {
+  let controller: MembershipController;
+
+  beforeEach(async () => {
+    const module: TestingModule = await Test.createTestingModule({
+      controllers: [MembershipController],
+      providers: [
+        MembershipService,
+        {
+          provide: PrismaService,
+          useValue: {
+            membership: {
+              findMany: jest.fn().mockResolvedValue([]),
+              count: jest.fn().mockResolvedValue(0),
+              findFirst: jest.fn(),
+            },
+            $transaction: jest.fn((ops: Promise<unknown>[]) =>
+              Promise.all(ops),
+            ),
+          },
+        },
+      ],
+    }).compile();
+
+    controller = module.get(MembershipController);
+  });
+
+  it('should be defined', () => {
+    expect(controller).toBeDefined();
+  });
+});

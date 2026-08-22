@@ -1,0 +1,107 @@
+name: biawin
+
+# Full containerized stack (optional/secondary path — see docs/05-development-guide.md
+# for why the RECOMMENDED daily flow is `pnpm dev:infra` + host `pnpm dev:backend`/`dev:web`).
+# `docker compose up -d` here still brings up everything, backend+web included.
+#
+# Includes docker-compose.dev-infra.yml rather than redefining postgres/redis/
+# minio — one source of truth for ports/credentials (avoids the exact class of
+# bug that caused the P1000 port-collision incident: two compose files quietly
+# disagreeing about which host port Postgres owns).
+
+include:
+  - docker-compose.dev-infra.yml
+
+services:
+  backend:
+    image: node:20-alpine
+    working_dir: /workspace
+    volumes:
+      - .:/workspace
+      # Anonymous/named volumes OVER node_modules: the repo bind mount above
+      # would otherwise leak the host's node_modules (built for Windows/macOS)
+      # into this Linux container, breaking any native/platform-specific
+      # package (this bit us once — Next.js failed with MODULE_NOT_FOUND, and
+      # pnpm hung on an interactive "reinstall?" prompt). Each of these gets
+      # its own Linux-native node_modules, persisted in a named volume so
+      # repeat starts don't reinstall from scratch.
+      - backend_root_node_modules:/workspace/node_modules
+      - backend_node_modules:/workspace/backend/node_modules
+      - backend_types_node_modules:/workspace/packages/types/node_modules
+      - backend_config_node_modules:/workspace/packages/config/node_modules
+    command: >
+      sh -c "corepack enable &&
+      pnpm install --filter @biawin/backend... &&
+      pnpm --filter @biawin/backend prisma:generate &&
+      pnpm --filter @biawin/backend exec prisma migrate deploy &&
+      pnpm --filter @biawin/backend exec prisma db seed &&
+      pnpm --filter @biawin/backend dev"
+    environment:
+      CI: "1" # never let any tool fall into an interactive prompt (defense in depth)
+      NODE_ENV: development
+      PORT: 4000
+      # Container-internal DNS names (postgres/redis/minio) — NOT the host
+      # ports above. Never mix this with backend/.env's 127.0.0.1 values.
+      DATABASE_URL: postgresql://biawin:biawin@postgres:5432/biawin?schema=public
+      REDIS_URL: redis://redis:6379
+      JWT_ACCESS_SECRET: dev-access-secret-change-me-please
+      JWT_ACCESS_TTL: 15m
+      JWT_REFRESH_SECRET: dev-refresh-secret-change-me-please
+      JWT_REFRESH_TTL_DAYS: 30
+      OTP_TTL_SECONDS: 120
+      OTP_MAX_ATTEMPTS: 5
+      OTP_MAX_PER_HOUR: 5
+      SIGNUP_TOKEN_TTL_SECONDS: 600
+      SMS_PROVIDER: mock
+      FARAZ_USERNAME: ""
+      FARAZ_PASSWORD: ""
+      FARAZ_SENDER: ""
+      PAYMENT_PROVIDER: zibal
+      ZIBAL_MERCHANT_ID: zibal-dev-merchant
+      ZARINPAL_MERCHANT_ID: ""
+      STORAGE_ENDPOINT: http://minio:9000
+      STORAGE_REGION: us-east-1
+      STORAGE_ACCESS_KEY: biawin
+      STORAGE_SECRET_KEY: biawin12345
+      STORAGE_BUCKET: biawin-dev
+      STORAGE_FORCE_PATH_STYLE: "true"
+      CORS_ORIGINS: http://localhost:3000
+    ports:
+      - "4000:4000"
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+      minio-init:
+        condition: service_completed_successfully
+
+  web:
+    image: node:20-alpine
+    working_dir: /workspace
+    volumes:
+      - .:/workspace
+      - web_root_node_modules:/workspace/node_modules
+      - web_node_modules:/workspace/apps/web/node_modules
+      - web_types_node_modules:/workspace/packages/types/node_modules
+      - web_ui_node_modules:/workspace/packages/ui/node_modules
+      - web_config_node_modules:/workspace/packages/config/node_modules
+    command: sh -c "corepack enable && pnpm install --filter @biawin/web... && pnpm --filter @biawin/web dev"
+    environment:
+      CI: "1"
+      NEXT_PUBLIC_API_URL: http://localhost:4000/api/v1
+    ports:
+      - "3000:3000"
+    depends_on:
+      - backend
+
+volumes:
+  backend_root_node_modules:
+  backend_node_modules:
+  backend_types_node_modules:
+  backend_config_node_modules:
+  web_root_node_modules:
+  web_node_modules:
+  web_types_node_modules:
+  web_ui_node_modules:
+  web_config_node_modules:

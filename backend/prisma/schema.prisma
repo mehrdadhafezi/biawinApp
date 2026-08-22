@@ -1,0 +1,566 @@
+// Prisma schema for Biawin — Foundation models only.
+//
+// Scope: the 19 core models requested for the Production Foundation, plus one
+// infrastructure-only addition (RefreshToken, needed to implement the JWT
+// refresh-token strategy from docs/07-security.md). No business-logic
+// migrations beyond this structural model are applied yet — computed fields,
+// full validation rules, and additional entities (missions, chat history,
+// news, addresses, ...) from docs/01-prototype-analysis.md §5 are added when
+// their owning module is built out as a Feature.
+//
+// See docs/02-database.md for the purpose/relations/indexes of every table.
+
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+// ---------------------------------------------------------------------------
+// Enums
+// ---------------------------------------------------------------------------
+
+enum UserStatus {
+  active
+  suspended
+  deleted
+}
+
+/// Single value today (unified login/signup flow — see docs/03-api.md). Kept as
+/// an enum (not dropped) so a future purpose (e.g. "two_factor", "phone_change")
+/// can be added without another migration.
+enum OtpPurpose {
+  auth
+}
+
+enum MembershipCardKind {
+  earn
+  core
+  reward
+}
+
+enum SubscriptionTier {
+  start
+  plus
+  family
+  prime
+  gift
+  travel
+  lifestyle
+  organizational
+}
+
+enum MembershipStatus {
+  active
+  pending
+  special
+  expired
+}
+
+enum WalletKind {
+  main
+  reward
+}
+
+enum WalletTxType {
+  topup
+  spend
+  refund
+  gateway_settlement
+}
+
+enum CreditLineStatus {
+  active
+  suspended
+  closed
+}
+
+enum InstallmentStatus {
+  active
+  completed
+  defaulted
+  cancelled
+}
+
+enum PurchaseMethod {
+  credit
+  installment
+  cash
+  free
+}
+
+enum OrderStatus {
+  pending
+  processing
+  awaiting_payment
+  paid
+  delivered
+  cancelled
+}
+
+enum PaymentProvider {
+  wallet
+  gateway
+}
+
+enum PaymentStatus {
+  pending
+  succeeded
+  failed
+  refunded
+}
+
+enum RewardClaimStatus {
+  pending_payment
+  confirmed
+  cancelled
+}
+
+enum NotificationType {
+  order_status
+  promotion
+  system
+  security
+}
+
+enum AdvisorPersonaKey {
+  viana
+  winyar
+  arvin
+}
+
+// ---------------------------------------------------------------------------
+// Auth / Identity
+// ---------------------------------------------------------------------------
+
+/// No email/password anywhere on this model — phone is the sole login identifier
+/// (see docs/03-api.md). `subscriptionCode` entered at signup is intentionally
+/// NOT stored here: it is handed off to the membership domain
+/// (`MembershipService.registerSubscriptionCode`) which owns real redemption/
+/// activation logic. Terms/consent acceptance is not modeled yet — a future
+/// `UserConsent` model will own that (see docs/07-security.md).
+model User {
+  id               String     @id @default(uuid())
+  phone            String     @unique
+  phoneVerifiedAt  DateTime?
+  inviteCode       String     @unique
+  referredByCode   String?
+  twoFactorEnabled Boolean    @default(false)
+  status           UserStatus @default(active)
+
+  profile           Profile?
+  memberships       Membership[]
+  wallets           Wallet[]
+  creditLines       CreditLine[]
+  installments      Installment[]
+  orders            Order[]
+  rewardClaims      RewardClaim[]
+  notifications     Notification[]
+  refreshTokens     RefreshToken[]
+  phoneVerifications PhoneVerification[]
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@map("users")
+}
+
+model Profile {
+  id          String    @id @default(uuid())
+  userId      String    @unique
+  user        User      @relation(fields: [userId], references: [id], onDelete: Cascade)
+  fullName    String
+  email       String?
+  nationalId  String?
+  birthDate   DateTime?
+  avatarKey   String? // object key in Storage, not a public URL
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@map("profiles")
+}
+
+/// Persists OTP challenges for login/signup/password-reset flows.
+/// `userId` is nullable because a signup challenge is issued before the User exists.
+model PhoneVerification {
+  id                String     @id @default(uuid())
+  phone             String
+  purpose           OtpPurpose
+  codeHash          String
+  expiresAt         DateTime
+  attemptsRemaining Int        @default(5)
+  consumedAt        DateTime?
+  userId            String?
+  user              User?      @relation(fields: [userId], references: [id], onDelete: SetNull)
+
+  createdAt DateTime @default(now())
+
+  @@index([phone, purpose])
+  @@map("phone_verifications")
+}
+
+/// Opaque refresh-token records (the JWT itself is never persisted — only a hash
+/// of the refresh token, so a DB leak can't be used to mint sessions).
+model RefreshToken {
+  id         String    @id @default(uuid())
+  userId     String
+  user       User      @relation(fields: [userId], references: [id], onDelete: Cascade)
+  tokenHash  String    @unique
+  userAgent  String?
+  ip         String?
+  expiresAt  DateTime
+  revokedAt  DateTime?
+
+  createdAt DateTime @default(now())
+
+  @@index([userId])
+  @@map("refresh_tokens")
+}
+
+// ---------------------------------------------------------------------------
+// Membership / Subscriptions
+// ---------------------------------------------------------------------------
+
+/// Catalog of membership cards (admin-managed content) — the "subscriptions" module.
+model MembershipPlan {
+  id                     String              @id @default(uuid())
+  kind                   MembershipCardKind
+  tier                   SubscriptionTier?
+  title                  String
+  kicker                 String
+  shortDescription       String
+  description            String
+  level                  String
+  creditLabel            String
+  durationLabel          String
+  priceLabel             String
+  accentColor            String
+  deepColor              String
+  activationActionLabel  String
+  benefits               Json // MembershipBenefit[]
+  terms                  Json // string[]
+  sortOrder              Int                 @default(0)
+  active                 Boolean             @default(true)
+
+  accessibleCategories Category[]   @relation("PlanCategories")
+  memberships          Membership[]
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@map("membership_plans")
+}
+
+/// A user's activation of a membership plan — the "membership" module.
+model Membership {
+  id           String            @id @default(uuid())
+  userId       String
+  user         User              @relation(fields: [userId], references: [id], onDelete: Cascade)
+  planId       String
+  plan         MembershipPlan    @relation(fields: [planId], references: [id], onDelete: Restrict)
+  status       MembershipStatus  @default(pending)
+  activatedAt  DateTime?
+  expiresAt    DateTime?
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@index([userId, status])
+  @@map("memberships")
+}
+
+// ---------------------------------------------------------------------------
+// Wallet / Credit / Installments
+// ---------------------------------------------------------------------------
+
+model Wallet {
+  id      String     @id @default(uuid())
+  userId  String
+  user    User       @relation(fields: [userId], references: [id], onDelete: Cascade)
+  kind    WalletKind
+  /// Balance in Rial (integer, never a float — see docs/02-database.md).
+  balance Int        @default(0)
+
+  transactions WalletTransaction[]
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@unique([userId, kind])
+  @@map("wallets")
+}
+
+model WalletTransaction {
+  id                    String       @id @default(uuid())
+  walletId              String
+  wallet                Wallet       @relation(fields: [walletId], references: [id], onDelete: Cascade)
+  type                  WalletTxType
+  amount                Int
+  /// Snapshot of the wallet balance immediately after this transaction, for auditability.
+  balanceAfter          Int
+  relatedOrderId        String?
+  relatedRewardClaimId  String?
+  description           String
+
+  createdAt DateTime @default(now())
+
+  @@index([walletId, createdAt])
+  @@map("wallet_transactions")
+}
+
+model CreditLine {
+  id          String            @id @default(uuid())
+  userId      String
+  user        User              @relation(fields: [userId], references: [id], onDelete: Cascade)
+  limitAmount Int
+  usedAmount  Int               @default(0)
+  status      CreditLineStatus  @default(active)
+  expiresAt   DateTime?
+
+  usages CreditUsage[]
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@index([userId, status])
+  @@map("credit_lines")
+}
+
+model CreditUsage {
+  id           String     @id @default(uuid())
+  creditLineId String
+  creditLine   CreditLine @relation(fields: [creditLineId], references: [id], onDelete: Cascade)
+  orderId      String?
+  order        Order?     @relation(fields: [orderId], references: [id], onDelete: SetNull)
+  amount       Int
+  description  String
+
+  createdAt DateTime @default(now())
+
+  @@index([creditLineId, createdAt])
+  @@map("credit_usages")
+}
+
+model Installment {
+  id            String            @id @default(uuid())
+  orderId       String            @unique
+  order         Order             @relation(fields: [orderId], references: [id], onDelete: Cascade)
+  userId        String
+  user          User              @relation(fields: [userId], references: [id], onDelete: Cascade)
+  totalMonths   Int
+  monthlyAmount Int
+  paidCount     Int               @default(0)
+  status        InstallmentStatus @default(active)
+  nextDueDate   DateTime?
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@index([userId, status])
+  @@map("installments")
+}
+
+// ---------------------------------------------------------------------------
+// Catalog
+// ---------------------------------------------------------------------------
+
+model Category {
+  id          String   @id @default(uuid())
+  name        String   @unique
+  description String
+  imageKey    String?
+  keywords    Json // string[]
+  sortOrder   Int      @default(0)
+  active      Boolean  @default(true)
+
+  services Service[]
+  plans    MembershipPlan[] @relation("PlanCategories")
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@map("categories")
+}
+
+model Merchant {
+  id          String  @id @default(uuid())
+  name        String
+  description String?
+  logoKey     String?
+  active      Boolean @default(true)
+
+  services Service[]
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@map("merchants")
+}
+
+model Service {
+  id                     String   @id @default(uuid())
+  categoryId             String
+  category               Category @relation(fields: [categoryId], references: [id], onDelete: Restrict)
+  merchantId             String?
+  merchant               Merchant? @relation(fields: [merchantId], references: [id], onDelete: SetNull)
+  title                  String
+  groupLabel             String
+  subtitle               String
+  badge                  String
+  /// Emoji/symbol shown before a real product photo exists (matches the
+  /// prototype's icon-per-product pattern) — distinct from `imageKey`, which
+  /// is a Storage object key for an actual uploaded image.
+  icon                   String?
+  imageKey               String?
+  priceFrom              Int?
+  priceLabel             String?
+  availableMethods       Json // PurchaseMethod[]
+  installmentMinMonths   Int?
+  installmentMaxMonths   Int?
+  creditMultiplierLabel  String?
+  benefits               Json // string[]
+  galleryKeys            Json // string[]
+  faq                    Json // {question, answer}[]
+  tags                   Json // string[]
+  active                 Boolean  @default(true)
+
+  orders       Order[]
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@index([categoryId])
+  @@map("services")
+}
+
+// ---------------------------------------------------------------------------
+// Orders / Payments
+// ---------------------------------------------------------------------------
+
+model Order {
+  id            String         @id @default(uuid())
+  orderNumber   String         @unique
+  userId        String
+  user          User           @relation(fields: [userId], references: [id], onDelete: Restrict)
+  serviceId     String
+  service       Service        @relation(fields: [serviceId], references: [id], onDelete: Restrict)
+  method        PurchaseMethod
+  amount        Int
+  status        OrderStatus    @default(pending)
+
+  installment  Installment?
+  creditUsages CreditUsage[]
+  payments     Payment[]
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@index([userId, status])
+  @@map("orders")
+}
+
+model Payment {
+  id            String          @id @default(uuid())
+  orderId       String?
+  order         Order?          @relation(fields: [orderId], references: [id], onDelete: SetNull)
+  rewardClaimId String?
+  rewardClaim   RewardClaim?    @relation(fields: [rewardClaimId], references: [id], onDelete: SetNull)
+  provider      PaymentProvider
+  amount        Int
+  status        PaymentStatus   @default(pending)
+  gatewayRef    String?
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@index([orderId])
+  @@index([rewardClaimId])
+  @@map("payments")
+}
+
+// ---------------------------------------------------------------------------
+// Rewards
+// ---------------------------------------------------------------------------
+
+model Reward {
+  id          String  @id @default(uuid())
+  title       String
+  imageKey    String?
+  cost        Int
+  description String
+  active      Boolean @default(true)
+
+  claims RewardClaim[]
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@map("rewards")
+}
+
+model RewardClaim {
+  id              String             @id @default(uuid())
+  userId          String
+  user            User               @relation(fields: [userId], references: [id], onDelete: Restrict)
+  rewardId        String
+  reward          Reward             @relation(fields: [rewardId], references: [id], onDelete: Restrict)
+  cost            Int
+  paidFromWallet  Int
+  paidFromGateway Int
+  status          RewardClaimStatus  @default(pending_payment)
+
+  payments Payment[]
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@index([userId, status])
+  @@map("reward_claims")
+}
+
+// ---------------------------------------------------------------------------
+// Notifications / Advisor
+// ---------------------------------------------------------------------------
+
+model Notification {
+  id     String            @id @default(uuid())
+  userId String
+  user   User              @relation(fields: [userId], references: [id], onDelete: Cascade)
+  type   NotificationType
+  title  String
+  body   String
+  readAt DateTime?
+
+  createdAt DateTime @default(now())
+
+  @@index([userId, readAt])
+  @@map("notifications")
+}
+
+/// Catalog of AI advisor personas (وینا / وین‌یاد / آروین). Chat history and
+/// live LLM wiring are out of scope for this Foundation — see
+/// docs/01-prototype-analysis.md §7.
+model AdvisorPersona {
+  id            String            @id @default(uuid())
+  key           AdvisorPersonaKey @unique
+  name          String
+  role          String
+  style         String
+  bestFor       String
+  focus         String
+  quote         String
+  traits        Json // string[]
+  avatarKey     String?
+  /// Server-only system prompt used once this persona is wired to a real LLM.
+  systemPrompt  String
+  active        Boolean           @default(true)
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@map("advisor_personas")
+}

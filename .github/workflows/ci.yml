@@ -1,0 +1,59 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+env:
+  # Dummy values only used for `prisma generate` / typecheck / unit tests —
+  # none of these steps connect to a real database. Real secrets are provided
+  # per-environment by the deploy pipeline (see docs/04-deployment.md), never here.
+  DATABASE_URL: "postgresql://biawin:biawin@localhost:5432/biawin?schema=public"
+  REDIS_URL: "redis://localhost:6379"
+  JWT_ACCESS_SECRET: "ci-access-secret-not-for-real-use"
+  JWT_REFRESH_SECRET: "ci-refresh-secret-not-for-real-use"
+  STORAGE_ENDPOINT: "http://localhost:9000"
+  STORAGE_ACCESS_KEY: "ci"
+  STORAGE_SECRET_KEY: "ci-secret-key"
+  STORAGE_BUCKET: "biawin-ci"
+  # Inlined into the Next.js build output — a real reachable URL isn't needed
+  # for `next build` (no requests are made at build time), but the var must
+  # be set or apps/web/src/lib/api-client.ts throws (see docs/04-deployment.md
+  # "Domains & Environments" — no hardcoded localhost fallback allowed).
+  NEXT_PUBLIC_API_URL: "https://api.biawin.ir/api/v1"
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: pnpm/action-setup@v4
+        with:
+          version: 10
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: pnpm
+
+      - name: Install dependencies
+        run: pnpm install --frozen-lockfile
+
+      - name: Generate Prisma client
+        run: pnpm --filter @biawin/backend prisma:generate
+
+      - name: Lint
+        run: pnpm lint
+
+      - name: Typecheck
+        run: pnpm typecheck
+
+      - name: Test
+        run: pnpm --filter @biawin/backend test -- --ci
+        # apps/web and apps/mobile have no unit tests yet at Foundation stage —
+        # added per-app once their first Feature lands.
+
+      - name: Build
+        run: pnpm build

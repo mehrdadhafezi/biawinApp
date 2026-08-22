@@ -1,0 +1,31 @@
+{
+  "name": "biawin-app",
+  "private": true,
+  "version": "0.1.0",
+  "packageManager": "pnpm@10.5.2",
+  "engines": {
+    "node": ">=20"
+  },
+  "scripts": {
+    "dev": "turbo run dev",
+    "dev:infra": "docker compose -f docker-compose.dev-infra.yml up -d",
+    "dev:infra:down": "docker compose -f docker-compose.dev-infra.yml down",
+    "dev:infra:logs": "docker compose -f docker-compose.dev-infra.yml logs -f",
+    "dev:backend": "pnpm --filter @biawin/backend dev",
+    "dev:web": "pnpm --filter @biawin/web dev",
+    "dev:mobile": "pnpm --filter @biawin/mobile dev",
+    "dev:core": "turbo run dev --filter=@biawin/backend --filter=@biawin/web",
+    "build": "turbo run build",
+    "lint": "turbo run lint",
+    "typecheck": "turbo run typecheck",
+    "test": "turbo run test",
+    "format": "prettier --write \"**/*.{ts,tsx,js,jsx,json,md}\"",
+    "clean": "turbo run clean && rimraf node_modules"
+  },
+  "devDependencies": {
+    "prettier": "^3.4.2",
+    "rimraf": "^6.0.1",
+    "turbo": "^2.3.3",
+    "typescript": "^5.7.3"
+  }
+}

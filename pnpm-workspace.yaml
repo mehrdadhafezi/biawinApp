@@ -1,0 +1,15 @@
+packages:
+  - "apps/*"
+  - "backend"
+  - "packages/*"
+
+# Explicitly allow postinstall/build scripts only for packages that need them
+# (pnpm blocks all others by default for supply-chain safety). Prisma needs
+# this to download its query-engine binary.
+onlyBuiltDependencies:
+  - "@prisma/client"
+  - "@prisma/engines"
+  - "prisma"
+  - "@scarf/scarf"
+  - "msgpackr-extract"
+  - "unrs-resolver"
