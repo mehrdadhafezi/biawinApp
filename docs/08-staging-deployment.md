@@ -147,8 +147,11 @@ proxying doesn't work on this server):
 - `staging.biawin.ir` → reverse proxy → `http://127.0.0.1:3001`
 - `api-staging.biawin.ir` → reverse proxy → `http://127.0.0.1:4001`
 
-Both are pending a Let's Encrypt (AutoSSL) certificate — blocked purely on
-DNS (see 10-release-process.md), not on any server-side config.
+Both are live on public HTTPS with a real Let's Encrypt certificate (see
+10-release-process.md "One-time server setup" for the exact AutoSSL steps,
+including the `www.` alias exclusion that was needed). HTTP redirects to
+HTTPS (301) except for `/.well-known/acme-challenge/*`, which is excluded so
+future cert renewals keep working automatically.
 
 ## CI/CD
 
