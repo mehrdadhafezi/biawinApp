@@ -9,6 +9,14 @@ name: biawin-staging
 # Known-occupied ports on this host (DO NOT reuse): 5432, 8080, 3000.
 # Biawin staging uses: 3001 (web), 4001 (backend), 5433 (postgres),
 # 6380 (redis), 9010/9011 (minio).
+#
+# The default network's subnet is pinned below to 172.19.0.0/16 — the host's
+# CSF/Imunify360 firewall has an explicit /etc/csf/csfpost.sh allow-rule
+# scoped to exactly this subnet + ports 3000/4000 (see docs/08-staging-deployment.md
+# "Firewall"). If this subnet is ever allowed to float (e.g. after `docker
+# network rm` + recreate without this pin), Docker may assign a different
+# subnet and silently break external reachability of the published ports
+# again, with no error from Compose itself.
 
 services:
   postgres:
@@ -115,3 +123,10 @@ volumes:
     name: biawin_staging_redis_data
   biawin_staging_minio_data:
     name: biawin_staging_minio_data
+
+networks:
+  default:
+    name: biawin-staging_default
+    ipam:
+      config:
+        - subnet: 172.19.0.0/16

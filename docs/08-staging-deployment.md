@@ -113,6 +113,28 @@ health checks on both. It exits non-zero (leaving the previous containers
 running) if any step fails before the final cutover — see
 [10-release-process.md](10-release-process.md) for rollback details.
 
+## Firewall (CSF/Imunify360)
+
+This host runs CSF (ConfigServer Firewall) with Imunify360, default-deny on
+INPUT/OUTPUT. Docker's published loopback ports (`127.0.0.1:3001`,
+`127.0.0.1:4001`) route through `docker-proxy`, which makes a real connection
+to the container's IP on the `biawin-staging_default` bridge network
+(pinned to `172.19.0.0/16` in `docker-compose.staging.yml` — see the comment
+there for why this must never be allowed to float). CSF's OUTPUT policy was
+blocking the host's connection to that subnet on ports 3000/4000 (the
+container-internal ports), which made every external-looking request
+(including LiteSpeed's future reverse proxy, and `deploy.sh`'s own health
+check) fail with a connection reset — even though the containers themselves,
+and container-to-container traffic, were completely healthy the whole time.
+
+The fix is an allow-rule in `/etc/csf/csfpost.sh` (CSF's official
+custom-rules hook, already used there for Beauty Platform's own Docker
+subnet) scoped to `172.19.0.0/16` on ports `3000,4000` — already applied on
+the server. If `docker network rm biawin-staging_default` is ever run and
+the network recreated, the ports still work: they are permanently allowed to
+this fixed subnet, and the subnet is now pinned so a future recreate cannot
+silently drift.
+
 ## LiteSpeed / domains
 
 Nginx is not used — this server runs LiteSpeed Enterprise via WHM/cPanel.
