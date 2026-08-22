@@ -1,0 +1,50 @@
+name: Deploy Staging
+
+# Manual only, on purpose. Do NOT change this to `on: push` until the four
+# secrets below exist in this repo's Settings > Secrets and variables >
+# Actions AND a human has verified deploy/staging/deploy.sh works when run
+# by hand on the server at least once (see docs/08-staging-deployment.md).
+#
+# Required repository secrets (none of these exist yet as of this workflow's
+# creation — set them up, then this becomes a one-click deploy):
+#   STAGING_SSH_HOST         62.204.61.18
+#   STAGING_SSH_PORT         2490
+#   STAGING_SSH_USER         root
+#   STAGING_SSH_PRIVATE_KEY  private half of a dedicated deploy keypair whose
+#                            public half has been added to that user's
+#                            ~/.ssh/authorized_keys on the server — never reuse
+#                            a personal key here.
+on:
+  workflow_dispatch: {}
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Guard — required secrets present
+        run: |
+          missing=0
+          for v in STAGING_SSH_HOST STAGING_SSH_PORT STAGING_SSH_USER STAGING_SSH_PRIVATE_KEY; do
+            if [ -z "${!v:-}" ]; then
+              echo "::error::Missing repository secret: $v"
+              missing=1
+            fi
+          done
+          [ "$missing" -eq 0 ] || exit 1
+        env:
+          STAGING_SSH_HOST: ${{ secrets.STAGING_SSH_HOST }}
+          STAGING_SSH_PORT: ${{ secrets.STAGING_SSH_PORT }}
+          STAGING_SSH_USER: ${{ secrets.STAGING_SSH_USER }}
+          STAGING_SSH_PRIVATE_KEY: ${{ secrets.STAGING_SSH_PRIVATE_KEY }}
+
+      - name: Install SSH key
+        uses: webfactory/ssh-agent@v0.9.0
+        with:
+          ssh-private-key: ${{ secrets.STAGING_SSH_PRIVATE_KEY }}
+
+      - name: Deploy over SSH
+        run: |
+          mkdir -p ~/.ssh
+          ssh-keyscan -p "${{ secrets.STAGING_SSH_PORT }}" "${{ secrets.STAGING_SSH_HOST }}" >> ~/.ssh/known_hosts
+          ssh -p "${{ secrets.STAGING_SSH_PORT }}" "${{ secrets.STAGING_SSH_USER }}@${{ secrets.STAGING_SSH_HOST }}" \
+            "cd /srv/biawin-staging && ./deploy/staging/deploy.sh"

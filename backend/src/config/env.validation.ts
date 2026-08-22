@@ -39,6 +39,16 @@ export const envSchema = z.object({
 
   CORS_ORIGINS: z.string().default('http://localhost:3000'),
 
+  // --- Staging-only OTP test bypass (docs/08-staging-deployment.md). Must
+  // never be "true" in a real production .env — NODE_ENV=development already
+  // covers local dev regardless of this flag.
+  // NOTE: intentionally NOT z.coerce.boolean() — Boolean("false") is `true` in
+  // JS, which would silently invert an operator's intent to disable this.
+  STAGING_TEST_AUTH: z
+    .enum(['true', 'false'])
+    .default('false')
+    .transform((v) => v === 'true'),
+
   // --- SMS provider (notifications module) — all optional; falls back to
   // MockSmsProvider when SMS_PROVIDER isn't "faraz" or credentials are absent.
   SMS_PROVIDER: z.enum(['mock', 'faraz']).default('mock'),

@@ -22,10 +22,14 @@ interface OtpRecord {
 const PURPOSE = 'auth' as const;
 
 /**
- * Development-only test credentials (docs/07-security.md "Development OTP
- * Test Mode") — lets a local frontend log in without a real SMS provider.
- * Gated on `NODE_ENV === 'development'` exactly (not "test", not "staging"),
- * checked fresh on every call, never cached — this can never fire in production.
+ * Test credentials that bypass real OTP verification (docs/07-security.md
+ * "Development OTP Test Mode") — lets a frontend log in without a real SMS
+ * provider. Fires when EITHER:
+ *  - `NODE_ENV === 'development'` (local dev, always on), or
+ *  - `STAGING_TEST_AUTH === 'true'` (staging only, opt-in per deployment —
+ *    the staging .env simply omits/falsifies this to turn it off).
+ * Both are checked fresh on every call, never cached. A real production .env
+ * must never set STAGING_TEST_AUTH=true — see docs/08-staging-deployment.md.
  */
 const DEV_TEST_PHONE = '09121111111';
 const DEV_TEST_CODE = '123456';
@@ -116,8 +120,11 @@ export class OtpService {
   }
 
   async verify(phone: string, code: string): Promise<void> {
+    const testBypassEnabled =
+      this.config.get<string>('NODE_ENV') === 'development' ||
+      this.config.get<boolean>('STAGING_TEST_AUTH', false) === true;
     if (
-      this.config.get<string>('NODE_ENV') === 'development' &&
+      testBypassEnabled &&
       phone === DEV_TEST_PHONE &&
       code === DEV_TEST_CODE
     ) {

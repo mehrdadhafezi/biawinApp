@@ -14,11 +14,12 @@ web-build/
 # Turborepo
 .turbo/
 
-# Env files — anything named .env* is ignored by default; only *.env.example
-# files are ever meant to be committed (see docs/09-git-workflow.md).
+# Env files — anything named .env* is ignored by default; only files ending
+# in .example are ever meant to be committed (.env.example, and variants like
+# deploy/staging/.env.staging.example — see docs/09-git-workflow.md).
 .env*
-!.env.example
-!**/.env.example
+!.env*.example
+!**/.env*.example
 
 # Prisma
 backend/generated/

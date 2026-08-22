@@ -20,6 +20,7 @@ describe('OtpService', () => {
   };
   let smsQueue: { add: jest.Mock };
   let nodeEnv: string;
+  let stagingTestAuth: boolean;
 
   async function buildService(): Promise<OtpService> {
     redis = {
@@ -43,8 +44,12 @@ describe('OtpService', () => {
         {
           provide: ConfigService,
           useValue: {
-            get: (key: string, fallback?: unknown) =>
-              key === 'NODE_ENV' ? nodeEnv : fallback,
+            get: (key: string, fallback?: unknown) => {
+              if (key === 'NODE_ENV') return nodeEnv;
+              if (key === 'STAGING_TEST_AUTH')
+                return stagingTestAuth ?? fallback;
+              return fallback;
+            },
           },
         },
       ],
@@ -52,6 +57,10 @@ describe('OtpService', () => {
 
     return module.get(OtpService);
   }
+
+  beforeEach(() => {
+    stagingTestAuth = false;
+  });
 
   describe('development test bypass', () => {
     it('accepts the fixed test phone/code when NODE_ENV=development, without touching Redis', async () => {
@@ -91,6 +100,28 @@ describe('OtpService', () => {
       redis.getJson.mockResolvedValue(null);
 
       await expect(service.verify('09120000000', '123456')).rejects.toThrow(
+        BadRequestException,
+      );
+    });
+
+    it('accepts the fixed test phone/code when NODE_ENV=production and STAGING_TEST_AUTH=true', async () => {
+      nodeEnv = 'production';
+      stagingTestAuth = true;
+      const service = await buildService();
+
+      await expect(
+        service.verify('09121111111', '123456'),
+      ).resolves.toBeUndefined();
+      expect(redis.getJson).not.toHaveBeenCalled();
+    });
+
+    it('rejects the test phone/code when NODE_ENV=production and STAGING_TEST_AUTH is unset (falls through to the real check)', async () => {
+      nodeEnv = 'production';
+      stagingTestAuth = false;
+      const service = await buildService();
+      redis.getJson.mockResolvedValue(null);
+
+      await expect(service.verify('09121111111', '123456')).rejects.toThrow(
         BadRequestException,
       );
     });

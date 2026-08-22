@@ -51,9 +51,9 @@ jobs:
         run: pnpm typecheck
 
       - name: Test
-        run: pnpm --filter @biawin/backend test -- --ci
-        # apps/web and apps/mobile have no unit tests yet at Foundation stage —
-        # added per-app once their first Feature lands.
+        run: pnpm test
+        # Only @biawin/backend has unit tests at Foundation stage; `turbo run
+        # test` (root `pnpm test`) simply skips packages with no test script.
 
       - name: Build
         run: pnpm build
