@@ -9,6 +9,11 @@ import type { NextConfig } from "next";
 // runs a full `next build` + `next start` with the complete node_modules
 // copied into the image instead — proven reliable, same pattern as the
 // backend image.
-const nextConfig: NextConfig = {};
+const nextConfig: NextConfig = {
+  // Dev-only: lets the local preview tooling's proxy (which forwards
+  // requests to 127.0.0.1 with a Host header Next's dev server otherwise
+  // flags as cross-origin) load HMR chunks. No effect on `next build`.
+  allowedDevOrigins: ["127.0.0.1"],
+};
 
 export default nextConfig;

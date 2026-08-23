@@ -2,12 +2,19 @@
 
 import { useRouter } from "next/navigation";
 import { useEffect, useState } from "react";
-import { Button, color, font } from "@biawin/ui";
 import { AuthModal } from "../components/auth/AuthModal";
-import { LandingPanels } from "../components/landing/LandingPanels";
+import { OrbitLanding } from "../components/landing/OrbitLanding";
 import { useAuth } from "../lib/auth/auth-context";
 
-/** Landing / auth entry (docs/prototype-to-production-mapping.md, screen §1). */
+/**
+ * Landing / auth entry (docs/prototype-to-production-mapping.md, screen §1).
+ *
+ * Stage 1 (v16_clean prototype baseline): renders the Orbit Landing —
+ * the old 4-panel LandingPanels layout is no longer rendered here. See
+ * apps/web/src/components/landing/LandingPanels.tsx for why that file is
+ * left in place unused rather than deleted (its copy may be reused as
+ * story-topic content in a later stage).
+ */
 export default function LandingPage() {
   const router = useRouter();
   const { isAuthenticated } = useAuth();
@@ -20,31 +27,9 @@ export default function LandingPage() {
   if (isAuthenticated) return null; // avoid a landing-page flash before redirect
 
   return (
-    <div
-      style={{
-        flex: 1,
-        display: "flex",
-        flexDirection: "column",
-        alignItems: "center",
-        justifyContent: "center",
-        gap: 24,
-        padding: 24,
-        background: color.ice,
-        fontFamily: font.family,
-      }}
-    >
-      <div style={{ textAlign: "center" }}>
-        <strong style={{ fontSize: 26, fontWeight: 800, color: color.deep }}>بیاوین</strong>
-        <p style={{ margin: "6px 0 0", fontSize: 12, color: color.muted }}>باشگاه هوشمند تجربه‌های ارزشمند</p>
-      </div>
-
-      <LandingPanels />
-
-      <Button onClick={() => setAuthOpen(true)} style={{ minWidth: 220 }}>
-        ورود | ثبت‌نام
-      </Button>
-
+    <>
+      <OrbitLanding onLoginClick={() => setAuthOpen(true)} />
       <AuthModal open={authOpen} onClose={() => setAuthOpen(false)} />
-    </div>
+    </>
   );
 }
