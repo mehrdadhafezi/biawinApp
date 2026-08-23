@@ -1,44 +1,79 @@
 /**
- * The 13 floating category bubbles on the Orbit Landing.
- * Positions/delays/variants are taken directly from the prototype's final
- * resolved cascade (biawin_single_file_app_requested_edits_v16_clean.html,
- * <style id="biawin-orbit-motion-bubbles-css">) — not re-derived or guessed.
+ * The floating category bubbles on the Orbit Landing — data-driven, not
+ * hardcoded markup. `useOrbitItems()` is the seam this is meant to be
+ * fetched through: today it returns the mock list below (filtered/sorted
+ * exactly the way a real API response would need to be consumed); once an
+ * Admin-managed Orbit endpoint exists, only this file's hook body needs to
+ * change to a real fetch — OrbitStage/OrbitBubble consume the same
+ * `OrbitItem[]` contract either way.
  *
- * `imageSrc` is intentionally omitted for every item: the prototype itself
- * ships these with an empty `src=""` (confirmed — not a truncation artifact
- * of the analysis copy), so there is no real asset to carry over yet.
- * OrbitBubble renders a neutral placeholder whenever `imageSrc` is absent;
- * populate it here per item once real category art exists, with no layout
- * changes required.
+ * Initial positions/delays/variants below are taken directly from the
+ * prototype's final resolved cascade
+ * (biawin_single_file_app_requested_edits_v16_clean.html,
+ * <style id="biawin-orbit-motion-bubbles-css">) — not re-derived or guessed.
+ * `image` is intentionally unset for every item: the prototype itself ships
+ * these bubbles with an empty `src=""` (confirmed — not a truncation
+ * artifact of the analysis copy), so there is no real asset to carry over
+ * yet. OrbitBubble renders a neutral placeholder whenever `image` is
+ * absent; populate it here (or from the real API response) once real
+ * category art exists — no layout change required either way.
  */
+
+import { useMemo } from "react";
 
 export type OrbitBubbleVariant = "a" | "b" | "c" | "d";
 
-export interface OrbitItem {
-  id: string;
-  label: string;
+export interface OrbitItemPosition {
   leftPercent: number;
   topPercent: number;
-  variant: OrbitBubbleVariant;
-  delaySeconds: number;
-  imageSrc?: string;
 }
 
-export const ORBIT_ITEMS: OrbitItem[] = [
-  { id: "grocery", label: "سبد مواد غذایی", leftPercent: 29.2, topPercent: 29.0, variant: "a", delaySeconds: -0.0 },
-  { id: "clothing", label: "پوشاک", leftPercent: 50.0, topPercent: 25.4, variant: "b", delaySeconds: -0.47 },
-  { id: "motorcycle", label: "موتورسیکلت", leftPercent: 69.1, topPercent: 29.9, variant: "c", delaySeconds: -0.94 },
-  { id: "car", label: "خودرو", leftPercent: 84.5, topPercent: 37.7, variant: "d", delaySeconds: -1.41 },
-  { id: "jewelry", label: "طلا و جواهر", leftPercent: 86.6, topPercent: 47.8, variant: "b", delaySeconds: -1.88 },
-  { id: "tourism", label: "گردشگری", leftPercent: 84.5, topPercent: 58.0, variant: "a", delaySeconds: -2.35 },
-  { id: "appliances", label: "لوازم خانگی", leftPercent: 75.5, topPercent: 67.9, variant: "c", delaySeconds: -2.82 },
-  { id: "carpet", label: "فرش", leftPercent: 54.7, topPercent: 73.3, variant: "d", delaySeconds: -0.0 },
-  { id: "cosmetics", label: "آرایشی", leftPercent: 37.2, topPercent: 74.0, variant: "a", delaySeconds: -0.47 },
-  { id: "digital", label: "دیجیتال", leftPercent: 19.1, topPercent: 68.2, variant: "b", delaySeconds: -0.94 },
-  { id: "insurance", label: "بیمه", leftPercent: 11.2, topPercent: 58.0, variant: "c", delaySeconds: -1.41 },
-  { id: "stationery", label: "لوازم تحریر", leftPercent: 11.2, topPercent: 48.1, variant: "d", delaySeconds: -1.88 },
-  { id: "meat", label: "مرغ، گوشت و ماهی", leftPercent: 15.4, topPercent: 38.9, variant: "a", delaySeconds: -2.35 },
+export interface OrbitItemAnimation {
+  /** Selects which float keyframe/duration pair this bubble uses. */
+  variant: OrbitBubbleVariant;
+  delaySeconds: number;
+}
+
+/** The Admin-Panel-shaped contract for one orbit bubble. */
+export interface OrbitItem {
+  id: string;
+  title: string;
+  /** Transparent PNG/WebP, no background — see Asset Preparation Contract. Unset until real art exists. */
+  image?: string;
+  /** Explicit sort key — do not rely on array order once this is API-backed. */
+  order: number;
+  active: boolean;
+  position: OrbitItemPosition;
+  animation: OrbitItemAnimation;
+}
+
+const MOCK_ORBIT_ITEMS: OrbitItem[] = [
+  { id: "grocery", title: "سبد مواد غذایی", order: 1, active: true, position: { leftPercent: 29.2, topPercent: 29.0 }, animation: { variant: "a", delaySeconds: -0.0 } },
+  { id: "clothing", title: "پوشاک", order: 2, active: true, position: { leftPercent: 50.0, topPercent: 25.4 }, animation: { variant: "b", delaySeconds: -0.47 } },
+  { id: "motorcycle", title: "موتورسیکلت", order: 3, active: true, position: { leftPercent: 69.1, topPercent: 29.9 }, animation: { variant: "c", delaySeconds: -0.94 } },
+  { id: "car", title: "خودرو", order: 4, active: true, position: { leftPercent: 84.5, topPercent: 37.7 }, animation: { variant: "d", delaySeconds: -1.41 } },
+  { id: "jewelry", title: "طلا و جواهر", order: 5, active: true, position: { leftPercent: 86.6, topPercent: 47.8 }, animation: { variant: "b", delaySeconds: -1.88 } },
+  { id: "tourism", title: "گردشگری", order: 6, active: true, position: { leftPercent: 84.5, topPercent: 58.0 }, animation: { variant: "a", delaySeconds: -2.35 } },
+  { id: "appliances", title: "لوازم خانگی", order: 7, active: true, position: { leftPercent: 75.5, topPercent: 67.9 }, animation: { variant: "c", delaySeconds: -2.82 } },
+  { id: "carpet", title: "فرش", order: 8, active: true, position: { leftPercent: 54.7, topPercent: 73.3 }, animation: { variant: "d", delaySeconds: -0.0 } },
+  { id: "cosmetics", title: "آرایشی", order: 9, active: true, position: { leftPercent: 37.2, topPercent: 74.0 }, animation: { variant: "a", delaySeconds: -0.47 } },
+  { id: "digital", title: "دیجیتال", order: 10, active: true, position: { leftPercent: 19.1, topPercent: 68.2 }, animation: { variant: "b", delaySeconds: -0.94 } },
+  { id: "insurance", title: "بیمه", order: 11, active: true, position: { leftPercent: 11.2, topPercent: 58.0 }, animation: { variant: "c", delaySeconds: -1.41 } },
+  { id: "stationery", title: "لوازم تحریر", order: 12, active: true, position: { leftPercent: 11.2, topPercent: 48.1 }, animation: { variant: "d", delaySeconds: -1.88 } },
+  { id: "meat", title: "مرغ، گوشت و ماهی", order: 13, active: true, position: { leftPercent: 15.4, topPercent: 38.9 }, animation: { variant: "a", delaySeconds: -2.35 } },
 ];
+
+/**
+ * The data-layer seam for Orbit items. Swap the body for a real fetch
+ * (e.g. `useSWR('/api/v1/orbit-items', ...)`) once the Admin-managed
+ * endpoint exists; callers already only ever see a sorted, active-only list.
+ */
+export function useOrbitItems(): OrbitItem[] {
+  return useMemo(
+    () => MOCK_ORBIT_ITEMS.filter((item) => item.active).sort((a, b) => a.order - b.order),
+    [],
+  );
+}
 
 /** Animation-in-place variants; each gets its own subtle drift keyframe + duration. */
 export const ORBIT_FLOAT_DURATION_SECONDS: Record<OrbitBubbleVariant, number> = {

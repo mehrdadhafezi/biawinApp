@@ -16,7 +16,10 @@ export function Input({ style, ...props }: InputProps) {
         borderRadius: radius.md,
         padding: "0 14px",
         fontFamily: font.family,
-        fontSize: 13,
+        // 16px minimum, not the prototype's 13px — iOS Safari auto-zooms
+        // the page on focus for any input with a computed font-size under
+        // 16px, which is what was causing the pinch-to-recover-scale bug.
+        fontSize: 16,
         color: color.ink,
         outline: "none",
         ...style,

@@ -12,15 +12,15 @@ interface OrbitBubbleProps {
  * visual element, not an interactive one.
  */
 export function OrbitBubble({ item }: OrbitBubbleProps) {
-  const durationSeconds = ORBIT_FLOAT_DURATION_SECONDS[item.variant];
+  const durationSeconds = ORBIT_FLOAT_DURATION_SECONDS[item.animation.variant];
 
   return (
     <div
       aria-hidden="true"
       style={{
         position: "absolute",
-        left: `${item.leftPercent}%`,
-        top: `${item.topPercent}%`,
+        left: `${item.position.leftPercent}%`,
+        top: `${item.position.topPercent}%`,
         width: "19.4%",
         aspectRatio: "1",
         transform: "translate(-50%, -50%)",
@@ -36,18 +36,18 @@ export function OrbitBubble({ item }: OrbitBubbleProps) {
           height: "100%",
           borderRadius: "50%",
           willChange: "transform",
-          animationName: `biawinOrbitFloat${item.variant.toUpperCase()}`,
+          animationName: `biawinOrbitFloat${item.animation.variant.toUpperCase()}`,
           animationDuration: `${durationSeconds}s`,
           animationTimingFunction: "ease-in-out",
           animationIterationCount: "infinite",
-          animationDelay: `${item.delaySeconds}s`,
+          animationDelay: `${item.animation.delaySeconds}s`,
         }}
         className="biawin-orbit-bubble-float"
       >
-        {item.imageSrc ? (
+        {item.image ? (
           <img
-            src={item.imageSrc}
-            alt={item.label}
+            src={item.image}
+            alt={item.title}
             style={{
               display: "block",
               width: "100%",
@@ -61,10 +61,11 @@ export function OrbitBubble({ item }: OrbitBubbleProps) {
           />
         ) : (
           // Temporary placeholder — no real category art exists yet (the
-          // prototype itself ships these bubbles with an empty src). Swap
-          // `imageSrc` in orbitItems.ts once real assets are available;
-          // this placeholder occupies the exact same box so layout never
-          // has to change.
+          // prototype itself ships these bubbles with an empty src). Set
+          // `image` on the OrbitItem once real assets are available (see
+          // orbitItems.ts's Asset Preparation Contract note); this
+          // placeholder occupies the exact same box so layout never has
+          // to change when that happens.
           <div
             style={{
               width: "100%",
@@ -81,7 +82,7 @@ export function OrbitBubble({ item }: OrbitBubbleProps) {
               fontSize: "clamp(11px, 3vw, 16px)",
             }}
           >
-            {item.label.charAt(0)}
+            {item.title.charAt(0)}
           </div>
         )}
       </div>

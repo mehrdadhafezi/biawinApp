@@ -1,6 +1,6 @@
 import { LandingCenterCTA } from "./LandingCenterCTA";
 import { OrbitBubble } from "./OrbitBubble";
-import { ORBIT_ITEMS, ORBIT_NODES, ORBIT_RINGS } from "./orbitItems";
+import { ORBIT_NODES, ORBIT_RINGS, useOrbitItems } from "./orbitItems";
 import { OrbitRing } from "./OrbitRing";
 
 interface OrbitStageProps {
@@ -15,6 +15,8 @@ interface OrbitStageProps {
  * everything inside it).
  */
 export function OrbitStage({ onCenterClick }: OrbitStageProps) {
+  const orbitItems = useOrbitItems();
+
   return (
     <div
       aria-label="خدمات و محصولات بیاوین"
@@ -65,7 +67,7 @@ export function OrbitStage({ onCenterClick }: OrbitStageProps) {
         />
       ))}
 
-      {ORBIT_ITEMS.map((item) => (
+      {orbitItems.map((item) => (
         <OrbitBubble key={item.id} item={item} />
       ))}
 

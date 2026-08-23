@@ -1,3 +1,4 @@
+import { layout } from "@biawin/ui";
 import { OrbitStage } from "./OrbitStage";
 
 interface OrbitLandingProps {
@@ -25,7 +26,16 @@ export function OrbitLanding({ onLoginClick }: OrbitLandingProps) {
       style={{
         position: "relative",
         minHeight: "100dvh",
-        width: "100%",
+        // Width is the smaller of: the app's shared max content width (so
+        // the orbit doesn't stretch grotesquely wide on desktop), 100% (so
+        // it never exceeds the viewport on phones), and 100dvh/1.25 (so the
+        // widest ring — 122% of this width — can never exceed the actual
+        // viewport height and get cropped on short/landscape viewports,
+        // e.g. a laptop window or a tablet in landscape). This is the one
+        // rule that makes "no crop, centered, adaptive scale" hold across
+        // the full device matrix without any JS/resize-observer logic.
+        width: `min(100%, ${layout.maxContentWidth}px, calc(100dvh / 1.25))`,
+        marginInline: "auto",
         overflow: "hidden",
         background: "radial-gradient(circle at 50% 49%, #fff 0%, #fbfdff 52%, #f5f8fc 100%)",
       }}

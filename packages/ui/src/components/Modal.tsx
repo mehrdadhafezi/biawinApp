@@ -1,5 +1,5 @@
 import type { HTMLAttributes, ReactNode } from "react";
-import { color, radius, shadow } from "../tokens";
+import { breakpoint, color, radius, shadow } from "../tokens";
 
 export interface ModalProps extends HTMLAttributes<HTMLDivElement> {
   open: boolean;
@@ -7,39 +7,69 @@ export interface ModalProps extends HTMLAttributes<HTMLDivElement> {
   children: ReactNode;
 }
 
-/** Centered dialog (prototype's `.auth-modal` / `.advisor-detail-modal`). */
+/**
+ * Responsive dialog (prototype's `.auth-modal` / `.advisor-detail-modal`):
+ * a full-width bottom sheet on phones, a centered dialog from
+ * `breakpoint.sm` up (tablet/desktop). One component — the layout switch is
+ * pure CSS (a media query in the scoped `<style>` below), not a JS
+ * viewport check, so there's no hydration-mismatch flash and no
+ * resize-driven re-render.
+ *
+ * Both layouts cap their own height and scroll their own body
+ * (`.biawin-modal-body`) rather than the page — this is what keeps the
+ * dialog reachable when the on-screen keyboard shrinks the visual
+ * viewport, instead of content getting pushed off-screen.
+ */
 export function Modal({ open, onClose, children, style, ...props }: ModalProps) {
   if (!open) return null;
   return (
-    <div
-      role="presentation"
-      onClick={onClose}
-      style={{
-        position: "fixed",
-        inset: 0,
-        background: "rgba(14,47,77,.45)",
-        display: "grid",
-        placeItems: "center",
-        padding: 20,
-        zIndex: 300,
-      }}
-    >
+    <div role="presentation" onClick={onClose} className="biawin-modal-overlay">
       <div
         {...props}
         role="dialog"
         aria-modal="true"
         onClick={(event) => event.stopPropagation()}
-        style={{
-          width: "min(100%, 420px)",
-          background: color.white,
-          borderRadius: radius.xl,
-          boxShadow: shadow.md,
-          padding: 24,
-          ...style,
-        }}
+        className="biawin-modal-panel"
+        style={{ background: color.white, boxShadow: shadow.md, ...style }}
       >
-        {children}
+        <span aria-hidden="true" className="biawin-modal-grabber" />
+        <div className="biawin-modal-body">{children}</div>
       </div>
+
+      <style>{`
+        .biawin-modal-overlay{
+          position:fixed;inset:0;z-index:300;
+          background:rgba(14,47,77,.45);
+          display:flex;align-items:flex-end;justify-content:center;
+        }
+        .biawin-modal-panel{
+          width:100%;
+          max-height:88dvh;
+          border-radius:${radius.xl}px ${radius.xl}px 0 0;
+          padding:10px 20px calc(20px + env(safe-area-inset-bottom, 0px));
+          display:flex;
+          flex-direction:column;
+          overflow:hidden;
+        }
+        .biawin-modal-grabber{
+          width:40px;height:4px;border-radius:999px;background:${color.line};
+          margin:0 auto 14px;flex:0 0 auto;
+        }
+        .biawin-modal-body{
+          overflow-y:auto;
+          -webkit-overflow-scrolling:touch;
+        }
+        @media (min-width:${breakpoint.sm + 1}px){
+          .biawin-modal-overlay{align-items:center;padding:20px;}
+          .biawin-modal-panel{
+            width:min(100%, 420px);
+            max-height:85dvh;
+            border-radius:${radius.xl}px;
+            padding:24px;
+          }
+          .biawin-modal-grabber{display:none;}
+        }
+      `}</style>
     </div>
   );
 }
