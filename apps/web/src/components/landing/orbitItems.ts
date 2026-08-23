@@ -1,41 +1,20 @@
 /**
  * The floating category bubbles on the Orbit Landing — data-driven, not
- * hardcoded markup. `useOrbitItems()` is the seam this is meant to be
- * fetched through: today it returns the mock list below (filtered/sorted
- * exactly the way a real API response would need to be consumed); once an
- * Admin-managed Orbit endpoint exists, only this file's hook body needs to
- * change to a real fetch — OrbitStage/OrbitBubble consume the same
- * `OrbitItem[]` contract either way.
+ * hardcoded markup. `useOrbitItems()` fetches the Admin-managed catalog from
+ * `GET /api/v1/orbit-items` (Stage 2); OrbitStage/OrbitBubble consume the
+ * exact same `OrbitItem[]` contract as before, unchanged.
  *
- * FROZEN 12-item production catalog (Stage 1.9) — ids/titles match
- * docs/13-production-orbit-asset-spec.md exactly. Superseded the original
- * 13-item prototype list: `stationery` removed (no asset was ever produced
- * for it), `grocery`+`meat` merged into one `food` item (the generated
- * "food" basket asset matched `grocery`'s slot/title far better than
- * `meat`'s — see docs/15-orbit-asset-qa-report-batch2.md), `sports` added.
- * `id`s that changed from the original prototype list to match the frozen
- * spec: car -> vehicle, jewelry -> gold-jewelry, appliances ->
- * home-appliance, cosmetics -> beauty, grocery -> food.
- *
- * Position/animation values are still the prototype's original resolved
- * cascade (biawin_single_file_app_requested_edits_v16_clean.html,
- * <style id="biawin-orbit-motion-bubbles-css">) for the 10 items that keep
- * their original ring slot. The two structural changes reuse existing
- * slots rather than inventing new geometry: `food` keeps the former
- * `grocery` slot, and `sports` takes over the freed `meat` slot (removed
- * `stationery`'s slot is simply dropped — the ring now renders 12 bubbles,
- * not 13). No animation/layout/responsive code changed for this — only
- * this data array.
- *
- * `image`: 10 of 12 items have a real, QA'd asset (see
- * docs/14-orbit-asset-qa-report.md and
- * docs/15-orbit-asset-qa-report-batch2.md for the full pass/fail record).
- * `insurance` still keeps OrbitBubble's placeholder — its regenerated
- * asset still shows two distinct objects (a notebook + a shield) rather
- * than one; needs another regeneration pass, not a code change.
+ * `FALLBACK_ORBIT_ITEMS` below is NOT the data source — it's what renders
+ * for the one paint before the fetch resolves, and what stays up if the API
+ * request fails (offline, backend down, etc.). The Orbit must never render
+ * empty. Its values are a frozen snapshot of the Stage 1.9 production
+ * catalog (docs/13-production-orbit-asset-spec.md) purely so that snapshot
+ * matches the real data byte-for-byte in the common case — it is not kept
+ * in sync with Admin edits and must never be treated as authoritative.
  */
 
-import { useMemo } from "react";
+import { useEffect, useState } from "react";
+import { apiClient } from "../../lib/api-client";
 
 export type OrbitBubbleVariant = "a" | "b" | "c" | "d";
 
@@ -63,7 +42,31 @@ export interface OrbitItem {
   animation: OrbitItemAnimation;
 }
 
-const MOCK_ORBIT_ITEMS: OrbitItem[] = [
+/** Shape returned by `GET /api/v1/orbit-items` (backend/src/modules/orbit-items). */
+interface OrbitItemApiResponse {
+  id: string;
+  title: string;
+  imageKey: string | null;
+  imageUrl: string | null;
+  sortOrder: number;
+  position: OrbitItemPosition;
+  animation: OrbitItemAnimation;
+  active: boolean;
+}
+
+function toOrbitItem(item: OrbitItemApiResponse): OrbitItem {
+  return {
+    id: item.id,
+    title: item.title,
+    image: item.imageUrl ?? undefined,
+    order: item.sortOrder,
+    active: item.active,
+    position: item.position,
+    animation: item.animation,
+  };
+}
+
+const FALLBACK_ORBIT_ITEMS: OrbitItem[] = [
   { id: "food", title: "خرید روزمره", image: "/orbit/orbit_11_food.webp", order: 1, active: true, position: { leftPercent: 29.2, topPercent: 29.0 }, animation: { variant: "a", delaySeconds: -0.0 } },
   { id: "clothing", title: "پوشاک", image: "/orbit/orbit_01_clothing.webp", order: 2, active: true, position: { leftPercent: 50.0, topPercent: 25.4 }, animation: { variant: "b", delaySeconds: -0.47 } },
   { id: "motorcycle", title: "موتورسیکلت", image: "/orbit/orbit_09_motorcycle.webp", order: 3, active: true, position: { leftPercent: 69.1, topPercent: 29.9 }, animation: { variant: "c", delaySeconds: -0.94 } },
@@ -79,15 +82,39 @@ const MOCK_ORBIT_ITEMS: OrbitItem[] = [
 ];
 
 /**
- * The data-layer seam for Orbit items. Swap the body for a real fetch
- * (e.g. `useSWR('/api/v1/orbit-items', ...)`) once the Admin-managed
- * endpoint exists; callers already only ever see a sorted, active-only list.
+ * The data-layer seam for Orbit items — fetches `GET /api/v1/orbit-items`
+ * (public, no auth) and returns the active/sorted list. Renders
+ * `FALLBACK_ORBIT_ITEMS` for the first paint and if the request fails;
+ * swaps to live data once it resolves. Callers only ever see a sorted,
+ * active-only `OrbitItem[]`, exactly as before this was API-backed.
  */
 export function useOrbitItems(): OrbitItem[] {
-  return useMemo(
-    () => MOCK_ORBIT_ITEMS.filter((item) => item.active).sort((a, b) => a.order - b.order),
-    [],
-  );
+  const [items, setItems] = useState<OrbitItem[]>(FALLBACK_ORBIT_ITEMS);
+
+  useEffect(() => {
+    let cancelled = false;
+
+    apiClient
+      .get<OrbitItemApiResponse[]>("/orbit-items", { public: true })
+      .then((data) => {
+        if (cancelled) return;
+        setItems(
+          data
+            .filter((item) => item.active)
+            .sort((a, b) => a.sortOrder - b.sortOrder)
+            .map(toOrbitItem),
+        );
+      })
+      .catch(() => {
+        // Keep the fallback catalog — the Orbit must never render empty.
+      });
+
+    return () => {
+      cancelled = true;
+    };
+  }, []);
+
+  return items;
 }
 
 /** Animation-in-place variants; each gets its own subtle drift keyframe + duration. */

@@ -377,13 +377,37 @@ model Category {
   sortOrder   Int      @default(0)
   active      Boolean  @default(true)
 
-  services Service[]
-  plans    MembershipPlan[] @relation("PlanCategories")
+  services   Service[]
+  plans      MembershipPlan[] @relation("PlanCategories")
+  orbitItems OrbitItem[]
 
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
 
   @@map("categories")
+}
+
+// Landing page Orbit bubbles — Admin-managed replacement for the frozen
+// static catalog (see docs/11-orbit-asset-system.md). `positionConfig` /
+// `animationConfig` mirror the frontend's OrbitItemPosition/OrbitItemAnimation
+// shape verbatim (kept as Json so Admin can tune them without a migration).
+model OrbitItem {
+  id         String   @id @default(uuid())
+  slug       String   @unique
+  title      String
+  categoryId String?
+  category   Category? @relation(fields: [categoryId], references: [id])
+  imageKey   String?
+  sortOrder  Int      @default(0)
+  isActive   Boolean  @default(true)
+
+  positionConfig  Json // { leftPercent: number, topPercent: number }
+  animationConfig Json // { variant: "a" | "b" | "c" | "d", delaySeconds: number }
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@map("orbit_items")
 }
 
 model Merchant {

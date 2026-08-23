@@ -440,6 +440,31 @@ const rewards = [
   { title: 'پک هدیه کودک', cost: 290_000, description: 'پک هدیه مناسب کودکان.' },
 ];
 
+// ---------------------------------------------------------------------------
+// Orbit items — the frozen 12-item Landing catalog (Stage 1.9). ids/order/
+// position/animation are transcribed verbatim from
+// apps/web/src/components/landing/orbitItems.ts's MOCK_ORBIT_ITEMS so the
+// Admin-managed catalog starts identical to what's already live. `imageKey`
+// is set for the 11 items with a real, QA'd asset in apps/web/public/orbit/
+// (see docs/14-orbit-asset-qa-report.md, docs/15-orbit-asset-qa-report-batch2.md);
+// `insurance` has none yet and keeps OrbitBubble's placeholder.
+// ---------------------------------------------------------------------------
+
+const orbitItems = [
+  { slug: 'food', title: 'خرید روزمره', imageKey: 'orbit/orbit_11_food.webp', sortOrder: 1, positionConfig: { leftPercent: 29.2, topPercent: 29.0 }, animationConfig: { variant: 'a', delaySeconds: -0.0 } },
+  { slug: 'clothing', title: 'پوشاک', imageKey: 'orbit/orbit_01_clothing.webp', sortOrder: 2, positionConfig: { leftPercent: 50.0, topPercent: 25.4 }, animationConfig: { variant: 'b', delaySeconds: -0.47 } },
+  { slug: 'motorcycle', title: 'موتورسیکلت', imageKey: 'orbit/orbit_09_motorcycle.webp', sortOrder: 3, positionConfig: { leftPercent: 69.1, topPercent: 29.9 }, animationConfig: { variant: 'c', delaySeconds: -0.94 } },
+  { slug: 'vehicle', title: 'خودرو', imageKey: 'orbit/orbit_02_vehicle.webp', sortOrder: 4, positionConfig: { leftPercent: 84.5, topPercent: 37.7 }, animationConfig: { variant: 'd', delaySeconds: -1.41 } },
+  { slug: 'gold-jewelry', title: 'طلا و جواهر', imageKey: 'orbit/orbit_03_gold-jewelry.webp', sortOrder: 5, positionConfig: { leftPercent: 86.6, topPercent: 47.8 }, animationConfig: { variant: 'b', delaySeconds: -1.88 } },
+  { slug: 'tourism', title: 'گردشگری', imageKey: 'orbit/orbit_04_tourism.webp', sortOrder: 6, positionConfig: { leftPercent: 84.5, topPercent: 58.0 }, animationConfig: { variant: 'a', delaySeconds: -2.35 } },
+  { slug: 'home-appliance', title: 'لوازم خانگی', imageKey: 'orbit/orbit_05_home-appliance.webp', sortOrder: 7, positionConfig: { leftPercent: 75.5, topPercent: 67.9 }, animationConfig: { variant: 'c', delaySeconds: -2.82 } },
+  { slug: 'carpet', title: 'فرش', imageKey: 'orbit/orbit_10_carpet.webp', sortOrder: 8, positionConfig: { leftPercent: 54.7, topPercent: 73.3 }, animationConfig: { variant: 'd', delaySeconds: -0.0 } },
+  { slug: 'beauty', title: 'زیبایی', imageKey: 'orbit/orbit_06_beauty.webp', sortOrder: 9, positionConfig: { leftPercent: 37.2, topPercent: 74.0 }, animationConfig: { variant: 'a', delaySeconds: -0.47 } },
+  { slug: 'digital', title: 'دیجیتال', imageKey: 'orbit/orbit_07_digital.webp', sortOrder: 10, positionConfig: { leftPercent: 19.1, topPercent: 68.2 }, animationConfig: { variant: 'b', delaySeconds: -0.94 } },
+  { slug: 'insurance', title: 'بیمه', imageKey: null, sortOrder: 11, positionConfig: { leftPercent: 11.2, topPercent: 58.0 }, animationConfig: { variant: 'c', delaySeconds: -1.41 } },
+  { slug: 'sports', title: 'باشگاه و ورزش', imageKey: 'orbit/orbit_12_sports.webp', sortOrder: 12, positionConfig: { leftPercent: 15.4, topPercent: 38.9 }, animationConfig: { variant: 'a', delaySeconds: -2.35 } },
+];
+
 async function main() {
   console.log('Seeding categories + services...');
   for (const cat of categories) {
@@ -514,6 +539,24 @@ async function main() {
       await prisma.reward.update({ where: { id: existing.id }, data: reward });
     } else {
       await prisma.reward.create({ data: reward });
+    }
+  }
+
+  console.log('Seeding orbit items...');
+  for (const item of orbitItems) {
+    const existing = await prisma.orbitItem.findFirst({ where: { slug: item.slug } });
+    const data = {
+      slug: item.slug,
+      title: item.title,
+      imageKey: item.imageKey,
+      sortOrder: item.sortOrder,
+      positionConfig: item.positionConfig,
+      animationConfig: item.animationConfig,
+    };
+    if (existing) {
+      await prisma.orbitItem.update({ where: { id: existing.id }, data });
+    } else {
+      await prisma.orbitItem.create({ data });
     }
   }
 

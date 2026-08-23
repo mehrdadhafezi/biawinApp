@@ -22,6 +22,7 @@ import { InstallmentsModule } from './modules/installments/installments.module';
 import { MembershipModule } from './modules/membership/membership.module';
 import { MerchantsModule } from './modules/merchants/merchants.module';
 import { NotificationsModule } from './modules/notifications/notifications.module';
+import { OrbitItemsModule } from './modules/orbit-items/orbit-items.module';
 import { OrdersModule } from './modules/orders/orders.module';
 import { PaymentsModule } from './modules/payments/payments.module';
 import { ProfilesModule } from './modules/profiles/profiles.module';
@@ -64,6 +65,7 @@ import { WalletModule } from './modules/wallet/wallet.module';
     ServicesModule,
     CategoriesModule,
     MerchantsModule,
+    OrbitItemsModule,
     OrdersModule,
     PaymentsModule,
     RewardsModule,
