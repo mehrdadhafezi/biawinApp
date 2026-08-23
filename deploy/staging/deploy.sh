@@ -64,7 +64,15 @@ if [ "$ok" -ne 1 ]; then
   fail "deploy did not pass health check"
 fi
 
-if ! curl -fsS http://127.0.0.1:3001/ >/dev/null 2>&1; then
+web_ok=0
+for i in $(seq 1 30); do
+  if curl -fsS http://127.0.0.1:3001/ >/dev/null 2>&1; then
+    web_ok=1
+    break
+  fi
+  sleep 2
+done
+if [ "$web_ok" -ne 1 ]; then
   fail "web did not respond on 127.0.0.1:3001 after deploy"
 fi
 
