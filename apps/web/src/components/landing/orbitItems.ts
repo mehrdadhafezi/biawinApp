@@ -11,12 +11,17 @@
  * prototype's final resolved cascade
  * (biawin_single_file_app_requested_edits_v16_clean.html,
  * <style id="biawin-orbit-motion-bubbles-css">) — not re-derived or guessed.
- * `image` is intentionally unset for every item: the prototype itself ships
- * these bubbles with an empty `src=""` (confirmed — not a truncation
- * artifact of the analysis copy), so there is no real asset to carry over
- * yet. OrbitBubble renders a neutral placeholder whenever `image` is
- * absent; populate it here (or from the real API response) once real
- * category art exists — no layout change required either way.
+ *
+ * `image`: only 4 of 13 items have a real asset wired in
+ * (clothing/car/motorcycle/carpet, served from apps/web/public/orbit/ —
+ * the interim static path documented in assets/orbit/README.md, pending
+ * the real Media Library/API). The other 9 generated files
+ * (docs/13-production-orbit-asset-spec.md) failed the frozen asset
+ * contract on inspection — baked-in fake-transparency checkerboard/black
+ * backgrounds instead of real alpha, multiple objects instead of one,
+ * visible background-removal halo artifacts, or (grocery/meat/sports)
+ * completely wrong subject matter — and were deliberately not connected;
+ * those items keep OrbitBubble's placeholder until re-generated.
  */
 
 import { useMemo } from "react";
@@ -49,13 +54,13 @@ export interface OrbitItem {
 
 const MOCK_ORBIT_ITEMS: OrbitItem[] = [
   { id: "grocery", title: "سبد مواد غذایی", order: 1, active: true, position: { leftPercent: 29.2, topPercent: 29.0 }, animation: { variant: "a", delaySeconds: -0.0 } },
-  { id: "clothing", title: "پوشاک", order: 2, active: true, position: { leftPercent: 50.0, topPercent: 25.4 }, animation: { variant: "b", delaySeconds: -0.47 } },
-  { id: "motorcycle", title: "موتورسیکلت", order: 3, active: true, position: { leftPercent: 69.1, topPercent: 29.9 }, animation: { variant: "c", delaySeconds: -0.94 } },
-  { id: "car", title: "خودرو", order: 4, active: true, position: { leftPercent: 84.5, topPercent: 37.7 }, animation: { variant: "d", delaySeconds: -1.41 } },
+  { id: "clothing", title: "پوشاک", image: "/orbit/orbit_01_clothing.webp", order: 2, active: true, position: { leftPercent: 50.0, topPercent: 25.4 }, animation: { variant: "b", delaySeconds: -0.47 } },
+  { id: "motorcycle", title: "موتورسیکلت", image: "/orbit/orbit_09_motorcycle.webp", order: 3, active: true, position: { leftPercent: 69.1, topPercent: 29.9 }, animation: { variant: "c", delaySeconds: -0.94 } },
+  { id: "car", title: "خودرو", image: "/orbit/orbit_02_vehicle.webp", order: 4, active: true, position: { leftPercent: 84.5, topPercent: 37.7 }, animation: { variant: "d", delaySeconds: -1.41 } },
   { id: "jewelry", title: "طلا و جواهر", order: 5, active: true, position: { leftPercent: 86.6, topPercent: 47.8 }, animation: { variant: "b", delaySeconds: -1.88 } },
   { id: "tourism", title: "گردشگری", order: 6, active: true, position: { leftPercent: 84.5, topPercent: 58.0 }, animation: { variant: "a", delaySeconds: -2.35 } },
   { id: "appliances", title: "لوازم خانگی", order: 7, active: true, position: { leftPercent: 75.5, topPercent: 67.9 }, animation: { variant: "c", delaySeconds: -2.82 } },
-  { id: "carpet", title: "فرش", order: 8, active: true, position: { leftPercent: 54.7, topPercent: 73.3 }, animation: { variant: "d", delaySeconds: -0.0 } },
+  { id: "carpet", title: "فرش", image: "/orbit/orbit_10_carpet.webp", order: 8, active: true, position: { leftPercent: 54.7, topPercent: 73.3 }, animation: { variant: "d", delaySeconds: -0.0 } },
   { id: "cosmetics", title: "آرایشی", order: 9, active: true, position: { leftPercent: 37.2, topPercent: 74.0 }, animation: { variant: "a", delaySeconds: -0.47 } },
   { id: "digital", title: "دیجیتال", order: 10, active: true, position: { leftPercent: 19.1, topPercent: 68.2 }, animation: { variant: "b", delaySeconds: -0.94 } },
   { id: "insurance", title: "بیمه", order: 11, active: true, position: { leftPercent: 11.2, topPercent: 58.0 }, animation: { variant: "c", delaySeconds: -1.41 } },
