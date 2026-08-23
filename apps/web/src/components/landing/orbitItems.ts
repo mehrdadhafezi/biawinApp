@@ -7,29 +7,32 @@
  * change to a real fetch — OrbitStage/OrbitBubble consume the same
  * `OrbitItem[]` contract either way.
  *
- * Initial positions/delays/variants below are taken directly from the
- * prototype's final resolved cascade
- * (biawin_single_file_app_requested_edits_v16_clean.html,
- * <style id="biawin-orbit-motion-bubbles-css">) — not re-derived or guessed.
+ * FROZEN 12-item production catalog (Stage 1.9) — ids/titles match
+ * docs/13-production-orbit-asset-spec.md exactly. Superseded the original
+ * 13-item prototype list: `stationery` removed (no asset was ever produced
+ * for it), `grocery`+`meat` merged into one `food` item (the generated
+ * "food" basket asset matched `grocery`'s slot/title far better than
+ * `meat`'s — see docs/15-orbit-asset-qa-report-batch2.md), `sports` added.
+ * `id`s that changed from the original prototype list to match the frozen
+ * spec: car -> vehicle, jewelry -> gold-jewelry, appliances ->
+ * home-appliance, cosmetics -> beauty, grocery -> food.
  *
- * `image`: 10 of 13 items now have a real asset wired in, served from
- * apps/web/public/orbit/ (the interim static path documented in
- * assets/orbit/README.md, pending the real Media Library/API). Every
- * asset was visually inspected against the frozen contract
- * (docs/13-production-orbit-asset-spec.md) before being connected — see
- * docs/14-orbit-asset-qa-report.md and docs/15-orbit-asset-qa-report-batch2.md
- * for the full per-item pass/fail record across both generation batches.
- * `insurance`, `stationery`, and `meat` keep OrbitBubble's placeholder:
- * `insurance`'s regenerated asset still shows two distinct objects (a
- * notebook + a shield) rather than one; no asset was ever generated
- * specifically for `stationery` or `meat` (the generated "food" asset was
- * used for `grocery` instead, since its basket imagery matches that
- * item's title far better). A `sports` asset also exists
- * (apps/web/public/orbit/orbit_12_sports.webp) and passed QA, but has no
- * corresponding item in this 13-item list — wiring it in requires the
- * 13-to-12-item catalog restructuring documented in
- * docs/12-orbit-item-catalog.md / docs/13-production-orbit-asset-spec.md,
- * which is a separate, not-yet-applied change.
+ * Position/animation values are still the prototype's original resolved
+ * cascade (biawin_single_file_app_requested_edits_v16_clean.html,
+ * <style id="biawin-orbit-motion-bubbles-css">) for the 10 items that keep
+ * their original ring slot. The two structural changes reuse existing
+ * slots rather than inventing new geometry: `food` keeps the former
+ * `grocery` slot, and `sports` takes over the freed `meat` slot (removed
+ * `stationery`'s slot is simply dropped — the ring now renders 12 bubbles,
+ * not 13). No animation/layout/responsive code changed for this — only
+ * this data array.
+ *
+ * `image`: 10 of 12 items have a real, QA'd asset (see
+ * docs/14-orbit-asset-qa-report.md and
+ * docs/15-orbit-asset-qa-report-batch2.md for the full pass/fail record).
+ * `insurance` still keeps OrbitBubble's placeholder — its regenerated
+ * asset still shows two distinct objects (a notebook + a shield) rather
+ * than one; needs another regeneration pass, not a code change.
  */
 
 import { useMemo } from "react";
@@ -61,19 +64,18 @@ export interface OrbitItem {
 }
 
 const MOCK_ORBIT_ITEMS: OrbitItem[] = [
-  { id: "grocery", title: "سبد مواد غذایی", image: "/orbit/orbit_11_food.webp", order: 1, active: true, position: { leftPercent: 29.2, topPercent: 29.0 }, animation: { variant: "a", delaySeconds: -0.0 } },
+  { id: "food", title: "خرید روزمره", image: "/orbit/orbit_11_food.webp", order: 1, active: true, position: { leftPercent: 29.2, topPercent: 29.0 }, animation: { variant: "a", delaySeconds: -0.0 } },
   { id: "clothing", title: "پوشاک", image: "/orbit/orbit_01_clothing.webp", order: 2, active: true, position: { leftPercent: 50.0, topPercent: 25.4 }, animation: { variant: "b", delaySeconds: -0.47 } },
   { id: "motorcycle", title: "موتورسیکلت", image: "/orbit/orbit_09_motorcycle.webp", order: 3, active: true, position: { leftPercent: 69.1, topPercent: 29.9 }, animation: { variant: "c", delaySeconds: -0.94 } },
-  { id: "car", title: "خودرو", image: "/orbit/orbit_02_vehicle.webp", order: 4, active: true, position: { leftPercent: 84.5, topPercent: 37.7 }, animation: { variant: "d", delaySeconds: -1.41 } },
-  { id: "jewelry", title: "طلا و جواهر", image: "/orbit/orbit_03_gold-jewelry.webp", order: 5, active: true, position: { leftPercent: 86.6, topPercent: 47.8 }, animation: { variant: "b", delaySeconds: -1.88 } },
+  { id: "vehicle", title: "خودرو", image: "/orbit/orbit_02_vehicle.webp", order: 4, active: true, position: { leftPercent: 84.5, topPercent: 37.7 }, animation: { variant: "d", delaySeconds: -1.41 } },
+  { id: "gold-jewelry", title: "طلا و جواهر", image: "/orbit/orbit_03_gold-jewelry.webp", order: 5, active: true, position: { leftPercent: 86.6, topPercent: 47.8 }, animation: { variant: "b", delaySeconds: -1.88 } },
   { id: "tourism", title: "گردشگری", image: "/orbit/orbit_04_tourism.webp", order: 6, active: true, position: { leftPercent: 84.5, topPercent: 58.0 }, animation: { variant: "a", delaySeconds: -2.35 } },
-  { id: "appliances", title: "لوازم خانگی", image: "/orbit/orbit_05_home-appliance.webp", order: 7, active: true, position: { leftPercent: 75.5, topPercent: 67.9 }, animation: { variant: "c", delaySeconds: -2.82 } },
+  { id: "home-appliance", title: "لوازم خانگی", image: "/orbit/orbit_05_home-appliance.webp", order: 7, active: true, position: { leftPercent: 75.5, topPercent: 67.9 }, animation: { variant: "c", delaySeconds: -2.82 } },
   { id: "carpet", title: "فرش", image: "/orbit/orbit_10_carpet.webp", order: 8, active: true, position: { leftPercent: 54.7, topPercent: 73.3 }, animation: { variant: "d", delaySeconds: -0.0 } },
-  { id: "cosmetics", title: "آرایشی", image: "/orbit/orbit_06_beauty.webp", order: 9, active: true, position: { leftPercent: 37.2, topPercent: 74.0 }, animation: { variant: "a", delaySeconds: -0.47 } },
+  { id: "beauty", title: "زیبایی", image: "/orbit/orbit_06_beauty.webp", order: 9, active: true, position: { leftPercent: 37.2, topPercent: 74.0 }, animation: { variant: "a", delaySeconds: -0.47 } },
   { id: "digital", title: "دیجیتال", image: "/orbit/orbit_07_digital.webp", order: 10, active: true, position: { leftPercent: 19.1, topPercent: 68.2 }, animation: { variant: "b", delaySeconds: -0.94 } },
   { id: "insurance", title: "بیمه", order: 11, active: true, position: { leftPercent: 11.2, topPercent: 58.0 }, animation: { variant: "c", delaySeconds: -1.41 } },
-  { id: "stationery", title: "لوازم تحریر", order: 12, active: true, position: { leftPercent: 11.2, topPercent: 48.1 }, animation: { variant: "d", delaySeconds: -1.88 } },
-  { id: "meat", title: "مرغ، گوشت و ماهی", order: 13, active: true, position: { leftPercent: 15.4, topPercent: 38.9 }, animation: { variant: "a", delaySeconds: -2.35 } },
+  { id: "sports", title: "باشگاه و ورزش", image: "/orbit/orbit_12_sports.webp", order: 12, active: true, position: { leftPercent: 15.4, topPercent: 38.9 }, animation: { variant: "a", delaySeconds: -2.35 } },
 ];
 
 /**
