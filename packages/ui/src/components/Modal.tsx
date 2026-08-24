@@ -37,10 +37,15 @@ export function Modal({ open, onClose, children, style, ...props }: ModalProps) 
       </div>
 
       <style>{`
+        @keyframes biawinModalOverlayIn{from{opacity:0}to{opacity:1}}
+        @keyframes biawinModalSheetIn{from{transform:translateY(100%)}to{transform:translateY(0)}}
+        @keyframes biawinModalDialogIn{from{opacity:0;transform:scale(.96)}to{opacity:1;transform:scale(1)}}
+
         .biawin-modal-overlay{
           position:fixed;inset:0;z-index:300;
           background:rgba(14,47,77,.45);
           display:flex;align-items:flex-end;justify-content:center;
+          animation:biawinModalOverlayIn .18s ease-out;
         }
         .biawin-modal-panel{
           width:100%;
@@ -50,6 +55,7 @@ export function Modal({ open, onClose, children, style, ...props }: ModalProps) 
           display:flex;
           flex-direction:column;
           overflow:hidden;
+          animation:biawinModalSheetIn .22s cubic-bezier(.22,.8,.36,1);
         }
         .biawin-modal-grabber{
           width:40px;height:4px;border-radius:999px;background:${color.line};
@@ -66,8 +72,12 @@ export function Modal({ open, onClose, children, style, ...props }: ModalProps) 
             max-height:85dvh;
             border-radius:${radius.xl}px;
             padding:24px;
+            animation:biawinModalDialogIn .18s ease-out;
           }
           .biawin-modal-grabber{display:none;}
+        }
+        @media (prefers-reduced-motion:reduce){
+          .biawin-modal-overlay,.biawin-modal-panel{animation:none;}
         }
       `}</style>
     </div>
