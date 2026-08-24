@@ -77,7 +77,7 @@ const FALLBACK_ORBIT_ITEMS: OrbitItem[] = [
   { id: "carpet", title: "فرش", image: "/orbit/orbit_10_carpet.webp", order: 8, active: true, position: { leftPercent: 54.7, topPercent: 73.3 }, animation: { variant: "d", delaySeconds: -0.0 } },
   { id: "beauty", title: "زیبایی", image: "/orbit/orbit_06_beauty.webp", order: 9, active: true, position: { leftPercent: 37.2, topPercent: 74.0 }, animation: { variant: "a", delaySeconds: -0.47 } },
   { id: "digital", title: "دیجیتال", image: "/orbit/orbit_07_digital.webp", order: 10, active: true, position: { leftPercent: 19.1, topPercent: 68.2 }, animation: { variant: "b", delaySeconds: -0.94 } },
-  { id: "insurance", title: "بیمه", order: 11, active: true, position: { leftPercent: 11.2, topPercent: 58.0 }, animation: { variant: "c", delaySeconds: -1.41 } },
+  { id: "insurance", title: "بیمه", image: "/orbit/orbit_08_insurance.webp", order: 11, active: true, position: { leftPercent: 11.2, topPercent: 58.0 }, animation: { variant: "c", delaySeconds: -1.41 } },
   { id: "sports", title: "باشگاه و ورزش", image: "/orbit/orbit_12_sports.webp", order: 12, active: true, position: { leftPercent: 15.4, topPercent: 38.9 }, animation: { variant: "a", delaySeconds: -2.35 } },
 ];
 

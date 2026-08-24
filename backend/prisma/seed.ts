@@ -445,9 +445,11 @@ const rewards = [
 // position/animation are transcribed verbatim from
 // apps/web/src/components/landing/orbitItems.ts's MOCK_ORBIT_ITEMS so the
 // Admin-managed catalog starts identical to what's already live. `imageKey`
-// is set for the 11 items with a real, QA'd asset in apps/web/public/orbit/
-// (see docs/14-orbit-asset-qa-report.md, docs/15-orbit-asset-qa-report-batch2.md);
-// `insurance` has none yet and keeps OrbitBubble's placeholder.
+// is set for all 12 items with a real, QA'd asset in apps/web/public/orbit/
+// (see docs/14-orbit-asset-qa-report.md, docs/15-orbit-asset-qa-report-batch2.md;
+// `insurance` passed QA last, after two rejected CGI-badge attempts — a real
+// photographed shield keychain, single object, real alpha, unclipped by the
+// circular bubble mask).
 // ---------------------------------------------------------------------------
 
 const orbitItems = [
@@ -461,7 +463,7 @@ const orbitItems = [
   { slug: 'carpet', title: 'فرش', imageKey: 'orbit/orbit_10_carpet.webp', sortOrder: 8, positionConfig: { leftPercent: 54.7, topPercent: 73.3 }, animationConfig: { variant: 'd', delaySeconds: -0.0 } },
   { slug: 'beauty', title: 'زیبایی', imageKey: 'orbit/orbit_06_beauty.webp', sortOrder: 9, positionConfig: { leftPercent: 37.2, topPercent: 74.0 }, animationConfig: { variant: 'a', delaySeconds: -0.47 } },
   { slug: 'digital', title: 'دیجیتال', imageKey: 'orbit/orbit_07_digital.webp', sortOrder: 10, positionConfig: { leftPercent: 19.1, topPercent: 68.2 }, animationConfig: { variant: 'b', delaySeconds: -0.94 } },
-  { slug: 'insurance', title: 'بیمه', imageKey: null, sortOrder: 11, positionConfig: { leftPercent: 11.2, topPercent: 58.0 }, animationConfig: { variant: 'c', delaySeconds: -1.41 } },
+  { slug: 'insurance', title: 'بیمه', imageKey: 'orbit/orbit_08_insurance.webp', sortOrder: 11, positionConfig: { leftPercent: 11.2, topPercent: 58.0 }, animationConfig: { variant: 'c', delaySeconds: -1.41 } },
   { slug: 'sports', title: 'باشگاه و ورزش', imageKey: 'orbit/orbit_12_sports.webp', sortOrder: 12, positionConfig: { leftPercent: 15.4, topPercent: 38.9 }, animationConfig: { variant: 'a', delaySeconds: -2.35 } },
 ];
 
