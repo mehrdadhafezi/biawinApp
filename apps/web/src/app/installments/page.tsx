@@ -42,7 +42,7 @@ export default function InstallmentsPage() {
   }, []);
 
   return (
-    <AppShell activeNavKey="home" pageLabel="اقساط من">
+    <AppShell activeNavKey="home">
       <SkeletonStyles />
       {selectedId ? (
         <InstallmentDetail installmentId={selectedId} onBack={() => setSelectedId(null)} />

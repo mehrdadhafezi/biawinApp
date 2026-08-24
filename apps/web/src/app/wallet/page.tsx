@@ -14,7 +14,7 @@ import { AppShell } from "../../components/shell/AppShell";
  */
 export default function WalletPage() {
   return (
-    <AppShell activeNavKey="home" pageLabel="کیف پول">
+    <AppShell activeNavKey="home">
       <SkeletonStyles />
       <WalletSummary />
       <TransactionList />

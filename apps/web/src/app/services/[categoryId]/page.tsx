@@ -21,9 +21,6 @@ export default function ServiceCategoryPage() {
   const params = useParams<{ categoryId: string }>();
   const { categories, services, error } = useServiceCatalog();
 
-  const activeCategory = categories?.find((c) => c.id === params.categoryId) ?? null;
-  const pageLabel = activeCategory?.name ?? "خدمات";
-
   const filteredServices = useMemo(() => {
     if (services === null) return null;
     return services.filter((s) => s.categoryId === params.categoryId);
@@ -38,7 +35,7 @@ export default function ServiceCategoryPage() {
   }
 
   return (
-    <AppShell activeNavKey="services" pageLabel={pageLabel}>
+    <AppShell activeNavKey="services">
       <div style={{ display: "flex", flexDirection: "column", gap: spacing.md }}>
         <CategorySelector categories={categories} activeCategoryId={params.categoryId} onSelect={handleSelectCategory} />
         <ServiceGrid services={filteredServices} error={error} onSelect={handleSelectService} />

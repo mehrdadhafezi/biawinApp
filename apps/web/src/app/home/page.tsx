@@ -1,42 +1,58 @@
 "use client";
 
-import { NotificationButton } from "../../components/common/NotificationButton";
 import { SkeletonStyles } from "../../components/common/SkeletonBlock";
-import { AccountFinancialCards } from "../../components/home/AccountFinancialCards";
-import { BenefitsSection } from "../../components/home/BenefitsSection";
-import { FeaturedServiceBanner } from "../../components/home/FeaturedServiceBanner";
-import { HeroCardCarousel } from "../../components/home/HeroCardCarousel";
+import { AppShell } from "../../components/shell/AppShell";
 import { HomeStories } from "../../components/home/HomeStories";
-import { MembershipStories } from "../../components/home/MembershipStories";
-import { QuickActionsGrid } from "../../components/home/QuickActionsGrid";
-import { ServiceTicker } from "../../components/home/ServiceTicker";
+import { BiawinCardsCarousel } from "../../components/home/BiawinCardsCarousel";
+import { QuickActions } from "../../components/home/QuickActions";
+import { BrandIntroduction } from "../../components/home/BrandIntroduction";
+import { CategoriesSection } from "../../components/home/CategoriesSection";
+import { ServiceBannerGrid } from "../../components/home/ServiceBannerGrid";
+import { MembershipStoryStrip } from "../../components/home/MembershipStoryStrip";
+import { ServiceMosaic } from "../../components/home/ServiceMosaic";
+import { NewsCarousel } from "../../components/home/NewsCarousel";
 import { useCategories } from "../../components/home/useCategories";
 import { useMembershipSummary } from "../../components/home/useMembershipSummary";
-import { AppShell } from "../../components/shell/AppShell";
 
 /**
- * Home Dashboard — Stage 5.2 moves identity-fetching and header
- * composition into `AppShell` itself (docs/navigation-route-contract.md
- * §4: "سلام {firstName} / خلاصه حساب"), replacing Stage 5.1's Home-only
- * `HomeHeader`. Dashboard content (stories, cards, quick actions, ...) is
- * unchanged from Stage 4.3.
+ * Home Dashboard — Biawin Home Screen Pixel Perfect Migration. Rebuilt to
+ * reproduce `#view-home` in `biawin_single_file_app_requested_edits_v15.html`
+ * exactly (structure, copy, spacing, colors), superseding Stage 4.1–4.4's
+ * "Home Dashboard v1: FROZEN" design system version. Section order matches
+ * the prototype's own document order:
+ *
+ *   AppHeader (AppShell) → HomeStories → BiawinCardsCarousel →
+ *   QuickActions → BrandIntroduction → CategoriesSection →
+ *   ServiceBannerGrid + MembershipStoryStrip + ServiceMosaic + NewsCarousel
+ *   (AdditionalHomeSections) → BottomNavigation (AppShell)
+ *
+ * See docs/home-pixel-perfect-migration-report.md for the section-by-section
+ * mapping, what stayed real-API-backed vs. mock, and responsive verification.
  */
 export default function HomePage() {
   const membershipSummary = useMembershipSummary();
   const categoriesSummary = useCategories();
 
   return (
-    <AppShell activeNavKey="home" pageLabel="خلاصه حساب" greeting headerEnd={<NotificationButton />}>
+    <AppShell activeNavKey="home">
       <SkeletonStyles />
 
       <HomeStories />
-      <HeroCardCarousel {...membershipSummary} />
-      <QuickActionsGrid />
-      <ServiceTicker {...categoriesSummary} />
-      <FeaturedServiceBanner {...categoriesSummary} />
-      <MembershipStories {...membershipSummary} />
-      <AccountFinancialCards />
-      <BenefitsSection {...membershipSummary} />
+      <BiawinCardsCarousel />
+      <QuickActions />
+      <BrandIntroduction />
+      <CategoriesSection />
+      <ServiceBannerGrid {...categoriesSummary} />
+      <MembershipStoryStrip {...membershipSummary} />
+      <ServiceMosaic {...categoriesSummary} />
+      <NewsCarousel />
+
+      <footer style={{ padding: "26px 20px 34px", background: "#063e75", color: "#fff", textAlign: "center" }}>
+        <strong style={{ fontSize: 17 }}>بیاوین</strong>
+        <p style={{ margin: "8px auto 0", fontSize: 10, opacity: 0.68, maxWidth: 420, lineHeight: 1.9 }}>
+          باشگاه هوشمند خریدهای بزرگ اقساطی؛ یک عضویت برای دسترسی به اعتبار، خدمات و فرصت‌های بیشتر.
+        </p>
+      </footer>
     </AppShell>
   );
 }

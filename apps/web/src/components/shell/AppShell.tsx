@@ -1,39 +1,37 @@
 "use client";
 
 import { useRouter } from "next/navigation";
-import { useEffect, useState, type ReactNode } from "react";
-import type { Profile } from "@biawin/types";
+import type { ReactNode } from "react";
 import { BottomNavigation, color, layout } from "@biawin/ui";
-import { useAuth } from "../../lib/auth/auth-context";
-import { getFirstName } from "../../lib/format";
-import { usersApi } from "../../lib/users-api";
 import { AuthGuard } from "./AuthGuard";
+import { GlobalHeader } from "./GlobalHeader";
 import { BOTTOM_NAV_ITEMS, type NavKey } from "./navigation";
 import { PageContainer } from "./PageContainer";
-import { PageHeader } from "./PageHeader";
 
 export interface AppShellProps {
   /** Which bottom-nav tab to highlight. Wallet/Credit/Installments (not tabs themselves) pass "home", since they're reached from Home's Quick Actions. */
   activeNavKey: NavKey;
-  /** The header's page-context line — see docs/navigation-route-contract.md §4. */
-  pageLabel: string;
-  /** Home only: "سلام {firstName}" instead of just "{firstName}". */
-  greeting?: boolean;
-  /** GlobalHeader's `end` slot — e.g. `<NotificationButton />`. Most pages omit it. */
-  headerEnd?: ReactNode;
   children: ReactNode;
 }
 
 /**
  * The shared authenticated-app frame (docs/app-shell-contract.md,
- * docs/navigation-route-contract.md). Composes AuthGuard + PageHeader
- * (built on GlobalHeader) + PageContainer + BottomNavigation. Not used by
- * Landing — Orbit's full-bleed hero and the pre-auth flow stay exactly as
- * they are, outside this shell.
+ * docs/navigation-route-contract.md). Composes AuthGuard + GlobalHeader +
+ * PageContainer + BottomNavigation. Not used by Landing — Orbit's
+ * full-bleed hero and the pre-auth flow stay exactly as they are, outside
+ * this shell.
  *
- * Owns fetching the current user's profile once, so no individual page
- * has to duplicate that fetch just to show a name in its header (Stage
- * 5.1 had Home doing this itself; every other page would've repeated it).
+ * `GlobalHeader` and `BottomNavigation` are now fixed, pixel-matched
+ * chrome (Biawin Home Screen Pixel Perfect Migration) reproduced from
+ * `<header class="header">` / `<nav class="app-bottom-nav">` in
+ * `biawin_single_file_app_requested_edits_v15.html` — the prototype
+ * frames both as shell-level ("same across screens"), so this dropped
+ * Stage 5.2's per-page "سلام {firstName} / {pageLabel}" header
+ * (`PageHeader.tsx`, no longer used) in favor of the one fixed header
+ * every prototype view actually shares. `AppShell` no longer fetches the
+ * current user's profile itself for that reason — no page needs it here
+ * anymore; a page that still needs the profile (e.g. Profile itself,
+ * once built) fetches it directly.
  *
  * `BottomNavigation` is reused from `packages/ui` completely unmodified —
  * its own `position: fixed` normally spans the real viewport, but the
@@ -43,21 +41,8 @@ export interface AppShellProps {
  * containing block (`transform: translateZ(0)`) so the nav's `fixed`
  * positioning resolves against this 760px column instead of the window.
  */
-export function AppShell({ activeNavKey, pageLabel, greeting, headerEnd, children }: AppShellProps) {
+export function AppShell({ activeNavKey, children }: AppShellProps) {
   const router = useRouter();
-  const { isAuthenticated } = useAuth();
-  const [profile, setProfile] = useState<Profile | null>(null);
-
-  useEffect(() => {
-    if (!isAuthenticated) return;
-    usersApi
-      .getCurrentProfile()
-      .then(setProfile)
-      .catch(() => {
-        // A failed profile fetch just keeps the header's skeleton up —
-        // it shouldn't block the rest of the shell from rendering.
-      });
-  }, [isAuthenticated]);
 
   function handleNavChange(key: string) {
     if (key === activeNavKey) return;
@@ -80,7 +65,7 @@ export function AppShell({ activeNavKey, pageLabel, greeting, headerEnd, childre
             transform: "translateZ(0)",
           }}
         >
-          <PageHeader firstName={getFirstName(profile?.fullName ?? null)} pageLabel={pageLabel} greeting={greeting} end={headerEnd} />
+          <GlobalHeader />
           <PageContainer>{children}</PageContainer>
           <BottomNavigation
             items={BOTTOM_NAV_ITEMS.map((item) => ({ key: item.id, label: item.title, icon: item.icon }))}

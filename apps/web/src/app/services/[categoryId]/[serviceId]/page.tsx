@@ -44,7 +44,7 @@ export default function ServiceDetailPage() {
   }, [params.serviceId]);
 
   return (
-    <AppShell activeNavKey="services" pageLabel={service?.title ?? "خدمات"}>
+    <AppShell activeNavKey="services">
       <SkeletonStyles />
       <div style={{ display: "flex", flexDirection: "column", gap: spacing.lg }}>
         {error && <ServicesErrorState message={error} />}

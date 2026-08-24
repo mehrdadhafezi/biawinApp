@@ -1,0 +1,196 @@
+"use client";
+
+import { useRef, useState } from "react";
+import { color } from "@biawin/ui";
+
+interface CardData {
+  key: "earn" | "biawin" | "reward";
+  label: string;
+  ariaLabel: string;
+  title: string;
+  subtitle: string;
+  number: string;
+  owner: string;
+  gradient: string;
+  iconChip: "trend" | "card" | "gift";
+}
+
+/** `.hero .credit-card` — 3 static demo cards, verbatim prototype copy/numbers (this.section isn't tied to real membership status; the prototype's own cards aren't real financial products). */
+const CARDS: CardData[] = [
+  {
+    key: "earn",
+    label: "کارت درآمد",
+    ariaLabel: "مشاهده کارت کسب درآمد",
+    title: "کارت کسب درآمد",
+    subtitle: "فرصت درآمدزایی از معرفی و فعالیت در اکوسیستم بیاوین",
+    number: "6037 9918 0146 1280",
+    owner: "BIAWIN EARN",
+    gradient: "linear-gradient(135deg,#27384a 0%,#173957 52%,#0d608b 100%)",
+    iconChip: "trend",
+  },
+  {
+    key: "biawin",
+    label: "کارت اصلی",
+    ariaLabel: "مشاهده کارت بیاوین",
+    title: "کارت بیاوین",
+    subtitle: "عضویت اصلی برای دسترسی به اعتبار، خدمات و مزایای باشگاه",
+    number: "6219 8610 4432 1095",
+    owner: "BIAWIN CLUB",
+    gradient: "linear-gradient(135deg,#0f94ec 0%,#0879dc 54%,#064e91 100%)",
+    iconChip: "card",
+  },
+  {
+    key: "reward",
+    label: "کارت جایزه",
+    ariaLabel: "مشاهده کارت جایزه",
+    title: "کارت جایزه",
+    subtitle: "دریافت هدایا، امتیازها و تجربه‌های ویژه اعضای بیاوین",
+    number: "5029 0801 5538 7421",
+    owner: "BIAWIN REWARD",
+    gradient: "linear-gradient(135deg,#29a5a6 0%,#137e98 52%,#0b587d 100%)",
+    iconChip: "gift",
+  },
+];
+
+const ICONS: Record<CardData["iconChip"], string> = {
+  trend: "M4 17l5-5 4 4 7-8M15 8h5v5",
+  card: "M3 5h18v14H3zM3 10h18M7 15h3",
+  gift: "M20 12v8H4v-8M2 7h20v5H2zM12 7v13M12 7H8.5a2.5 2.5 0 1 1 2.5-2.5V7Zm0 0h3.5A2.5 2.5 0 1 0 13 4.5V7Z",
+};
+
+/**
+ * `.hero` — the "Biawin Cards" swipeable carousel: center-active card,
+ * side cards partially visible, dot pagination, chip/gradient/typography
+ * pixel-matched to `#cardTrack` in the prototype. Tapping a card would
+ * open Card Detail, which doesn't exist yet — real `disabled` buttons.
+ */
+export function BiawinCardsCarousel() {
+  const [activeIndex, setActiveIndex] = useState(1);
+  const trackRef = useRef<HTMLDivElement>(null);
+
+  function scrollToIndex(index: number) {
+    const track = trackRef.current;
+    if (!track) return;
+    const card = track.children[index] as HTMLElement | undefined;
+    card?.scrollIntoView({ behavior: "smooth", inline: "center", block: "nearest" });
+  }
+
+  function handleScroll() {
+    const track = trackRef.current;
+    if (!track) return;
+    const trackCenter = track.scrollLeft + track.clientWidth / 2;
+    let closest = 0;
+    let closestDistance = Infinity;
+    Array.from(track.children).forEach((child, i) => {
+      const el = child as HTMLElement;
+      const cardCenter = el.offsetLeft + el.clientWidth / 2;
+      const distance = Math.abs(cardCenter - trackCenter);
+      if (distance < closestDistance) {
+        closestDistance = distance;
+        closest = i;
+      }
+    });
+    setActiveIndex(closest);
+  }
+
+  return (
+    <section aria-label="کارت‌های بیاوین" style={{ position: "relative", padding: "26px 0 10px", background: "radial-gradient(circle at 50% 0, rgba(8,121,220,.14), transparent 45%), linear-gradient(180deg,#fff 0,#f8fcff 100%)" }}>
+      <div style={{ padding: "0 20px", display: "flex", justifyContent: "space-between", alignItems: "flex-end", marginBottom: 15 }}>
+        <h2 style={{ fontSize: 16, margin: 0, fontWeight: 700, color: color.ink }}>کارت‌های بیاوین</h2>
+        <span style={{ fontSize: 11, color: color.muted }}>برای مشاهده، ورق بزنید</span>
+      </div>
+
+      <div style={{ position: "relative", overflow: "hidden", padding: "3px 0 18px" }}>
+        <div ref={trackRef} onScroll={handleScroll} dir="ltr" className="biawin-card-track">
+          {CARDS.map((card, index) => (
+            <button
+              key={card.key}
+              type="button"
+              disabled
+              aria-label={`${card.ariaLabel} — به‌زودی`}
+              className="biawin-credit-card"
+              style={{
+                background: card.gradient,
+                transform: index === activeIndex ? "scale(1)" : "scale(.94)",
+                opacity: index === activeIndex ? 1 : 0.74,
+                filter: index === activeIndex ? "saturate(1.08)" : "none",
+              }}
+            >
+              <div dir="rtl" style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start", position: "relative", zIndex: 1 }}>
+                <div>
+                  <div style={{ fontWeight: 800, fontSize: 17, letterSpacing: "-.3px" }}>BiaWin</div>
+                  <div style={{ fontSize: 11, opacity: 0.82, marginTop: 4 }}>{card.label}</div>
+                </div>
+                <div
+                  style={{
+                    width: 47,
+                    height: 35,
+                    borderRadius: 10,
+                    background: "linear-gradient(135deg,#f7df95,#d5ab3c)",
+                    boxShadow: "inset 0 0 0 1px rgba(70,44,0,.14)",
+                  }}
+                />
+              </div>
+              <div dir="rtl" style={{ position: "absolute", right: 22, left: 22, top: "46%", transform: "translateY(-50%)" }}>
+                <strong style={{ fontSize: 27, display: "block", fontWeight: 800, letterSpacing: "-1px" }}>{card.title}</strong>
+                <span style={{ fontSize: 12, opacity: 0.82 }}>{card.subtitle}</span>
+              </div>
+              <div dir="rtl" style={{ position: "absolute", right: 22, left: 22, bottom: 20, display: "flex", alignItems: "flex-end", justifyContent: "space-between" }}>
+                <div>
+                  <div style={{ direction: "ltr", letterSpacing: 2, fontSize: 12, fontWeight: 600 }}>{card.number}</div>
+                  <div style={{ fontSize: 10, opacity: 0.78, marginTop: 4 }}>{card.owner}</div>
+                </div>
+                <div style={{ width: 38, height: 38, borderRadius: 14, background: "rgba(255,255,255,.14)", display: "grid", placeItems: "center" }}>
+                  <svg viewBox="0 0 24 24" width={22} fill="none" stroke="currentColor" strokeWidth={1.8}>
+                    <path d={ICONS[card.iconChip]} />
+                  </svg>
+                </div>
+              </div>
+            </button>
+          ))}
+        </div>
+      </div>
+
+      <div aria-label="انتخاب کارت" style={{ display: "flex", justifyContent: "center", gap: 7, alignItems: "center", direction: "ltr" }}>
+        {CARDS.map((card, index) => (
+          <button
+            key={card.key}
+            type="button"
+            aria-label={`کارت ${card.title}`}
+            onClick={() => scrollToIndex(index)}
+            style={{
+              width: index === activeIndex ? 24 : 7,
+              height: 7,
+              borderRadius: 99,
+              background: index === activeIndex ? color.primary : "#c6d8e8",
+              border: 0,
+              padding: 0,
+              transition: ".2s",
+              cursor: "pointer",
+            }}
+          />
+        ))}
+      </div>
+
+      <style>{`
+        .biawin-card-track{display:flex;direction:ltr;gap:14px;overflow-x:auto;scroll-snap-type:x mandatory;scrollbar-width:none;padding:0}
+        .biawin-card-track::-webkit-scrollbar{display:none}
+        .biawin-credit-card{
+          all:unset;flex:0 0 min(82vw,470px);aspect-ratio:1.62/1;scroll-snap-align:center;
+          border-radius:26px;padding:22px;color:#fff;position:relative;overflow:hidden;
+          box-shadow:0 17px 45px rgba(4,79,152,.18);transition:transform .28s ease,opacity .28s ease,filter .28s ease;
+          cursor:not-allowed;isolation:isolate;box-sizing:border-box;
+        }
+        .biawin-credit-card:before{
+          content:"";position:absolute;inset:auto -16% -45% auto;width:75%;aspect-ratio:1;border-radius:50%;
+          border:1px solid rgba(255,255,255,.25);
+          box-shadow:0 0 0 22px rgba(255,255,255,.06),0 0 0 48px rgba(255,255,255,.04);z-index:-1;
+        }
+        .biawin-credit-card:after{
+          content:"";position:absolute;inset:0;
+          background:linear-gradient(125deg,rgba(255,255,255,.18),transparent 35%,transparent 65%,rgba(255,255,255,.1));z-index:-1;
+        }
+      `}</style>
+    </section>
+  );
+}

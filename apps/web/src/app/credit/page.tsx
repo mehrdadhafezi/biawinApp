@@ -43,7 +43,7 @@ export default function CreditPage() {
   const creditLine = creditLines?.[0];
 
   return (
-    <AppShell activeNavKey="home" pageLabel="اعتبار من">
+    <AppShell activeNavKey="home">
       <SkeletonStyles />
       <div style={{ padding: `${spacing.xl}px ${spacing.xl}px 0`, display: "flex", flexDirection: "column", gap: spacing.md }}>
         {error && <CreditErrorState message={error} />}

@@ -40,7 +40,7 @@ export default function ServicesPage() {
   }
 
   return (
-    <AppShell activeNavKey="services" pageLabel="خدمات">
+    <AppShell activeNavKey="services">
       <div style={{ display: "flex", flexDirection: "column", gap: spacing.md }}>
         <CategorySelector categories={categories} activeCategoryId={activeCategoryId} onSelect={handleSelectCategory} />
         <ServiceGrid services={filteredServices} error={error} onSelect={handleSelectService} />
