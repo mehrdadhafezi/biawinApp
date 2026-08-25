@@ -94,8 +94,8 @@ export function BiawinCardsCarousel() {
   }
 
   return (
-    <section aria-label="کارت‌های بیاوین" style={{ position: "relative", padding: "26px 0 10px", background: "radial-gradient(circle at 50% 0, rgba(8,121,220,.14), transparent 45%), linear-gradient(180deg,#fff 0,#f8fcff 100%)" }}>
-      <div style={{ padding: "0 20px", display: "flex", justifyContent: "space-between", alignItems: "flex-end", marginBottom: 15 }}>
+    <section aria-label="کارت‌های بیاوین" className="biawin-hero-section">
+      <div className="biawin-hero-title">
         <h2 style={{ fontSize: 16, margin: 0, fontWeight: 700, color: color.ink }}>کارت‌های بیاوین</h2>
         <span style={{ fontSize: 11, color: color.muted }}>برای مشاهده، ورق بزنید</span>
       </div>
@@ -131,13 +131,13 @@ export function BiawinCardsCarousel() {
                   }}
                 />
               </div>
-              <div dir="rtl" style={{ position: "absolute", right: 22, left: 22, top: "46%", transform: "translateY(-50%)" }}>
-                <strong style={{ fontSize: 27, display: "block", fontWeight: 800, letterSpacing: "-1px" }}>{card.title}</strong>
+              <div dir="rtl" className="biawin-credit-card-center">
+                <strong className="biawin-credit-card-title">{card.title}</strong>
                 <span style={{ fontSize: 12, opacity: 0.82 }}>{card.subtitle}</span>
               </div>
-              <div dir="rtl" style={{ position: "absolute", right: 22, left: 22, bottom: 20, display: "flex", alignItems: "flex-end", justifyContent: "space-between" }}>
+              <div dir="rtl" className="biawin-credit-card-bottom">
                 <div>
-                  <div style={{ direction: "ltr", letterSpacing: 2, fontSize: 12, fontWeight: 600 }}>{card.number}</div>
+                  <div className="biawin-credit-card-number">{card.number}</div>
                   <div style={{ fontSize: 10, opacity: 0.78, marginTop: 4 }}>{card.owner}</div>
                 </div>
                 <div style={{ width: 38, height: 38, borderRadius: 14, background: "rgba(255,255,255,.14)", display: "grid", placeItems: "center" }}>
@@ -173,6 +173,12 @@ export function BiawinCardsCarousel() {
       </div>
 
       <style>{`
+        .biawin-hero-section{position:relative;padding:26px 0 10px;background:radial-gradient(circle at 50% 0, rgba(8,121,220,.14), transparent 45%), linear-gradient(180deg,#fff 0,#f8fcff 100%)}
+        .biawin-hero-title{padding:0 20px;display:flex;justify-content:space-between;align-items:flex-end;margin-bottom:15px}
+        @media(max-width:620px){
+          .biawin-hero-section{padding-top:18px}
+          .biawin-hero-title{padding:0 16px}
+        }
         .biawin-card-track{display:flex;direction:ltr;gap:14px;overflow-x:auto;scroll-snap-type:x mandatory;scrollbar-width:none;padding:0}
         .biawin-card-track::-webkit-scrollbar{display:none}
         .biawin-credit-card{
@@ -189,6 +195,17 @@ export function BiawinCardsCarousel() {
         .biawin-credit-card:after{
           content:"";position:absolute;inset:0;
           background:linear-gradient(125deg,rgba(255,255,255,.18),transparent 35%,transparent 65%,rgba(255,255,255,.1));z-index:-1;
+        }
+        .biawin-credit-card-center{position:absolute;right:22px;left:22px;top:46%;transform:translateY(-50%)}
+        .biawin-credit-card-title{font-size:27px;display:block;font-weight:800;letter-spacing:-1px}
+        .biawin-credit-card-bottom{position:absolute;right:22px;left:22px;bottom:20px;display:flex;align-items:flex-end;justify-content:space-between}
+        .biawin-credit-card-number{direction:ltr;letter-spacing:2px;font-size:12px;font-weight:600}
+        @media(max-width:620px){
+          .biawin-credit-card{border-radius:23px;padding:18px}
+          .biawin-credit-card-center{right:18px;left:18px}
+          .biawin-credit-card-bottom{right:18px;left:18px;bottom:16px}
+          .biawin-credit-card-title{font-size:23px}
+          .biawin-credit-card-number{font-size:10px;letter-spacing:1.4px}
         }
       `}</style>
     </section>

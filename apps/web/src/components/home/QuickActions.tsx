@@ -6,34 +6,37 @@ import { ComingSoonCaption } from "../common/ComingSoonCaption";
 interface QuickAction {
   key: string;
   label: string;
-  iconPaths: string[];
   route: string | null;
 }
 
 /**
- * `.home-quick-actions` — 4 shortcuts, pixel-matched to the prototype.
- * Unlike Stage 4.1's `QuickActionsGrid` (which scrolled to an in-page
- * section), 3 of these now `router.push` to the real dedicated pages that
- * exist today (Services/Credit/Installments all shipped since Stage
- * 6.1–9.1) — a genuine capability upgrade, not a redesign, since those
- * routes didn't exist when the original grid was built. "افزایش موجودی"
- * (wallet top-up) has no backend (docs/wallet-ui-contract.md — Deposit is
+ * `.home-quick-actions` — 4 shortcuts, pixel-matched to the prototype,
+ * including the `@media(max-width:420px)` tightening (container radius/
+ * gap/padding, item min-height/radius/gap/padding, icon-box size, label
+ * size) re-added this session — the first pass had no responsive rule at
+ * all for this section (Stage 5.13 correction). Unlike Stage 4.1's
+ * `QuickActionsGrid` (which scrolled to an in-page section), 3 of these
+ * now `router.push` to the real dedicated pages that exist today
+ * (Services/Credit/Installments all shipped since Stage 6.1–9.1) — a
+ * genuine capability upgrade, not a redesign, since those routes didn't
+ * exist when the original grid was built. "افزایش موجودی" (wallet
+ * top-up) has no backend (docs/wallet-ui-contract.md — Deposit is
  * BLOCKED) — real `disabled` + "به‌زودی", same as every other unbuilt
  * feature in this app.
  */
 const QUICK_ACTIONS: QuickAction[] = [
-  { key: "services", label: "پیدا کردن خدمت", iconPaths: ["m20 20-4.2-4.2"], route: "/services" },
-  { key: "credit", label: "اعتبار من", iconPaths: ["M8 9h8M8 13h5"], route: "/credit" },
-  { key: "installments", label: "اقساط من", iconPaths: ["M7 5h10M7 10h10M7 15h7"], route: "/installments" },
-  { key: "topup", label: "افزایش موجودی", iconPaths: ["M12 5v14M5 12h14"], route: null },
+  { key: "services", label: "پیدا کردن خدمت", route: "/services" },
+  { key: "credit", label: "اعتبار من", route: "/credit" },
+  { key: "installments", label: "اقساط من", route: "/installments" },
+  { key: "topup", label: "افزایش موجودی", route: null },
 ];
 
 export function QuickActions() {
   const router = useRouter();
 
   return (
-    <section aria-label="میانبرهای کاربردی" style={{ padding: "0 14px 14px", background: "#fff" }}>
-      <div style={{ display: "grid", gridTemplateColumns: "repeat(4,minmax(0,1fr))", gap: 7, padding: 6, border: "1px solid #dfeaf3", borderRadius: 18, background: "#f8fbfe" }}>
+    <section aria-label="میانبرهای کاربردی" className="biawin-home-quick-actions">
+      <div className="biawin-home-quick-actions-grid">
         {QUICK_ACTIONS.map((action) => (
           <div key={action.key} style={{ display: "flex", flexDirection: "column", alignItems: "center", gap: 2 }}>
             <button
@@ -41,25 +44,10 @@ export function QuickActions() {
               disabled={action.route === null}
               aria-label={action.route === null ? `${action.label} — به‌زودی` : action.label}
               onClick={() => action.route && router.push(action.route)}
-              style={{
-                minWidth: 0,
-                width: "100%",
-                minHeight: 68,
-                border: "1px solid #e0ebf4",
-                borderRadius: 14,
-                background: "#fff",
-                display: "flex",
-                flexDirection: "column",
-                alignItems: "center",
-                justifyContent: "center",
-                gap: 5,
-                padding: "7px 3px",
-                color: "#123f60",
-                cursor: action.route === null ? "not-allowed" : "pointer",
-                opacity: action.route === null ? 0.6 : 1,
-              }}
+              className="biawin-home-quick-action"
+              style={{ cursor: action.route === null ? "not-allowed" : "pointer", opacity: action.route === null ? 0.6 : 1 }}
             >
-              <span style={{ width: 30, height: 30, borderRadius: 10, background: "#eef7ff", color: "#0879dc", display: "grid", placeItems: "center", flex: "0 0 auto" }}>
+              <span className="biawin-home-quick-icon">
                 {action.key === "services" ? (
                   <svg viewBox="0 0 24 24" width={16} height={16} fill="none" stroke="currentColor" strokeWidth={2} strokeLinecap="round" strokeLinejoin="round">
                     <circle cx={10} cy={10} r={6} />
@@ -81,14 +69,41 @@ export function QuickActions() {
                   </svg>
                 )}
               </span>
-              <strong style={{ display: "block", fontSize: 8, fontWeight: 800, lineHeight: 1.2, whiteSpace: "nowrap", color: "#123f60" }}>
-                {action.label}
-              </strong>
+              <strong>{action.label}</strong>
             </button>
             {action.route === null && <ComingSoonCaption />}
           </div>
         ))}
       </div>
+
+      <style>{`
+        .biawin-home-quick-actions{padding:0 14px 14px;background:#fff}
+        .biawin-home-quick-actions-grid{
+          display:grid;grid-template-columns:repeat(4,minmax(0,1fr));gap:7px;padding:6px;
+          border:1px solid #dfeaf3;border-radius:18px;background:#f8fbfe;
+        }
+        .biawin-home-quick-action{
+          all:unset;box-sizing:border-box;min-width:0;width:100%;min-height:68px;
+          border:1px solid #e0ebf4;border-radius:14px;background:#fff;
+          display:flex;flex-direction:column;align-items:center;justify-content:center;gap:5px;
+          padding:7px 3px;color:#123f60;
+        }
+        .biawin-home-quick-icon{
+          width:30px;height:30px;border-radius:10px;background:#eef7ff;color:#0879dc;
+          display:grid;place-items:center;flex:0 0 auto;
+        }
+        .biawin-home-quick-action strong{
+          display:block;font-size:8px;font-weight:800;line-height:1.2;white-space:nowrap;color:#123f60;
+        }
+        @media(max-width:420px){
+          .biawin-home-quick-actions{padding-inline:10px;padding-bottom:12px}
+          .biawin-home-quick-actions-grid{gap:5px;padding:5px;border-radius:16px}
+          .biawin-home-quick-action{min-height:60px;border-radius:12px;gap:4px;padding:6px 2px}
+          .biawin-home-quick-icon{width:28px;height:28px;border-radius:9px}
+          .biawin-home-quick-icon svg{width:15px;height:15px}
+          .biawin-home-quick-action strong{font-size:7.2px}
+        }
+      `}</style>
     </section>
   );
 }
