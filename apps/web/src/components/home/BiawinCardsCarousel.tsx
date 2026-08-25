@@ -78,6 +78,23 @@ function CardIcon({ chip }: { chip: CardData["iconChip"] }) {
  * side cards partially visible, dot pagination, chip/gradient/typography
  * pixel-matched to `#cardTrack` in the prototype. Tapping a card would
  * open Card Detail, which doesn't exist yet — real `disabled` buttons.
+ *
+ * Stage 5.14.1 fix: on live staging, the "BiaWin" brand row was rendering
+ * dropped ~50px down the card, overlapping the title/subtitle block.
+ * Root cause, isolated empirically (not eyeballed): Chromium's native
+ * `<button>` rendering vertically centers its in-flow content
+ * REGARDLESS of `all: unset` or an explicit `display: block` on the
+ * button itself — confirmed by reproducing the exact same offset on a
+ * bare `<button style="all:unset;display:block;...">` test element, and
+ * confirming the offset disappears entirely both on a `<div>` with
+ * identical CSS and on the *same* `<button>` once its own `display`
+ * resolves to `flex` instead of `block`. `.biawin-credit-card`'s only
+ * in-flow child is the brand/label row (the title and bottom blocks are
+ * `position: absolute`, unaffected either way) — adding
+ * `display:flex;flex-direction:column` here removes the native
+ * centering without changing anything else, since a flex container with
+ * one non-`flex-grow` child sizes exactly like the block layout already
+ * intended.
  */
 export function BiawinCardsCarousel() {
   const [activeIndex, setActiveIndex] = useState(1);
@@ -189,7 +206,8 @@ export function BiawinCardsCarousel() {
         .biawin-card-track{display:flex;direction:ltr;gap:14px;overflow-x:auto;scroll-snap-type:x mandatory;scrollbar-width:none;padding:0}
         .biawin-card-track::-webkit-scrollbar{display:none}
         .biawin-credit-card{
-          all:unset;flex:0 0 min(82vw,470px);aspect-ratio:1.62/1;scroll-snap-align:center;
+          all:unset;display:flex;flex-direction:column;
+          flex:0 0 min(82vw,470px);aspect-ratio:1.62/1;scroll-snap-align:center;
           border-radius:26px;padding:22px;color:#fff;position:relative;overflow:hidden;
           box-shadow:0 17px 45px rgba(4,79,152,.18);transition:transform .28s ease,opacity .28s ease,filter .28s ease;
           cursor:not-allowed;isolation:isolate;box-sizing:border-box;

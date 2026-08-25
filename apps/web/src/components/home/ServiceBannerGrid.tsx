@@ -29,6 +29,23 @@ const THEME_VARS: Record<BannerTheme, Record<string, string>> = {
  * against the raw `<a class="service-banner theme-auto" data-category="اتومبیل">`
  * markup this session), and the wide "گردشگری" tile uses a *horizontal*
  * gradient (`90deg`), not the same vertical one — both re-added here.
+ *
+ * Stage 5.14.1 fix: the photo/overlay were rendering completely
+ * invisible on live staging ("نزدیک به سفید"). Root cause: `img`/`:after`
+ * use *negative* `z-index` (-2/-1) to sit behind the text, but
+ * `.biawin-service-banner` itself never established its own stacking
+ * context (`position:relative` alone, no `z-index`/`isolation`) — so
+ * those negative-z-index layers escaped to the nearest ancestor that
+ * *does* establish one (`AppShell`'s `translateZ(0)` wrapper, several
+ * levels up, with an opaque white background), painting the photo
+ * *underneath* every section's own background between here and there.
+ * `isolation:isolate` (verified empirically on live staging — computed
+ * `--ov1`/img both resolve correctly and the photo is visible again)
+ * contains the negative-z-index children within this element's own
+ * stacking context, matching the fix already present on
+ * `BiawinCardsCarousel`'s `.biawin-credit-card` (which uses the same
+ * negative-z-index trick for its decorative circles and was never
+ * affected — this component just didn't have the same protection).
  */
 export function ServiceBannerGrid({ categories, error }: CategoriesSummary) {
   const router = useRouter();
@@ -85,7 +102,7 @@ export function ServiceBannerGrid({ categories, error }: CategoriesSummary) {
         .biawin-banner-grid{display:grid;grid-template-columns:repeat(2,1fr);gap:13px}
         .biawin-service-banner{
           all:unset;position:relative;overflow:hidden;border-radius:22px;min-height:150px;
-          display:flex;align-items:flex-end;cursor:pointer;box-sizing:border-box;
+          display:flex;align-items:flex-end;cursor:pointer;box-sizing:border-box;isolation:isolate;
         }
         .biawin-service-banner img{position:absolute;inset:0;width:100%;height:100%;object-fit:cover;z-index:-2;transition:transform .5s ease}
         .biawin-service-banner:after{

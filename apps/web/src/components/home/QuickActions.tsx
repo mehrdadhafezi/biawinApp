@@ -1,7 +1,6 @@
 "use client";
 
 import { useRouter } from "next/navigation";
-import { ComingSoonCaption } from "../common/ComingSoonCaption";
 
 interface QuickAction {
   key: string;
@@ -21,8 +20,20 @@ interface QuickAction {
  * genuine capability upgrade, not a redesign, since those routes didn't
  * exist when the original grid was built. "افزایش موجودی" (wallet
  * top-up) has no backend (docs/wallet-ui-contract.md — Deposit is
- * BLOCKED) — real `disabled` + "به‌زودی", same as every other unbuilt
- * feature in this app.
+ * BLOCKED) — real `disabled` (and `aria-label` carries the "به‌زودی"
+ * hint for assistive tech).
+ *
+ * Stage 5.14.1 fix: this tile previously also rendered a *visible*
+ * "به‌زودی" caption line below the button — not present in the
+ * prototype at all, and with real visual side-effects: since
+ * `.biawin-home-quick-actions-grid` is `display:grid` (default
+ * `align-items:stretch` per row), that one extra text line stretched
+ * *all four* tiles taller than the prototype's exact 68px/60px
+ * `min-height`, which is also what made the gap down to Brand
+ * Introduction look inflated. Same reasoning already applied to the
+ * header's App Guide button (Stage 5.13) — a `disabled` control with an
+ * `aria-label` communicates "not available yet" without adding visual
+ * content the prototype never had.
  */
 const QUICK_ACTIONS: QuickAction[] = [
   { key: "services", label: "پیدا کردن خدمت", route: "/services" },
@@ -38,15 +49,15 @@ export function QuickActions() {
     <section aria-label="میانبرهای کاربردی" className="biawin-home-quick-actions">
       <div className="biawin-home-quick-actions-grid">
         {QUICK_ACTIONS.map((action) => (
-          <div key={action.key} style={{ display: "flex", flexDirection: "column", alignItems: "center", gap: 2 }}>
-            <button
-              type="button"
-              disabled={action.route === null}
-              aria-label={action.route === null ? `${action.label} — به‌زودی` : action.label}
-              onClick={() => action.route && router.push(action.route)}
-              className="biawin-home-quick-action"
-              style={{ cursor: action.route === null ? "not-allowed" : "pointer", opacity: action.route === null ? 0.6 : 1 }}
-            >
+          <button
+            key={action.key}
+            type="button"
+            disabled={action.route === null}
+            aria-label={action.route === null ? `${action.label} — به‌زودی` : action.label}
+            onClick={() => action.route && router.push(action.route)}
+            className="biawin-home-quick-action"
+            style={{ cursor: action.route === null ? "not-allowed" : "pointer", opacity: action.route === null ? 0.6 : 1 }}
+          >
               <span className="biawin-home-quick-icon">
                 {action.key === "services" ? (
                   <svg viewBox="0 0 24 24" width={16} height={16} fill="none" stroke="currentColor" strokeWidth={2} strokeLinecap="round" strokeLinejoin="round">
@@ -70,9 +81,7 @@ export function QuickActions() {
                 )}
               </span>
               <strong>{action.label}</strong>
-            </button>
-            {action.route === null && <ComingSoonCaption />}
-          </div>
+          </button>
         ))}
       </div>
 
