@@ -100,7 +100,7 @@ export const MEMBERSHIP_TIER_IMAGE: Record<string, string> = {
   "کارت پرایم": "/home/membership/item-04.webp",
   "کارت هدیه": "/home/membership/item-05.webp",
   "کارت سفر": "/home/membership/item-06.webp",
-  "کارت سبک زندگی": "/home/membership/item-07.webp",
+  "سبک زندگی": "/home/membership/item-07.webp",
   "کارت سازمانی": "/home/membership/item-08.webp",
 };
 

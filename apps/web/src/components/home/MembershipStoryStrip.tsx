@@ -12,6 +12,16 @@ import type { MembershipSummary } from "./useMembershipSummary";
  * the backend already models exactly these 8 tiers, matched to their
  * real photo by the exact `plan.title` string. Tapping a tier would open
  * Card Detail, which doesn't exist yet — disabled, same as before.
+ *
+ * Stage 5.14.1 fix: live-staging asset audit found the "lifestyle" tier's
+ * circle rendering with no image at all (silent lookup miss, not a broken
+ * `<img>` — `MEMBERSHIP_TIER_IMAGE[plan.title]` returned `undefined`, so
+ * the `? <img> : null` guard below correctly rendered nothing). Root
+ * cause confirmed directly against `GET /subscriptions` on staging: every
+ * other tier's real `plan.title` is prefixed `"کارت ..."`, but this one
+ * tier's title is the bare `"سبک زندگی"` (no prefix) — `home.mock.ts`'s
+ * map had been keyed `"کارت سبک زندگی"` since Stage 5.13, a guess that
+ * never matched the live data. Fixed by correcting that one key.
  */
 export function MembershipStoryStrip({ plans, error }: MembershipSummary) {
   if (error) return null;
