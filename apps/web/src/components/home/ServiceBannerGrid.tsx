@@ -1,9 +1,19 @@
 "use client";
 
+import type { CSSProperties } from "react";
 import { useRouter } from "next/navigation";
 import { SkeletonBlock } from "../common/SkeletonBlock";
-import { SERVICE_BANNERS } from "./home.mock";
+import { SERVICE_BANNERS, type BannerTheme } from "./home.mock";
 import type { CategoriesSummary } from "./useCategories";
+
+/** `.service-banner.theme-*` overlay variables, re-read directly from the prototype's CSS this session (Stage 5.14 correction). React passes `--custom-property` keys straight through in the `style` object. */
+const THEME_VARS: Record<BannerTheme, Record<string, string>> = {
+  auto: { "--ov1": "rgba(66,66,72,.10)", "--ov2": "rgba(22,22,26,.74)", "--ov3": "rgba(18,18,22,.90)" },
+  home: { "--ov1": "rgba(141,110,99,.05)", "--ov2": "rgba(99,63,51,.70)", "--ov3": "rgba(84,53,43,.87)" },
+  fashion: { "--ov1": "rgba(156,39,176,.05)", "--ov2": "rgba(106,27,154,.68)", "--ov3": "rgba(88,24,120,.85)" },
+  gold: { "--ov1": "rgba(255,193,7,.04)", "--ov2": "rgba(176,127,18,.67)", "--ov3": "rgba(138,97,7,.84)" },
+  travel: { "--ov1": "rgba(68,160,71,.06)", "--ov2": "rgba(28,94,32,.72)", "--ov3": "rgba(18,74,30,.88)" },
+};
 
 /**
  * `.services` (`#services`) — the featured-category banner grid, real
@@ -12,6 +22,13 @@ import type { CategoriesSummary } from "./useCategories";
  * Photos extracted from the prototype's inline base64 — see
  * docs/home-prototype-asset-map.md. Tiles link to the real
  * `/services/[categoryId]` route (Stage 9.1 shipped it).
+ *
+ * Stage 5.14 correction: every tile previously used one generic dark
+ * vertical overlay. The prototype actually assigns a `.theme-*` class
+ * per category (`--ov1/--ov2/--ov3` custom properties, re-verified
+ * against the raw `<a class="service-banner theme-auto" data-category="اتومبیل">`
+ * markup this session), and the wide "گردشگری" tile uses a *horizontal*
+ * gradient (`90deg`), not the same vertical one — both re-added here.
  */
 export function ServiceBannerGrid({ categories, error }: CategoriesSummary) {
   const router = useRouter();
@@ -40,6 +57,7 @@ export function ServiceBannerGrid({ categories, error }: CategoriesSummary) {
                 type="button"
                 onClick={() => router.push(`/services/${banner.category!.id}`)}
                 className={`biawin-service-banner${banner.wide ? " biawin-service-banner--wide" : ""}`}
+                style={THEME_VARS[banner.theme] as CSSProperties}
               >
                 <img src={banner.image} alt={banner.categoryName} loading="lazy" />
                 <div className="biawin-service-banner-content">
@@ -72,14 +90,21 @@ export function ServiceBannerGrid({ categories, error }: CategoriesSummary) {
         .biawin-service-banner img{position:absolute;inset:0;width:100%;height:100%;object-fit:cover;z-index:-2;transition:transform .5s ease}
         .biawin-service-banner:after{
           content:"";position:absolute;inset:0;z-index:-1;
-          background:linear-gradient(180deg,transparent 20%,rgba(2,30,56,.88) 100%);
+          background:linear-gradient(180deg,var(--ov1) 8%,var(--ov2) 100%);
         }
         .biawin-service-banner:hover img{transform:scale(1.04)}
         .biawin-service-banner--wide{grid-column:1/-1;min-height:205px}
+        .biawin-service-banner--wide:after{
+          background:linear-gradient(90deg,var(--ov3) 0%,var(--ov2) 55%,rgba(255,255,255,0) 100%);
+        }
         .biawin-service-banner-content{padding:16px;color:#fff;display:flex;align-items:center;justify-content:space-between;width:100%}
         .biawin-service-banner-content strong{display:block;font-size:15px}
         .biawin-service-banner--wide .biawin-service-banner-content strong{font-size:21px}
-        .biawin-service-banner-content small{font-size:11px;opacity:.85}
+        .biawin-service-banner-content small{
+          display:inline-flex;align-items:center;gap:6px;padding:6px 10px;border-radius:999px;
+          background:rgba(255,255,255,.16);backdrop-filter:blur(5px);-webkit-backdrop-filter:blur(5px);
+          width:max-content;font-size:11px;opacity:.85;margin-top:4px;
+        }
         .biawin-arrow-circle{width:34px;height:34px;border-radius:50%;background:rgba(255,255,255,.18);display:grid;place-items:center;flex:0 0 auto}
 
         @media(max-width:620px){

@@ -72,20 +72,24 @@ export const CATEGORY_TICKER_IMAGE: Record<string, string> = {
   "کارت هدیه": "/home/categories/item-16.webp",
 };
 
+export type BannerTheme = "auto" | "home" | "fashion" | "gold" | "travel";
+
 export interface ServiceBannerTile {
   categoryName: string;
   image: string;
   kicker: string;
+  /** `.service-banner.theme-*` — the per-category tinted-overlay class the prototype actually applies (verified against the raw `<a class="service-banner theme-X" data-category="...">` markup this session — Stage 5.14 correction; the first pass ignored this and used one generic dark overlay for every tile). */
+  theme: BannerTheme;
   wide?: boolean;
 }
 
 /** `.services .banner-grid .service-banner img` — real extracted photos (`apps/web/public/home/banners/`), matched to real seeded `Category` rows by name. */
 export const SERVICE_BANNERS: ServiceBannerTile[] = [
-  { categoryName: "اتومبیل", image: "/home/banners/item-01.webp", kicker: "اعتبار و اقساط منعطف" },
-  { categoryName: "لوازم خانگی", image: "/home/banners/item-02.webp", kicker: "برندهای معتبر و متنوع" },
-  { categoryName: "پوشاک", image: "/home/banners/item-03.webp", kicker: "خرید از برندهای منتخب" },
-  { categoryName: "طلا و جواهر", image: "/home/banners/item-04.webp", kicker: "خرید مطمئن و هدفمند" },
-  { categoryName: "گردشگری", image: "/home/banners/item-05.webp", kicker: "تجربه سفر با پرداخت مرحله‌ای", wide: true },
+  { categoryName: "اتومبیل", image: "/home/banners/item-01.webp", kicker: "اعتبار و اقساط منعطف", theme: "auto" },
+  { categoryName: "لوازم خانگی", image: "/home/banners/item-02.webp", kicker: "برندهای معتبر و متنوع", theme: "home" },
+  { categoryName: "پوشاک", image: "/home/banners/item-03.webp", kicker: "خرید از برندهای منتخب", theme: "fashion" },
+  { categoryName: "طلا و جواهر", image: "/home/banners/item-04.webp", kicker: "خرید مطمئن و هدفمند", theme: "gold" },
+  { categoryName: "گردشگری", image: "/home/banners/item-05.webp", kicker: "تجربه سفر با پرداخت مرحله‌ای", theme: "travel", wide: true },
 ];
 
 /** `.story-strip-section .story-circle-inner img` — real extracted photos (`apps/web/public/home/membership/`), keyed by the exact `MembershipPlanDto.title` string the real API returns for each tier. */
@@ -100,10 +104,13 @@ export const MEMBERSHIP_TIER_IMAGE: Record<string, string> = {
   "کارت سازمانی": "/home/membership/item-08.webp",
 };
 
+export type MosaicTheme = "beauty" | "insurance" | "home" | "digital";
+
 export interface ServiceMosaicHalfTile {
   categoryName: string;
   image: string;
   kicker: string;
+  theme: MosaicTheme;
 }
 
 export interface ServiceMosaicWideSlide {
@@ -112,18 +119,19 @@ export interface ServiceMosaicWideSlide {
   kicker: string;
   title: string;
   lead: string;
+  theme: MosaicTheme;
 }
 
-/** `.sketch-continuation .service-mosaic-card img` — real extracted photos (`apps/web/public/home/mosaic/`). */
+/** `.sketch-continuation .service-mosaic-card img` — real extracted photos (`apps/web/public/home/mosaic/`). `theme` re-verified against the raw `<a class="service-mosaic-card ... theme-beauty" data-category="زیبایی">` markup this session (Stage 5.14 correction — the first pass had no theme overlay at all). */
 export const SERVICE_MOSAIC_HALVES: ServiceMosaicHalfTile[] = [
-  { categoryName: "زیبایی", image: "/home/mosaic/item-01.webp", kicker: "زیبایی و مراقبت" },
-  { categoryName: "بیمه", image: "/home/mosaic/item-02.webp", kicker: "آرامش بیشتر" },
+  { categoryName: "زیبایی", image: "/home/mosaic/item-01.webp", kicker: "زیبایی و مراقبت", theme: "beauty" },
+  { categoryName: "بیمه", image: "/home/mosaic/item-02.webp", kicker: "آرامش بیشتر", theme: "insurance" },
 ];
 
 /** `.sketch-continuation .service-wide-slide img` — real extracted photos (`apps/web/public/home/mosaic/`). */
 export const SERVICE_MOSAIC_WIDE: ServiceMosaicWideSlide[] = [
-  { categoryName: "مبلمان", image: "/home/mosaic/item-03.webp", kicker: "خانه و زندگی", title: "مبلمان و دکوراسیون", lead: "خرید منعطف برای خانه‌ای کامل‌تر" },
-  { categoryName: "دیجیتال", image: "/home/mosaic/item-04.webp", kicker: "انتخاب هوشمند", title: "کالای دیجیتال", lead: "گوشی، لپ‌تاپ و لوازم کاربردی" },
+  { categoryName: "مبلمان", image: "/home/mosaic/item-03.webp", kicker: "خانه و زندگی", title: "مبلمان و دکوراسیون", lead: "خرید منعطف برای خانه‌ای کامل‌تر", theme: "home" },
+  { categoryName: "دیجیتال", image: "/home/mosaic/item-04.webp", kicker: "انتخاب هوشمند", title: "کالای دیجیتال", lead: "گوشی، لپ‌تاپ و لوازم کاربردی", theme: "digital" },
 ];
 
 export interface NewsArticle {

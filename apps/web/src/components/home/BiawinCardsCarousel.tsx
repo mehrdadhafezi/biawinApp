@@ -52,11 +52,26 @@ const CARDS: CardData[] = [
   },
 ];
 
-const ICONS: Record<CardData["iconChip"], string> = {
-  trend: "M4 17l5-5 4 4 7-8M15 8h5v5",
-  card: "M3 5h18v14H3zM3 10h18M7 15h3",
-  gift: "M20 12v8H4v-8M2 7h20v5H2zM12 7v13M12 7H8.5a2.5 2.5 0 1 1 2.5-2.5V7Zm0 0h3.5A2.5 2.5 0 1 0 13 4.5V7Z",
-};
+/** `.card-icon svg` — verbatim prototype path data per card (re-verified against the source this session; the "card" icon is a rounded `<rect rx="3">`, not a hand-drawn path, so it's rendered as real SVG primitives below instead of approximated as a `d` path). */
+function CardIcon({ chip }: { chip: CardData["iconChip"] }) {
+  if (chip === "trend") {
+    return (
+      <>
+        <path d="M4 17l5-5 4 4 7-8" />
+        <path d="M15 8h5v5" />
+      </>
+    );
+  }
+  if (chip === "card") {
+    return (
+      <>
+        <rect height={14} rx={3} width={18} x={3} y={5} />
+        <path d="M3 10h18M7 15h3" />
+      </>
+    );
+  }
+  return <path d="M20 12v8H4v-8M2 7h20v5H2zM12 7v13M12 7H8.5a2.5 2.5 0 1 1 2.5-2.5V7Zm0 0h3.5A2.5 2.5 0 1 0 13 4.5V7Z" />;
+}
 
 /**
  * `.hero` — the "Biawin Cards" swipeable carousel: center-active card,
@@ -121,15 +136,7 @@ export function BiawinCardsCarousel() {
                   <div style={{ fontWeight: 800, fontSize: 17, letterSpacing: "-.3px" }}>BiaWin</div>
                   <div style={{ fontSize: 11, opacity: 0.82, marginTop: 4 }}>{card.label}</div>
                 </div>
-                <div
-                  style={{
-                    width: 47,
-                    height: 35,
-                    borderRadius: 10,
-                    background: "linear-gradient(135deg,#f7df95,#d5ab3c)",
-                    boxShadow: "inset 0 0 0 1px rgba(70,44,0,.14)",
-                  }}
-                />
+                <div className="biawin-credit-card-chip" />
               </div>
               <div dir="rtl" className="biawin-credit-card-center">
                 <strong className="biawin-credit-card-title">{card.title}</strong>
@@ -142,7 +149,7 @@ export function BiawinCardsCarousel() {
                 </div>
                 <div style={{ width: 38, height: 38, borderRadius: 14, background: "rgba(255,255,255,.14)", display: "grid", placeItems: "center" }}>
                   <svg viewBox="0 0 24 24" width={22} fill="none" stroke="currentColor" strokeWidth={1.8}>
-                    <path d={ICONS[card.iconChip]} />
+                    <CardIcon chip={card.iconChip} />
                   </svg>
                 </div>
               </div>
@@ -200,6 +207,14 @@ export function BiawinCardsCarousel() {
         .biawin-credit-card-title{font-size:27px;display:block;font-weight:800;letter-spacing:-1px}
         .biawin-credit-card-bottom{position:absolute;right:22px;left:22px;bottom:20px;display:flex;align-items:flex-end;justify-content:space-between}
         .biawin-credit-card-number{direction:ltr;letter-spacing:2px;font-size:12px;font-weight:600}
+        .biawin-credit-card-chip{
+          width:47px;height:35px;border-radius:10px;position:relative;
+          background:linear-gradient(135deg,#f7df95,#d5ab3c);
+          box-shadow:inset 0 0 0 1px rgba(70,44,0,.14);
+        }
+        .biawin-credit-card-chip:before,.biawin-credit-card-chip:after{content:"";position:absolute;background:rgba(96,70,0,.22)}
+        .biawin-credit-card-chip:before{width:1px;height:100%;right:50%;top:0}
+        .biawin-credit-card-chip:after{height:1px;width:100%;top:50%;left:0}
         @media(max-width:620px){
           .biawin-credit-card{border-radius:23px;padding:18px}
           .biawin-credit-card-center{right:18px;left:18px}

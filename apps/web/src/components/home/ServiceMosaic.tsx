@@ -1,9 +1,18 @@
 "use client";
 
+import type { CSSProperties } from "react";
 import { useEffect, useRef, useState } from "react";
 import { useRouter } from "next/navigation";
-import { SERVICE_MOSAIC_HALVES, SERVICE_MOSAIC_WIDE } from "./home.mock";
+import { SERVICE_MOSAIC_HALVES, SERVICE_MOSAIC_WIDE, type MosaicTheme } from "./home.mock";
 import type { CategoriesSummary } from "./useCategories";
+
+/** `.service-mosaic-card.theme-*`/`.service-wide-slide.theme-*` overlay variables, re-read directly from the prototype's CSS this session (Stage 5.14 correction — the first pass had one flat overlay for every tile). */
+const THEME_VARS: Record<MosaicTheme, CSSProperties> = {
+  beauty: { "--ov1": "rgba(255,107,149,.05)", "--ov2": "rgba(214,51,108,.67)" } as CSSProperties,
+  insurance: { "--ov1": "rgba(33,150,243,.05)", "--ov2": "rgba(21,101,192,.67)" } as CSSProperties,
+  home: { "--ov1": "rgba(141,110,99,.05)", "--ov2": "rgba(99,63,51,.70)" } as CSSProperties,
+  digital: { "--ov1": "rgba(63,81,181,.05)", "--ov2": "rgba(48,63,159,.68)" } as CSSProperties,
+};
 
 /**
  * `.sketch-continuation` — the 2-half-tile + auto-rotating wide-slide
@@ -11,7 +20,9 @@ import type { CategoriesSummary } from "./useCategories";
  * used gradients + emoji instead of the prototype's actual images,
  * extracted this session — see docs/home-prototype-asset-map.md). Same
  * real-category-by-name + real `/services/[categoryId]` link approach
- * as `ServiceBannerGrid`.
+ * as `ServiceBannerGrid`. Stage 5.14 correction: per-category
+ * `.theme-*` overlay tint re-added (same class of bug `ServiceBannerGrid`
+ * had — one generic overlay instead of the prototype's per-category one).
  */
 export function ServiceMosaic({ categories, error }: CategoriesSummary) {
   const router = useRouter();
@@ -45,6 +56,7 @@ export function ServiceMosaic({ categories, error }: CategoriesSummary) {
             type="button"
             onClick={() => goToCategory(tile.categoryName)}
             className="biawin-service-mosaic-card biawin-service-mosaic-card--half"
+            style={THEME_VARS[tile.theme]}
           >
             <img src={tile.image} alt={tile.categoryName} loading="lazy" />
             <span className="biawin-service-mosaic-shade" />
@@ -62,6 +74,7 @@ export function ServiceMosaic({ categories, error }: CategoriesSummary) {
               type="button"
               onClick={() => goToCategory(slide.categoryName)}
               className={`biawin-service-wide-slide${i === wideIndex ? " biawin-service-wide-slide--active" : ""}`}
+              style={THEME_VARS[slide.theme]}
             >
               <img src={slide.image} alt={slide.categoryName} loading="lazy" />
               <span className="biawin-service-mosaic-shade" />
@@ -98,9 +111,13 @@ export function ServiceMosaic({ categories, error }: CategoriesSummary) {
           position:absolute;inset:0;width:100%;height:100%;object-fit:cover;transition:transform .45s ease;
         }
         .biawin-service-mosaic-card:hover img,.biawin-service-wide-slide:hover img{transform:scale(1.04)}
-        .biawin-service-mosaic-shade{position:absolute;inset:0;background:linear-gradient(180deg,rgba(3,35,72,.05),rgba(3,43,85,.82))}
+        .biawin-service-mosaic-shade{position:absolute;inset:0;background:linear-gradient(180deg,var(--ov1) 8%,var(--ov2) 100%)}
         .biawin-service-mosaic-copy{position:absolute;z-index:2;right:14px;left:14px;bottom:14px;color:#fff}
-        .biawin-service-mosaic-copy small{display:block;font-size:10px;margin-bottom:4px;opacity:.9}
+        .biawin-service-mosaic-copy small{
+          display:inline-flex;align-items:center;gap:6px;padding:6px 10px;border-radius:999px;
+          background:rgba(255,255,255,.16);backdrop-filter:blur(5px);-webkit-backdrop-filter:blur(5px);
+          width:max-content;font-size:10px;margin-bottom:8px;opacity:.9;
+        }
         .biawin-service-mosaic-copy strong{display:block;font-size:17px;line-height:1.55}
         .biawin-service-mosaic-copy em{display:block;font-size:10px;font-style:normal;margin-top:4px;opacity:.92}
         .biawin-service-wide-slider{grid-column:1/-1;height:184px;position:relative;border-radius:25px;overflow:hidden;box-shadow:0 13px 30px rgba(5,73,136,.13)}
