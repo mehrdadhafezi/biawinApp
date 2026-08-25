@@ -132,6 +132,28 @@ enum AdvisorPersonaKey {
   arvin
 }
 
+/// Stage 5.15.1 ADR §4 — a small, closed set of roles, not a granular
+/// permission matrix (see docs/admin-architecture-decision-record.md §4 for
+/// why). SUPER_ADMIN can do everything; CONTENT_EDITOR edits content but not
+/// billing/user data once Admin scope grows past Home; SUPPORT_VIEWER is
+/// read-only. New roles are additive enum values, not a redesign.
+enum AdminRole {
+  SUPER_ADMIN
+  CONTENT_EDITOR
+  SUPPORT_VIEWER
+}
+
+/// Kept intentionally small for this foundation stage — only the actions
+/// Stage 5.16 itself performs (login/logout). Domain-mutation actions
+/// (create/update/delete/reorder/image_upload) are added by whichever future
+/// stage builds the first real admin-managed content controller, following
+/// this same enum (see docs/admin-architecture-decision-record.md §8).
+enum AdminAuditAction {
+  LOGIN_SUCCESS
+  LOGIN_FAILED
+  LOGOUT
+}
+
 // ---------------------------------------------------------------------------
 // Auth / Identity
 // ---------------------------------------------------------------------------
@@ -587,4 +609,81 @@ model AdvisorPersona {
   updatedAt DateTime @updatedAt
 
   @@map("advisor_personas")
+}
+
+// ---------------------------------------------------------------------------
+// Admin (Stage 5.16 — docs/admin-architecture-decision-record.md)
+// ---------------------------------------------------------------------------
+
+/// Deliberately separate from `User` (ADR §3): admin access is
+/// staff-provisioned, never self-service, so it cannot share the phone+OTP
+/// self-registration model `User` is built around. Email+password, not OTP —
+/// a small internal population shouldn't depend on carrier SMS delivery to
+/// act during an incident. `failedLoginAttempts`/`lockedUntil` implement
+/// ADR §12.5's login lockout, the same shape `PhoneVerification.attemptsRemaining`
+/// already uses for OTP, applied to password attempts instead.
+model AdminUser {
+  id                  String    @id @default(uuid())
+  email               String    @unique
+  passwordHash        String
+  fullName            String
+  role                AdminRole @default(CONTENT_EDITOR)
+  active              Boolean   @default(true)
+  failedLoginAttempts Int       @default(0)
+  lockedUntil         DateTime?
+  lastLoginAt         DateTime?
+
+  refreshTokens AdminRefreshToken[]
+  auditLogs     AdminAuditLog[]
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@map("admin_users")
+}
+
+/// Mirrors `RefreshToken` exactly (opaque token, only its hash persisted) —
+/// a deliberately separate table, not a shared one, per ADR §3 "do not reuse
+/// customer authentication": an admin session must never be revocable (or
+/// readable) through the customer refresh-token code path, and vice versa.
+model AdminRefreshToken {
+  id          String    @id @default(uuid())
+  adminUserId String
+  adminUser   AdminUser @relation(fields: [adminUserId], references: [id], onDelete: Cascade)
+  tokenHash   String    @unique
+  userAgent   String?
+  ip          String?
+  expiresAt   DateTime
+  revokedAt   DateTime?
+
+  createdAt DateTime @default(now())
+
+  @@index([adminUserId])
+  @@map("admin_refresh_tokens")
+}
+
+/// Append-only (ADR §8) — no update/delete surface is ever exposed for this
+/// model. `adminUserId` is nullable + `SetNull` on delete (ADR §5's exact
+/// FK-deletion policy for admin-authored content, applied here too): a
+/// deactivated/removed AdminUser's history must survive them, and a
+/// LOGIN_FAILED attempt against an email that never matched any AdminUser
+/// has no id to attach at all (the attempted email is kept in `afterJson`
+/// instead, never as a second identity column).
+model AdminAuditLog {
+  id           String            @id @default(uuid())
+  adminUserId  String?
+  adminUser    AdminUser?        @relation(fields: [adminUserId], references: [id], onDelete: SetNull)
+  action       AdminAuditAction
+  resourceType String
+  resourceId   String?
+  beforeJson   Json?
+  afterJson    Json?
+  ip           String?
+  userAgent    String?
+
+  createdAt DateTime @default(now())
+
+  @@index([adminUserId, createdAt])
+  @@index([resourceType, resourceId])
+  @@map("admin_audit_logs")
 }

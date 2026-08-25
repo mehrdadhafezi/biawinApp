@@ -13,6 +13,8 @@ env:
   REDIS_URL: "redis://localhost:6379"
   JWT_ACCESS_SECRET: "ci-access-secret-not-for-real-use"
   JWT_REFRESH_SECRET: "ci-refresh-secret-not-for-real-use"
+  ADMIN_JWT_ACCESS_SECRET: "ci-admin-access-secret-not-for-real-use"
+  ADMIN_JWT_REFRESH_SECRET: "ci-admin-refresh-secret-not-for-real-use"
   STORAGE_ENDPOINT: "http://localhost:9000"
   STORAGE_ACCESS_KEY: "ci"
   STORAGE_SECRET_KEY: "ci-secret-key"

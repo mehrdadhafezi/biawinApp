@@ -30,6 +30,32 @@ export const envSchema = z.object({
 
   SIGNUP_TOKEN_TTL_SECONDS: z.coerce.number().int().positive().default(600),
 
+  // --- Admin auth (docs/admin-architecture-decision-record.md §3/§12) —
+  // deliberately separate secrets from JWT_ACCESS_SECRET/JWT_REFRESH_SECRET
+  // above: a leaked customer secret must never grant admin access, or vice
+  // versa. Shorter default TTL than the customer 15m/30d pair (§12.3 — a
+  // stolen admin session should have a smaller exploitation window).
+  ADMIN_JWT_ACCESS_SECRET: z
+    .string()
+    .min(16, 'ADMIN_JWT_ACCESS_SECRET must be at least 16 chars'),
+  ADMIN_JWT_ACCESS_TTL: z.string().default('10m'),
+  ADMIN_JWT_REFRESH_SECRET: z
+    .string()
+    .min(16, 'ADMIN_JWT_REFRESH_SECRET must be at least 16 chars'),
+  ADMIN_JWT_REFRESH_TTL_DAYS: z.coerce.number().int().positive().default(7),
+
+  // Login lockout (§12.5) — mirrors OTP_MAX_ATTEMPTS's role for the OTP flow.
+  ADMIN_LOGIN_MAX_ATTEMPTS: z.coerce.number().int().positive().default(5),
+  ADMIN_LOGIN_LOCK_MINUTES: z.coerce.number().int().positive().default(15),
+
+  // First SUPER_ADMIN, created by `prisma db seed` only (never hardcoded —
+  // ADR §10 step 1). Optional so CI/tests that never run the seed script
+  // don't need a real admin password; required in practice wherever the
+  // seed script actually runs against a fresh database.
+  ADMIN_SEED_EMAIL: z.string().email().optional(),
+  ADMIN_SEED_PASSWORD: z.string().min(8).optional(),
+  ADMIN_SEED_FULL_NAME: z.string().default('Biawin Admin'),
+
   STORAGE_ENDPOINT: z.string().min(1, 'STORAGE_ENDPOINT is required'),
   STORAGE_REGION: z.string().default('us-east-1'),
   STORAGE_ACCESS_KEY: z.string().min(1, 'STORAGE_ACCESS_KEY is required'),

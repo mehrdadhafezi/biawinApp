@@ -14,6 +14,8 @@ import { PrismaModule } from './infra/prisma/prisma.module';
 import { QueueModule } from './infra/queue/queue.module';
 import { RedisModule } from './infra/redis/redis.module';
 import { StorageModule } from './infra/storage/storage.module';
+import { AdminAuditLogModule } from './modules/admin-audit-log/admin-audit-log.module';
+import { AdminAuthModule } from './modules/admin-auth/admin-auth.module';
 import { AdvisorModule } from './modules/advisor/advisor.module';
 import { AuthModule } from './modules/auth/auth.module';
 import { CategoriesModule } from './modules/categories/categories.module';
@@ -71,6 +73,14 @@ import { WalletModule } from './modules/wallet/wallet.module';
     RewardsModule,
     NotificationsModule,
     AdvisorModule,
+
+    // Admin (Stage 5.16, docs/admin-architecture-decision-record.md) —
+    // independent of every module above: separate identity, separate JWT
+    // secret/audience, separate guards. AdminAuditLogModule is imported
+    // before AdminAuthModule so its exported AdminAuditLogService is
+    // available to inject there.
+    AdminAuditLogModule,
+    AdminAuthModule,
   ],
   controllers: [AppController],
   providers: [

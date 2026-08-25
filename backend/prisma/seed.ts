@@ -17,6 +17,7 @@
  * `docker compose up`, see docker-compose.yml).
  */
 import { PrismaClient, type PurchaseMethod } from '@prisma/client';
+import { hashPassword } from '../src/modules/admin-auth/password-hash.util';
 
 const prisma = new PrismaClient();
 
@@ -560,6 +561,33 @@ async function main() {
     } else {
       await prisma.orbitItem.create({ data });
     }
+  }
+
+  console.log('Seeding first SUPER_ADMIN...');
+  // Stage 5.16 / docs/admin-architecture-decision-record.md §10 step 1 —
+  // "One seed script must create the first SUPER_ADMIN AdminUser (credentials
+  // via environment variable at seed time, never hardcoded/committed) —
+  // without this, migration 1 would ship an auth system nobody can log
+  // into." Skips silently (not a hard failure) when the env vars aren't set,
+  // since ADMIN_SEED_EMAIL/ADMIN_SEED_PASSWORD are optional in env.validation.ts
+  // precisely so CI/tests that never run this script don't need a real
+  // admin password.
+  const adminSeedEmail = process.env.ADMIN_SEED_EMAIL;
+  const adminSeedPassword = process.env.ADMIN_SEED_PASSWORD;
+  if (adminSeedEmail && adminSeedPassword) {
+    const passwordHash = await hashPassword(adminSeedPassword);
+    await prisma.adminUser.upsert({
+      where: { email: adminSeedEmail },
+      update: {},
+      create: {
+        email: adminSeedEmail,
+        passwordHash,
+        fullName: process.env.ADMIN_SEED_FULL_NAME ?? 'Biawin Admin',
+        role: 'SUPER_ADMIN',
+      },
+    });
+  } else {
+    console.log('  Skipped: ADMIN_SEED_EMAIL / ADMIN_SEED_PASSWORD not set.');
   }
 
   console.log('Seed complete.');
