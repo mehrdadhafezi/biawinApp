@@ -563,6 +563,264 @@ async function main() {
     }
   }
 
+  // ---------------------------------------------------------------------
+  // Home CMS (Stage 5.19, docs/home-admin-contract.md) — every row below is
+  // transcribed verbatim from apps/web/src/components/home/home.mock.ts and
+  // BiawinCardsCarousel.tsx's own hardcoded CARDS array, which remain
+  // UNTOUCHED and are still what the live Home page renders — see
+  // docs/home-cms-backend-report.md §4 for the migration strategy this
+  // preserves. `mediaAssetId` is intentionally left unset (null) for every
+  // row: the real images are still static files under apps/web/public/
+  // home/**, not MediaAsset-backed uploads — connecting them is explicitly
+  // out of scope this stage ("Do NOT connect media to Home yet"). A future
+  // stage uploads the real files through the Stage 5.18 API and PATCHes
+  // these rows with the resulting id.
+  // ---------------------------------------------------------------------
+
+  console.log('Seeding home hero cards...');
+  const homeHeroCards = [
+    {
+      cardKey: 'earn' as const,
+      label: 'کارت درآمد',
+      title: 'کارت کسب درآمد',
+      subtitle: 'فرصت درآمدزایی از معرفی و فعالیت در اکوسیستم بیاوین',
+      displayNumber: '6037 9918 0146 1280',
+      ownerLabel: 'BIAWIN EARN',
+      colorPreset: 'blue' as const, // assigned in CARDS array order — see report §4 for why this isn't a tested prototype-class mapping
+      sortOrder: 0,
+    },
+    {
+      cardKey: 'biawin' as const,
+      label: 'کارت اصلی',
+      title: 'کارت بیاوین',
+      subtitle: 'عضویت اصلی برای دسترسی به اعتبار، خدمات و مزایای باشگاه',
+      displayNumber: '6219 8610 4432 1095',
+      ownerLabel: 'BIAWIN CLUB',
+      colorPreset: 'sky' as const,
+      sortOrder: 1,
+    },
+    {
+      cardKey: 'reward' as const,
+      label: 'کارت جایزه',
+      title: 'کارت جایزه',
+      subtitle: 'دریافت هدایا، امتیازها و تجربه‌های ویژه اعضای بیاوین',
+      displayNumber: '5029 0801 5538 7421',
+      ownerLabel: 'BIAWIN REWARD',
+      colorPreset: 'white' as const,
+      sortOrder: 2,
+    },
+  ];
+  for (const card of homeHeroCards) {
+    await prisma.homeHeroCard.upsert({
+      where: { cardKey: card.cardKey },
+      update: card,
+      create: card,
+    });
+  }
+
+  console.log('Seeding home service banners...');
+  const homeServiceBanners = [
+    {
+      categoryName: 'اتومبیل',
+      kicker: 'اعتبار و اقساط منعطف',
+      theme: 'auto' as const,
+      wide: false,
+      sortOrder: 0,
+    },
+    {
+      categoryName: 'لوازم خانگی',
+      kicker: 'برندهای معتبر و متنوع',
+      theme: 'home' as const,
+      wide: false,
+      sortOrder: 1,
+    },
+    {
+      categoryName: 'پوشاک',
+      kicker: 'خرید از برندهای منتخب',
+      theme: 'fashion' as const,
+      wide: false,
+      sortOrder: 2,
+    },
+    {
+      categoryName: 'طلا و جواهر',
+      kicker: 'خرید مطمئن و هدفمند',
+      theme: 'gold' as const,
+      wide: false,
+      sortOrder: 3,
+    },
+    {
+      categoryName: 'گردشگری',
+      kicker: 'تجربه سفر با پرداخت مرحله‌ای',
+      theme: 'travel' as const,
+      wide: true,
+      sortOrder: 4,
+    },
+  ];
+  for (const banner of homeServiceBanners) {
+    const category = await prisma.category.findFirst({
+      where: { name: banner.categoryName },
+    });
+    if (!category) {
+      console.warn(
+        `  Skipped banner for missing category "${banner.categoryName}"`,
+      );
+      continue;
+    }
+    const data = {
+      categoryId: category.id,
+      kicker: banner.kicker,
+      theme: banner.theme,
+      wide: banner.wide,
+      sortOrder: banner.sortOrder,
+    };
+    const existing = await prisma.homeServiceBanner.findFirst({
+      where: { categoryId: category.id },
+    });
+    if (existing) {
+      await prisma.homeServiceBanner.update({
+        where: { id: existing.id },
+        data,
+      });
+    } else {
+      await prisma.homeServiceBanner.create({ data });
+    }
+  }
+
+  console.log('Seeding home service mosaic tiles...');
+  const homeMosaicHalves = [
+    {
+      categoryName: 'زیبایی',
+      kicker: 'زیبایی و مراقبت',
+      theme: 'beauty' as const,
+      sortOrder: 0,
+    },
+    {
+      categoryName: 'بیمه',
+      kicker: 'آرامش بیشتر',
+      theme: 'insurance' as const,
+      sortOrder: 1,
+    },
+  ];
+  const homeMosaicWide = [
+    {
+      categoryName: 'مبلمان',
+      kicker: 'خانه و زندگی',
+      title: 'مبلمان و دکوراسیون',
+      lead: 'خرید منعطف برای خانه‌ای کامل‌تر',
+      theme: 'home' as const,
+      sortOrder: 2,
+    },
+    {
+      categoryName: 'دیجیتال',
+      kicker: 'انتخاب هوشمند',
+      title: 'کالای دیجیتال',
+      lead: 'گوشی، لپ‌تاپ و لوازم کاربردی',
+      theme: 'digital' as const,
+      sortOrder: 3,
+    },
+  ];
+  for (const tile of [
+    ...homeMosaicHalves.map((t) => ({
+      ...t,
+      slotType: 'half' as const,
+      title: undefined,
+      lead: undefined,
+    })),
+    ...homeMosaicWide.map((t) => ({ ...t, slotType: 'wide' as const })),
+  ]) {
+    const category = await prisma.category.findFirst({
+      where: { name: tile.categoryName },
+    });
+    if (!category) {
+      console.warn(
+        `  Skipped mosaic tile for missing category "${tile.categoryName}"`,
+      );
+      continue;
+    }
+    const data = {
+      categoryId: category.id,
+      slotType: tile.slotType,
+      kicker: tile.kicker,
+      title: tile.title ?? null,
+      lead: tile.lead ?? null,
+      theme: tile.theme,
+      sortOrder: tile.sortOrder,
+    };
+    const existing = await prisma.homeServiceMosaicTile.findFirst({
+      where: { categoryId: category.id, slotType: tile.slotType },
+    });
+    if (existing) {
+      await prisma.homeServiceMosaicTile.update({
+        where: { id: existing.id },
+        data,
+      });
+    } else {
+      await prisma.homeServiceMosaicTile.create({ data });
+    }
+  }
+
+  console.log('Seeding home news articles...');
+  const homeNewsArticles = [
+    {
+      category: 'معرفی بیاوین',
+      kicker: 'راهنمای عضویت',
+      title: 'بیاوین چگونه خریدهای بزرگ را ساده‌تر می‌کند؟',
+      lead: 'از انتخاب خدمت تا استفاده از اعتبار و دریافت مزایای عضویت، همه مراحل در یک مسیر ساده و منظم قرار گرفته‌اند.',
+    },
+    {
+      category: 'قرعه‌کشی بیاوین',
+      kicker: 'خبر ویژه',
+      title: 'هر خرید می‌تواند یک شانس تازه برای دریافت جایزه باشد',
+      lead: 'در کمپین‌های قرعه‌کشی بیاوین، اعضا با خرید اشتراک یا استفاده از خدمات منتخب، شانس حضور در قرعه‌کشی جوایز را به دست می‌آورند.',
+    },
+    {
+      category: 'جوایز رایگان',
+      kicker: 'مزایای عضویت',
+      title: 'جوایزی که تجربه عضویت در بیاوین را ارزشمندتر می‌کنند',
+      lead: 'جوایز مناسبتی، هدیه‌های کاربردی و مزایایی که با خرید اشتراک و استفاده از خدمات به اعضا تعلق می‌گیرند.',
+    },
+    {
+      category: 'اعتبار اقساطی',
+      kicker: 'راهنمای کاربردی',
+      title: 'چطور اعتبار بیاوین را برای خریدهای مهم مدیریت کنیم؟',
+      lead: 'با انتخاب درست خدمت و برنامه‌ریزی مبلغ پرداخت، می‌توان از اعتبار بیاوین برای خریدهای بزرگ‌تر و کاربردی‌تر استفاده کرد.',
+    },
+    {
+      category: 'خدمات زیبایی',
+      kicker: 'تازه‌های خدمات',
+      title: 'خدمات زیبایی و مراقبتی بیاوین برای تجربه‌ای کامل‌تر',
+      lead: 'از محصولات مراقبتی تا خدمات زیبایی منتخب، اعضا می‌توانند متناسب با نیاز خود گزینه‌های متنوع‌تری را بررسی کنند.',
+    },
+    {
+      category: 'خانه و زندگی',
+      kicker: 'پیشنهاد منتخب',
+      title: 'چطور خرید مبلمان و لوازم خانگی را راحت‌تر برنامه‌ریزی کنیم؟',
+      lead: 'خدمات خانه و زندگی بیاوین برای خریدهای ضروری و بزرگ طراحی شده‌اند تا فشار پرداخت یک‌باره کاهش پیدا کند.',
+    },
+    {
+      category: 'سفر و گردشگری',
+      kicker: 'تجربه تازه',
+      title: 'سفرهای برنامه‌ریزی‌شده با انتخاب‌های متنوع‌تر',
+      lead: 'اعضای بیاوین می‌توانند تورها، هتل‌ها و تجربه‌های سفر را مقایسه کنند و متناسب با بودجه خود تصمیم بگیرند.',
+    },
+    {
+      category: 'کارت‌های اشتراک',
+      kicker: 'راهنمای انتخاب',
+      title: 'کدام کارت اشتراک بیاوین برای شما مناسب‌تر است؟',
+      lead: 'کارت شروع، پلاس، خانواده، پرایم، هدیه، سفر، سبک زندگی و سازمانی هرکدام برای یک نوع نیاز و الگوی استفاده طراحی شده‌اند.',
+    },
+  ];
+  for (const [i, article] of homeNewsArticles.entries()) {
+    const data = { ...article, sortOrder: i };
+    const existing = await prisma.homeNewsArticle.findFirst({
+      where: { title: article.title },
+    });
+    if (existing) {
+      await prisma.homeNewsArticle.update({ where: { id: existing.id }, data });
+    } else {
+      await prisma.homeNewsArticle.create({ data });
+    }
+  }
   console.log('Seeding first SUPER_ADMIN...');
   // Stage 5.16 / docs/admin-architecture-decision-record.md §10 step 1 —
   // "One seed script must create the first SUPER_ADMIN AdminUser (credentials

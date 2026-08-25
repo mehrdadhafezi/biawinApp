@@ -25,6 +25,7 @@ import { MembershipModule } from './modules/membership/membership.module';
 import { MerchantsModule } from './modules/merchants/merchants.module';
 import { NotificationsModule } from './modules/notifications/notifications.module';
 import { OrbitItemsModule } from './modules/orbit-items/orbit-items.module';
+import { HomeModule } from './modules/home/home.module';
 import { MediaModule } from './modules/media/media.module';
 import { OrdersModule } from './modules/orders/orders.module';
 import { PaymentsModule } from './modules/payments/payments.module';
@@ -82,10 +83,16 @@ import { WalletModule } from './modules/wallet/wallet.module';
     // available to inject there.
     AdminAuditLogModule,
     AdminAuthModule,
-    // Media Library (Stage 5.18) — content-type-agnostic, not yet
-    // referenced by any Home/News model (deliberately out of scope this
-    // stage). Depends on AdminAuditLogModule for upload/delete logging.
+    // Media Library (Stage 5.18) — content-type-agnostic. Depends on
+    // AdminAuditLogModule for upload/delete logging; exports
+    // MediaStorageService too, for HomeModule's own media-URL resolution.
     MediaModule,
+    // Home CMS (Stage 5.19, docs/home-admin-contract.md) — the first real
+    // consumer of MediaModule's MediaAsset relations. Customer routes
+    // (`/home/**`) are `@Public()`; admin routes (`/admin/home/**`) reuse
+    // the exact AdminJwtAuthGuard/AdminRolesGuard/AdminAuditLogService
+    // wiring every other admin module already has.
+    HomeModule,
   ],
   controllers: [AppController],
   providers: [

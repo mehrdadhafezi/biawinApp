@@ -143,18 +143,19 @@ enum AdminRole {
   SUPPORT_VIEWER
 }
 
-/// Started minimal in Stage 5.16 (login/logout only). Stage 5.18 adds
-/// `CREATE`/`DELETE` for the first real admin-managed content controller
-/// (Media Library) — `UPDATE`/`REORDER` are still not added because nothing
-/// in this codebase performs them yet; add them the same way, against a
-/// real call site, when something does (see
-/// docs/admin-architecture-decision-record.md §8).
+/// Started minimal in Stage 5.16 (login/logout only). Stage 5.18 added
+/// `CREATE`/`DELETE` for Media Library. Stage 5.19 (Home CMS — the first
+/// real admin content with both an update surface and a reorder surface)
+/// adds `UPDATE`/`REORDER`, exactly as ADR §8 anticipated: "add them the
+/// same way, against a real call site, when something does."
 enum AdminAuditAction {
   LOGIN_SUCCESS
   LOGIN_FAILED
   LOGOUT
   CREATE
+  UPDATE
   DELETE
+  REORDER
 }
 
 // ---------------------------------------------------------------------------
@@ -406,6 +407,13 @@ model Category {
   plans      MembershipPlan[] @relation("PlanCategories")
   orbitItems OrbitItem[]
 
+  // Stage 5.19 — real FKs replacing docs/home-admin-contract.md §4.3/§4.4's
+  // originally-speculated `categoryName === category.name` string matching
+  // (the exact fragile pattern that caused the Stage 5.14.1 membership-
+  // image bug; not repeated here).
+  homeServiceBanners     HomeServiceBanner[]
+  homeServiceMosaicTiles HomeServiceMosaicTile[]
+
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
 
@@ -640,6 +648,22 @@ model AdminUser {
   auditLogs     AdminAuditLog[]
   uploadedMedia MediaAsset[]
 
+  // Stage 5.19 — ADR §5's `createdBy`/`updatedBy` content-ownership pattern,
+  // applied to Home CMS's 4 models (the first real admin-managed content
+  // models in this codebase — Stage 5.16's report explicitly deferred this
+  // to "whichever stage builds the first content model", i.e. this one).
+  // Two named relations per model (not one) since Prisma requires an
+  // explicit name once more than one field on the same model points at the
+  // same target.
+  createdHomeHeroCards            HomeHeroCard[]            @relation("HomeHeroCardCreatedBy")
+  updatedHomeHeroCards            HomeHeroCard[]            @relation("HomeHeroCardUpdatedBy")
+  createdHomeServiceBanners       HomeServiceBanner[]       @relation("HomeServiceBannerCreatedBy")
+  updatedHomeServiceBanners       HomeServiceBanner[]       @relation("HomeServiceBannerUpdatedBy")
+  createdHomeServiceMosaicTiles   HomeServiceMosaicTile[]   @relation("HomeServiceMosaicTileCreatedBy")
+  updatedHomeServiceMosaicTiles   HomeServiceMosaicTile[]   @relation("HomeServiceMosaicTileUpdatedBy")
+  createdHomeNewsArticles         HomeNewsArticle[]         @relation("HomeNewsArticleCreatedBy")
+  updatedHomeNewsArticles         HomeNewsArticle[]         @relation("HomeNewsArticleUpdatedBy")
+
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
 
@@ -728,9 +752,182 @@ model MediaAsset {
   uploadedBy      String?
   uploadedByAdmin AdminUser? @relation(fields: [uploadedBy], references: [id], onDelete: SetNull)
 
+  // Stage 5.19 — the first real consumers of this table (docs/home-admin-
+  // contract.md §4.3–§4.5's `imageKey` fields became real FKs here instead,
+  // per Stage 5.19's explicit "MediaAsset relationships" requirement).
+  homeServiceBanners     HomeServiceBanner[]
+  homeServiceMosaicTiles HomeServiceMosaicTile[]
+  homeNewsArticles       HomeNewsArticle[]
+
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
 
   @@index([active, createdAt])
   @@map("media_assets")
+}
+
+// ---------------------------------------------------------------------------
+// Home CMS (Stage 5.19 — docs/home-admin-contract.md §4, docs/admin-
+// architecture-decision-record.md). Backend only: no Admin UI, no visual
+// page builder, no Customer App change, no scheduling/publish-later
+// workflow (ADR §7 already decided against one — `active` is the only
+// publish control, same as every other admin-managed model in this
+// codebase). `home.mock.ts` in apps/web is untouched and still what the
+// live Home page renders; these tables are seeded from its exact content
+// (see prisma/seed.ts) so the two stay byte-identical until a later stage
+// actually cuts the frontend over — see docs/home-cms-backend-report.md §4.
+// ---------------------------------------------------------------------------
+
+enum HeroCardKey {
+  earn
+  biawin
+  reward
+}
+
+/// Closed enum, not raw CSS (docs/home-admin-contract.md §4.6) — maps to
+/// one of `BiawinCardsCarousel.tsx`'s 3 hand-tuned gradient/icon
+/// definitions client-side; free-form color input would bypass that tuning.
+enum HeroCardColor {
+  blue
+  sky
+  white
+}
+
+/// Matches `ServiceBannerGrid.tsx`'s `BannerTheme` union exactly — drives
+/// the `--ov1`/`--ov2`/`--ov3` CSS custom properties per category family.
+enum BannerTheme {
+  auto
+  home
+  fashion
+  gold
+  travel
+}
+
+enum MosaicSlot {
+  half
+  wide
+}
+
+/// Matches `ServiceMosaic.tsx`'s `MosaicTheme` union exactly.
+enum MosaicTheme {
+  beauty
+  insurance
+  home
+  digital
+}
+
+/// The 3 static "کارت‌های بیاوین" marketing cards (`BiawinCardsCarousel.tsx`)
+/// — explicitly not real financial products (existing code comment in that
+/// component). `cardKey` is `@unique`: exactly one row per of the 3 fixed
+/// slots, matching the prototype's fixed 3-card carousel.
+model HomeHeroCard {
+  id            String        @id @default(uuid())
+  cardKey       HeroCardKey   @unique
+  label         String
+  title         String
+  subtitle      String
+  displayNumber String // decorative only, never a real card number
+  ownerLabel    String
+  colorPreset   HeroCardColor @default(blue)
+  sortOrder     Int           @default(0)
+  active        Boolean       @default(true)
+
+  createdBy      String?
+  createdByAdmin AdminUser? @relation("HomeHeroCardCreatedBy", fields: [createdBy], references: [id], onDelete: SetNull)
+  updatedBy      String?
+  updatedByAdmin AdminUser? @relation("HomeHeroCardUpdatedBy", fields: [updatedBy], references: [id], onDelete: SetNull)
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@index([active, sortOrder])
+  @@map("home_hero_cards")
+}
+
+/// `خدمات منتخب بیاوین` — `categoryId` is a real FK (see `Category`'s own
+/// doc comment for why this replaces name-matching). `mediaAssetId` is
+/// nullable: an admin can create a banner before uploading its image, same
+/// as `OrbitItem.imageKey` already allows.
+model HomeServiceBanner {
+  id         String      @id @default(uuid())
+  categoryId String
+  category   Category    @relation(fields: [categoryId], references: [id], onDelete: Restrict)
+  mediaAssetId String?
+  mediaAsset MediaAsset? @relation(fields: [mediaAssetId], references: [id], onDelete: SetNull)
+  kicker     String
+  theme      BannerTheme @default(auto)
+  wide       Boolean     @default(false)
+  sortOrder  Int         @default(0)
+  active     Boolean     @default(true)
+
+  createdBy      String?
+  createdByAdmin AdminUser? @relation("HomeServiceBannerCreatedBy", fields: [createdBy], references: [id], onDelete: SetNull)
+  updatedBy      String?
+  updatedByAdmin AdminUser? @relation("HomeServiceBannerUpdatedBy", fields: [updatedBy], references: [id], onDelete: SetNull)
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@index([active, sortOrder])
+  @@map("home_service_banners")
+}
+
+/// موزاییک خدمات — one table for both the 2-up `half` tiles and the
+/// auto-rotating `wide` slides (`slotType` discriminates), replacing
+/// `docs/home-admin-contract.md` §4.4's originally-speculated two separate
+/// arrays — `title`/`lead` are only ever populated for `wide` rows (`half`
+/// tiles use the joined category's own name), matching
+/// `ServiceMosaic.tsx`'s current rendering exactly.
+model HomeServiceMosaicTile {
+  id         String      @id @default(uuid())
+  categoryId String
+  category   Category    @relation(fields: [categoryId], references: [id], onDelete: Restrict)
+  mediaAssetId String?
+  mediaAsset MediaAsset? @relation(fields: [mediaAssetId], references: [id], onDelete: SetNull)
+  slotType   MosaicSlot
+  kicker     String
+  title      String?
+  lead       String?
+  theme      MosaicTheme @default(home)
+  sortOrder  Int         @default(0)
+  active     Boolean     @default(true)
+
+  createdBy      String?
+  createdByAdmin AdminUser? @relation("HomeServiceMosaicTileCreatedBy", fields: [createdBy], references: [id], onDelete: SetNull)
+  updatedBy      String?
+  updatedByAdmin AdminUser? @relation("HomeServiceMosaicTileUpdatedBy", fields: [updatedBy], references: [id], onDelete: SetNull)
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@index([active, slotType, sortOrder])
+  @@map("home_service_mosaic_tiles")
+}
+
+/// مقالات و اخبار بیاوین — `category` stays a plain display-label string,
+/// not an FK (docs/home-admin-contract.md §4.5: "news categories are
+/// editorial tags, not the Category catalog"). `bodySlug` is reserved for
+/// whenever "مشاهده مقاله" stops being a disabled control — unused today.
+model HomeNewsArticle {
+  id         String      @id @default(uuid())
+  category   String
+  mediaAssetId String?
+  mediaAsset MediaAsset? @relation(fields: [mediaAssetId], references: [id], onDelete: SetNull)
+  kicker     String
+  title      String
+  lead       String
+  bodySlug   String?     @unique
+  sortOrder  Int         @default(0)
+  active     Boolean     @default(true)
+
+  createdBy      String?
+  createdByAdmin AdminUser? @relation("HomeNewsArticleCreatedBy", fields: [createdBy], references: [id], onDelete: SetNull)
+  updatedBy      String?
+  updatedByAdmin AdminUser? @relation("HomeNewsArticleUpdatedBy", fields: [updatedBy], references: [id], onDelete: SetNull)
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@index([active, sortOrder])
+  @@map("home_news_articles")
 }
