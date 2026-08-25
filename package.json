@@ -13,6 +13,7 @@
     "dev:infra:logs": "docker compose -f docker-compose.dev-infra.yml logs -f",
     "dev:backend": "pnpm --filter @biawin/backend dev",
     "dev:web": "pnpm --filter @biawin/web dev",
+    "dev:admin": "pnpm --filter @biawin/admin dev",
     "dev:mobile": "pnpm --filter @biawin/mobile dev",
     "dev:core": "turbo run dev --filter=@biawin/backend --filter=@biawin/web",
     "build": "turbo run build",
