@@ -56,6 +56,17 @@ export const envSchema = z.object({
   ADMIN_SEED_PASSWORD: z.string().min(8).optional(),
   ADMIN_SEED_FULL_NAME: z.string().default('Biawin Admin'),
 
+  // --- Media Library (Stage 5.18) — 5MB default covers real photographic
+  // uploads comfortably while still being a real ceiling, not Infinity;
+  // allowed formats/MIME allow-list live in code
+  // (media/utils/media-validation.constants.ts), not env, since they're a
+  // fixed security decision, not a per-environment tunable.
+  MEDIA_MAX_FILE_SIZE_BYTES: z.coerce
+    .number()
+    .int()
+    .positive()
+    .default(5_242_880),
+
   STORAGE_ENDPOINT: z.string().min(1, 'STORAGE_ENDPOINT is required'),
   STORAGE_REGION: z.string().default('us-east-1'),
   STORAGE_ACCESS_KEY: z.string().min(1, 'STORAGE_ACCESS_KEY is required'),

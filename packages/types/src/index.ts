@@ -2,6 +2,7 @@ export * from "./common";
 export * from "./user";
 export * from "./auth";
 export * from "./admin";
+export * from "./media";
 export * from "./membership";
 export * from "./catalog";
 export * from "./order";

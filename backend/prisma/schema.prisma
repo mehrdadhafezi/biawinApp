@@ -143,15 +143,18 @@ enum AdminRole {
   SUPPORT_VIEWER
 }
 
-/// Kept intentionally small for this foundation stage — only the actions
-/// Stage 5.16 itself performs (login/logout). Domain-mutation actions
-/// (create/update/delete/reorder/image_upload) are added by whichever future
-/// stage builds the first real admin-managed content controller, following
-/// this same enum (see docs/admin-architecture-decision-record.md §8).
+/// Started minimal in Stage 5.16 (login/logout only). Stage 5.18 adds
+/// `CREATE`/`DELETE` for the first real admin-managed content controller
+/// (Media Library) — `UPDATE`/`REORDER` are still not added because nothing
+/// in this codebase performs them yet; add them the same way, against a
+/// real call site, when something does (see
+/// docs/admin-architecture-decision-record.md §8).
 enum AdminAuditAction {
   LOGIN_SUCCESS
   LOGIN_FAILED
   LOGOUT
+  CREATE
+  DELETE
 }
 
 // ---------------------------------------------------------------------------
@@ -635,6 +638,7 @@ model AdminUser {
 
   refreshTokens AdminRefreshToken[]
   auditLogs     AdminAuditLog[]
+  uploadedMedia MediaAsset[]
 
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
@@ -686,4 +690,47 @@ model AdminAuditLog {
   @@index([adminUserId, createdAt])
   @@index([resourceType, resourceId])
   @@map("admin_audit_logs")
+}
+
+// ---------------------------------------------------------------------------
+// Media Library (Stage 5.18 — docs/admin-architecture-decision-record.md §6,
+// docs/home-admin-contract.md §5)
+// ---------------------------------------------------------------------------
+
+/// The central, content-type-agnostic media catalog every future
+/// admin-managed image field (Home banners, News, Orbit, ...) is meant to
+/// reference by id — not built by any of those yet (explicitly out of scope
+/// this stage), but the model is shaped so referencing it later is a plain
+/// FK addition, not a redesign. `key` follows the exact `imageKey` pattern
+/// already used everywhere else (`Category.imageKey`, `OrbitItem.imageKey`,
+/// `MembershipPlan.imageKey`) — an object-storage key, resolved to a public
+/// URL by the static-bridge pattern ADR §6 confirms project-wide, never a
+/// raw stored URL. `width`/`height` are extracted server-side at upload time
+/// (dependency-free header parsing — see media/utils/image-metadata.util.ts)
+/// so consumers never need to re-decode the file just to lay out a preview.
+/// `deletedAt` (not a hard delete) is this stage's "delete safety
+/// mechanism": once a real content type starts referencing `MediaAsset.id`,
+/// a hard delete could silently break live content with no recovery path;
+/// nothing references this table yet, but the mechanism is built the safe
+/// way from the start rather than retrofitted once something does.
+model MediaAsset {
+  id         String    @id @default(uuid())
+  fileName   String
+  key        String    @unique
+  mimeType   String
+  sizeBytes  Int
+  width      Int?
+  height     Int?
+  altText    String?
+  active     Boolean   @default(true)
+  deletedAt  DateTime?
+
+  uploadedBy      String?
+  uploadedByAdmin AdminUser? @relation(fields: [uploadedBy], references: [id], onDelete: SetNull)
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@index([active, createdAt])
+  @@map("media_assets")
 }

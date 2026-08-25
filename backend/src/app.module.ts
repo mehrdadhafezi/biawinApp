@@ -25,6 +25,7 @@ import { MembershipModule } from './modules/membership/membership.module';
 import { MerchantsModule } from './modules/merchants/merchants.module';
 import { NotificationsModule } from './modules/notifications/notifications.module';
 import { OrbitItemsModule } from './modules/orbit-items/orbit-items.module';
+import { MediaModule } from './modules/media/media.module';
 import { OrdersModule } from './modules/orders/orders.module';
 import { PaymentsModule } from './modules/payments/payments.module';
 import { ProfilesModule } from './modules/profiles/profiles.module';
@@ -81,6 +82,10 @@ import { WalletModule } from './modules/wallet/wallet.module';
     // available to inject there.
     AdminAuditLogModule,
     AdminAuthModule,
+    // Media Library (Stage 5.18) — content-type-agnostic, not yet
+    // referenced by any Home/News model (deliberately out of scope this
+    // stage). Depends on AdminAuditLogModule for upload/delete logging.
+    MediaModule,
   ],
   controllers: [AppController],
   providers: [

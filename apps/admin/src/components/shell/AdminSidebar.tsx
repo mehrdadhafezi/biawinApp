@@ -11,14 +11,18 @@ export interface AdminNavItem {
 }
 
 /**
- * Foundation-only nav list — just the one real route this stage ships
- * (`/dashboard`). Deliberately does NOT list placeholder entries for
- * Content/Media/etc.: those features don't exist yet and haven't had their
- * own IA decided, so a disabled stub here would be inventing navigation
- * structure ahead of the features it points at, not laying foundation for
- * them. Add real entries here as each feature stage actually ships one.
+ * Foundation-only nav list — only routes that actually exist. `/media`
+ * (Stage 5.18) is added here for the same reason `/dashboard` (Stage 5.17)
+ * was: it's a real, shipped page, not a placeholder for a feature that
+ * doesn't exist yet. Still deliberately no entry for Home/News content
+ * management — those aren't built (Media isn't connected to them yet
+ * either), so a stub here would still be inventing navigation ahead of the
+ * feature it points at.
  */
-const NAV_ITEMS: AdminNavItem[] = [{ id: "dashboard", title: "داشبورد", href: "/dashboard" }];
+const NAV_ITEMS: AdminNavItem[] = [
+  { id: "dashboard", title: "داشبورد", href: "/dashboard" },
+  { id: "media", title: "کتابخانه رسانه", href: "/media" },
+];
 
 /**
  * Desktop-first admin chrome — deliberately its own layout, not a reuse of

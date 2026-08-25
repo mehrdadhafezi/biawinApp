@@ -65,6 +65,30 @@ interface RequestOptions {
   _isRetry?: boolean;
 }
 
+/** Shared 401-retry-once + `{success, data}`/`{success, error}` envelope handling for both JSON and multipart requests. */
+async function handleResponse<T>(
+  res: Response,
+  retry: (isRetry: true) => Promise<T>,
+  isPublic: boolean,
+  isRetry: boolean,
+): Promise<T> {
+  if (res.status === 401 && !isPublic && !isRetry) {
+    refreshPromise ??= refreshTokens().finally(() => {
+      refreshPromise = null;
+    });
+    const refreshed = await refreshPromise;
+    if (refreshed) return retry(true);
+  }
+
+  if (res.status === 204) return undefined as T;
+
+  const body = (await res.json()) as SuccessBody<T> | ErrorBody;
+  if (!body.success) {
+    throw new ApiError(body.error.message, body.error.code, res.status);
+  }
+  return body.data;
+}
+
 async function request<T>(path: string, options: RequestOptions = {}): Promise<T> {
   const headers: Record<string, string> = { "Content-Type": "application/json" };
   if (!options.public) {
@@ -78,21 +102,30 @@ async function request<T>(path: string, options: RequestOptions = {}): Promise<T
     body: options.body !== undefined ? JSON.stringify(options.body) : undefined,
   });
 
-  if (res.status === 401 && !options.public && !options._isRetry) {
-    refreshPromise ??= refreshTokens().finally(() => {
-      refreshPromise = null;
-    });
-    const refreshed = await refreshPromise;
-    if (refreshed) return request<T>(path, { ...options, _isRetry: true });
-  }
+  return handleResponse<T>(
+    res,
+    () => request<T>(path, { ...options, _isRetry: true }),
+    Boolean(options.public),
+    Boolean(options._isRetry),
+  );
+}
 
-  if (res.status === 204) return undefined as T;
+/**
+ * Multipart upload (media files) — deliberately not `request()`: a
+ * `FormData` body must never get `JSON.stringify`'d or forced to
+ * `Content-Type: application/json` (the browser sets the correct
+ * multipart boundary itself when `Content-Type` is left unset on a
+ * `FormData` body). Shares the same auth-header + single-retry-on-401
+ * behavior via `handleResponse`.
+ */
+async function requestFormData<T>(path: string, formData: FormData, isRetry = false): Promise<T> {
+  const headers: Record<string, string> = {};
+  const accessToken = adminTokenStorage.getAccessToken();
+  if (accessToken) headers.Authorization = `Bearer ${accessToken}`;
 
-  const body = (await res.json()) as SuccessBody<T> | ErrorBody;
-  if (!body.success) {
-    throw new ApiError(body.error.message, body.error.code, res.status);
-  }
-  return body.data;
+  const res = await fetch(`${API_URL}${path}`, { method: "POST", headers, body: formData });
+
+  return handleResponse<T>(res, () => requestFormData<T>(path, formData, true), false, isRetry);
 }
 
 export const apiClient = {
@@ -102,4 +135,7 @@ export const apiClient = {
     request<T>(path, { ...options, method: "POST", body }),
   patch: <T>(path: string, body?: unknown, options?: Omit<RequestOptions, "method" | "body">) =>
     request<T>(path, { ...options, method: "PATCH", body }),
+  delete: <T>(path: string, options?: Omit<RequestOptions, "method" | "body">) =>
+    request<T>(path, { ...options, method: "DELETE" }),
+  postFormData: <T>(path: string, formData: FormData) => requestFormData<T>(path, formData),
 };
