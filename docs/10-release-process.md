@@ -13,7 +13,15 @@
 Done (2026-08-22) — staging is fully live on public HTTPS as of this writing.
 
 1. **Subdomains**: both created under the `biawin` cPanel account via
-   `uapi SubDomain addsubdomain`.
+   `uapi SubDomain addsubdomain`. **`uapi` run by `root` requires an explicit
+   `--user=biawin` flag** — cPanel has no default account context for root,
+   and refuses with `This program must be passed the --user flag when run by
+   root!` without it (confirmed the hard way during the Stage 5.22 addendum
+   below — the flag was missing from an earlier draft of this doc):
+   ```bash
+   uapi --user=biawin SubDomain addsubdomain domain=<sub> rootdomain=biawin.ir \
+     dir=public_html/<sub>.biawin.ir
+   ```
 2. **Reverse proxy**: `mod_rewrite` + `mod_proxy` in cPanel's official
    per-vhost include hook — **not** `.htaccess`, which this server silently
    ignores for reasons never fully root-caused (`AllowOverride` is globally
@@ -103,7 +111,34 @@ mechanism), pointed at the new `admin` container's port `3002` instead of
 `3001`/`4001`:
 
 1. **Subdomain**: create under the same `biawin` cPanel account via
-   `uapi SubDomain addsubdomain`, same as the existing two.
+   `uapi SubDomain addsubdomain`, same as the existing two — **must include
+   `--user=biawin`** when run as `root` (see the note on step 1 above; a
+   first attempt without it fails with `This program must be passed the
+   --user flag when run by root!` and does not create the vhost):
+   ```bash
+   uapi --user=biawin SubDomain addsubdomain domain=admin-staging \
+     rootdomain=biawin.ir dir=public_html/admin-staging.biawin.ir
+   ```
+   **Recovery if the proxy.conf files were created before this step
+   succeeded** (e.g. the `--user`-less attempt failed, but the two
+   `proxy.conf` files below were already hand-created and
+   `rebuildhttpdconf` already run once against them): this is safe and
+   requires no cleanup. `SubDomain addsubdomain` only touches DNS, the
+   cPanel account's vhost registration, and the docroot under
+   `public_html/` — it does not touch or overwrite the userdata `proxy.conf`
+   customization layer. Once the subdomain is created successfully, simply
+   re-run `/scripts/rebuildhttpdconf && /scripts/restartsrv_httpd` (step 2
+   below) and the existing proxy.conf files are picked up and folded into
+   the newly generated vhost automatically — no need to recreate them.
+   Confirm the account-level registration actually landed with:
+   ```bash
+   ls /var/cpanel/userdata/biawin/ | grep admin-staging
+   ```
+   (`apachectl -S` is not a reliable check on this LiteSpeed-under-cPanel
+   Apache-compatibility setup — it returned nothing for this domain even
+   after DNS was already correct, simply because the vhost didn't exist yet
+   under `/var/cpanel/userdata/`; the `ls` above and a direct `curl` after
+   step 2 are the authoritative checks.)
 2. **Reverse proxy**: same `mod_proxy` per-vhost include hook pattern (not
    `.htaccess` — see the note above for why):
    ```
