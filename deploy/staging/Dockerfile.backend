@@ -49,6 +49,15 @@ COPY --from=build /workspace/backend/dist ./backend/dist
 COPY --from=build /workspace/backend/package.json ./backend/package.json
 COPY --from=build /workspace/backend/prisma ./backend/prisma
 COPY --from=build /workspace/backend/prisma.config.ts ./backend/prisma.config.ts
+# Stage 5.21's `seed-home-media.ts` reads the real, visually-approved static
+# images straight from `apps/web/public/home/**` (the same files this
+# script's local-dev runs upload from) — copied from the build context
+# directly, not from an earlier stage (no earlier stage in this Dockerfile
+# ever touches `apps/web`). Small (~17 webp files), and only needed for the
+# one-off `docker compose run --rm backend ... seed-home-media.ts` step in
+# deploy.sh, same rationale as keeping devDependencies in this image for
+# `prisma db seed`.
+COPY apps/web/public/home ./apps/web/public/home
 
 EXPOSE 4000
 HEALTHCHECK --interval=10s --timeout=5s --start-period=15s --retries=6 \

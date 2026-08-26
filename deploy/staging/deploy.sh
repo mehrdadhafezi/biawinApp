@@ -3,9 +3,10 @@
 #
 #   ./deploy/staging/deploy.sh
 #
-# Does: git pull -> build images -> bring up infra -> migrate+seed -> deploy
-# backend/web -> health check. Exits non-zero and leaves the previous
-# containers running if anything fails before the final cutover.
+# Does: git pull -> build images -> bring up infra -> migrate+seed -> Home
+# CMS media migration -> deploy backend/web -> health check. Exits non-zero
+# and leaves the previous containers running if anything fails before the
+# final cutover.
 set -euo pipefail
 
 REPO_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
@@ -20,15 +21,15 @@ fail() { echo "[deploy][ERROR] $*" >&2; exit 1; }
 
 cd "$REPO_DIR"
 
-log "1/6 git fetch + checkout main"
+log "1/7 git fetch + checkout main"
 git fetch origin main
 git checkout main
 git reset --hard origin/main
 
-log "2/6 building images (backend + web)"
+log "2/7 building images (backend + web)"
 $COMPOSE build backend web
 
-log "3/6 starting infra (postgres, redis, minio) and waiting for health"
+log "3/7 starting infra (postgres, redis, minio) and waiting for health"
 $COMPOSE up -d postgres redis minio minio-init
 for svc in postgres redis minio; do
   cid=$($COMPOSE ps -q "$svc")
@@ -40,17 +41,20 @@ for svc in postgres redis minio; do
   done
 done
 
-log "4/6 running prisma migrate deploy + db seed (one-off, against the just-built backend image)"
+log "4/7 running prisma migrate deploy + db seed (one-off, against the just-built backend image)"
 # `pnpm exec` (not a raw node_modules/.bin/prisma path) — `prisma db seed`
 # internally spawns `ts-node` expecting it resolvable on $PATH, which only
 # `pnpm exec` arranges for; a bare shell invocation leaves $PATH unmodified
 # and fails with `spawn ts-node ENOENT`.
 $COMPOSE run --rm backend sh -c "cd backend && pnpm exec prisma migrate deploy && pnpm exec prisma db seed"
 
-log "5/6 deploying backend + web"
+log "5/7 running Home CMS static asset migration (Stage 5.21, idempotent — safe to re-run every deploy)"
+$COMPOSE run --rm backend sh -c "cd backend && pnpm exec ts-node --compiler-options '{\"module\":\"commonjs\"}' prisma/seed-home-media.ts"
+
+log "6/7 deploying backend + web"
 $COMPOSE up -d backend web
 
-log "6/6 health check"
+log "7/7 health check"
 ok=0
 for i in $(seq 1 30); do
   if curl -fsS http://127.0.0.1:4001/api/health >/dev/null 2>&1; then

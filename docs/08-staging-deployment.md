@@ -70,8 +70,11 @@ Key staging-specific values:
 | `STAGING_TEST_AUTH` | `true` | Explicitly re-enables the fixed OTP test phone/code (`09121111111` / `123456`) for QA — see below |
 | `SMS_PROVIDER` | `mock` | No real SMS spend on staging |
 | `PAYMENT_PROVIDER` | `zibal` (no merchant ID set) | Architecture wired, no real transactions until real credentials are supplied |
-| `CORS_ORIGINS` | `https://staging.biawin.ir` | Only the staging frontend origin is allowed |
+| `CORS_ORIGINS` | `https://staging.biawin.ir` | Only the staging frontend origin is allowed (no Admin Portal origin yet — Admin has no staging deployment/subdomain as of Stage 5.22) |
 | `NEXT_PUBLIC_API_URL` | `https://api-staging.biawin.ir/api/v1` | Frontend calls the public staging API domain (including the `/api/v1` prefix the backend actually serves — see `backend/src/main.ts`), never an internal Docker hostname |
+| `ADMIN_JWT_ACCESS_SECRET` / `ADMIN_JWT_REFRESH_SECRET` | real random secrets, distinct from `JWT_*` | **Required since Stage 5.16** — the backend fails to boot without these (no default). Missing from this environment until Stage 5.22 found the gap. |
+| `ADMIN_SEED_EMAIL` / `ADMIN_SEED_PASSWORD` | real staging admin credentials | Optional in the schema but required in practice — without these, `prisma db seed` skips creating a `SUPER_ADMIN` and Admin Portal login is impossible on this environment. |
+| `PUBLIC_API_ORIGIN` | `https://api-staging.biawin.ir` | **Required since Stage 5.21** — the code default (`localhost:4000`) is only correct for local dev; every Home CMS image URL is built from this value. |
 
 ### `STAGING_TEST_AUTH` — how the bypass gate works
 
