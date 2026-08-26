@@ -110,6 +110,32 @@ to add it, mirroring steps 1-4 above precisely (same account, same
 mechanism), pointed at the new `admin` container's port `3002` instead of
 `3001`/`4001`:
 
+**Execution order.** Steps 1-4 below (cPanel subdomain, proxy config,
+DNS, SSL) are entirely independent of the Docker side (`deploy.sh`
+building and starting the `admin` container) — neither blocks the other,
+and they may run in either relative order. Two things follow from that:
+
+- **AutoSSL (step 4) does not need the `admin` container running.** Its
+  HTTP DCV check requests `/.well-known/acme-challenge/<token>` over plain
+  HTTP, and both `proxy.conf` files below explicitly exclude that path from
+  the `RewriteRule ... [P,L]` proxy line (`RewriteCond %{REQUEST_URI}
+  !^/\.well-known/acme-challenge/`) — the same exclusion already proven
+  working for `staging.biawin.ir`/`api-staging.biawin.ir`'s real
+  certificates. That request falls through to cPanel's normal static docroot
+  serving, where AutoSSL plants the token itself; it never reaches the
+  proxied `127.0.0.1:3002` upstream. So step 4 is safe to run before,
+  during, or after the Docker deploy.
+- **Do not curl the public domain (`http://` or `https://
+  admin-staging.biawin.ir/`) as a *reverse-proxy* health check until after
+  the `admin` container is actually running on `127.0.0.1:3002`.** Every
+  other path (i.e. everything except the excluded acme-challenge prefix)
+  *does* proxy straight through to `127.0.0.1:3002` — if nothing is
+  listening there yet, that curl returns a connection-refused/502 that looks
+  like a broken proxy or a failed AutoSSL but is really just "not deployed
+  yet." Run steps 1-4 first (cPanel/DNS/SSL, all fast and Docker-independent),
+  then run `deploy.sh`, and only curl the public domain once `deploy.sh`
+  itself has confirmed `127.0.0.1:3002` healthy.
+
 1. **Subdomain**: create under the same `biawin` cPanel account via
    `uapi SubDomain addsubdomain`, same as the existing two — **must include
    `--user=biawin`** when run as `root` (see the note on step 1 above; a
