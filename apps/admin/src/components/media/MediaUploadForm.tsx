@@ -54,6 +54,13 @@ export function MediaUploadForm({ onUploaded }: MediaUploadFormProps) {
 
   async function handleSubmit(event: FormEvent) {
     event.preventDefault();
+    // Stage 5.20 reuses this form inside the Home CMS Media Picker, which
+    // portals into `document.body` to avoid nesting inside a Home resource
+    // form's own `<form>`. A portal only moves the DOM node — React's
+    // synthetic `onSubmit` still bubbles through the *React tree*, so
+    // without this it would also fire the outer form's submit handler.
+    // Harmless on the standalone /media page, which has no ancestor form.
+    event.stopPropagation();
     setSubmitting(true);
     setErrorMessage(null);
 

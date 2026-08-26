@@ -8,19 +8,29 @@ export interface AdminNavItem {
   id: string;
   title: string;
   href: string;
+  children?: AdminNavItem[];
 }
 
 /**
- * Foundation-only nav list — only routes that actually exist. `/media`
- * (Stage 5.18) is added here for the same reason `/dashboard` (Stage 5.17)
- * was: it's a real, shipped page, not a placeholder for a feature that
- * doesn't exist yet. Still deliberately no entry for Home/News content
- * management — those aren't built (Media isn't connected to them yet
- * either), so a stub here would still be inventing navigation ahead of the
- * feature it points at.
+ * Only routes that actually exist. `/home` (Stage 5.20) manages the Stage
+ * 5.19 Home CMS resources — its 4 children are real pages, not
+ * placeholders. `/media` (Stage 5.18) stays a flat item; Home is the
+ * first nav entry with a nested group, so `NAV_ITEMS` now supports
+ * `children` generically rather than hardcoding a Home-only shape.
  */
 const NAV_ITEMS: AdminNavItem[] = [
   { id: "dashboard", title: "داشبورد", href: "/dashboard" },
+  {
+    id: "home",
+    title: "خانه",
+    href: "/home",
+    children: [
+      { id: "home-hero-cards", title: "کارت‌های ابتدایی", href: "/home/hero-cards" },
+      { id: "home-service-banners", title: "بنرهای خدمات", href: "/home/service-banners" },
+      { id: "home-service-mosaic", title: "موزاییک خدمات", href: "/home/service-mosaic" },
+      { id: "home-news", title: "اخبار", href: "/home/news" },
+    ],
+  },
   { id: "media", title: "کتابخانه رسانه", href: "/media" },
 ];
 
@@ -45,7 +55,10 @@ export function AdminSidebar() {
 
       <ul className="biawin-admin-sidebar-nav">
         {NAV_ITEMS.map((item) => {
-          const active = pathname?.startsWith(item.href);
+          // A parent with children (e.g. "خانه") is only "active" on its own
+          // overview page — a child route being active is shown on the
+          // child link itself, not duplicated onto the parent.
+          const active = item.children ? pathname === item.href : pathname?.startsWith(item.href);
           return (
             <li key={item.id}>
               <Link
@@ -55,6 +68,24 @@ export function AdminSidebar() {
               >
                 {item.title}
               </Link>
+              {item.children && (
+                <ul className="biawin-admin-sidebar-subnav">
+                  {item.children.map((child) => {
+                    const childActive = pathname?.startsWith(child.href);
+                    return (
+                      <li key={child.id}>
+                        <Link
+                          href={child.href}
+                          aria-current={childActive ? "page" : undefined}
+                          className={`biawin-admin-sidebar-sublink${childActive ? " biawin-admin-sidebar-sublink--active" : ""}`}
+                        >
+                          {child.title}
+                        </Link>
+                      </li>
+                    );
+                  })}
+                </ul>
+              )}
             </li>
           );
         })}
@@ -79,6 +110,13 @@ export function AdminSidebar() {
         }
         .biawin-admin-sidebar-link:hover{background:${color.ice}}
         .biawin-admin-sidebar-link--active{background:${color.ice};color:${color.primary}}
+        .biawin-admin-sidebar-subnav{list-style:none;margin:2px 0 4px;padding-inline-end:14px;display:flex;flex-direction:column;gap:2px}
+        .biawin-admin-sidebar-sublink{
+          display:block;padding:8px 12px;border-radius:9px;font-size:12px;font-weight:600;
+          color:${color.muted};text-decoration:none;transition:background .15s ease,color .15s ease;
+        }
+        .biawin-admin-sidebar-sublink:hover{background:${color.ice};color:${color.ink}}
+        .biawin-admin-sidebar-sublink--active{background:${color.ice};color:${color.primary};font-weight:800}
       `}</style>
     </nav>
   );
