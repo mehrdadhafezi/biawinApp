@@ -48,14 +48,28 @@ for svc in postgres redis minio; do
 done
 
 log "4/7 running prisma migrate deploy + db seed (one-off, against the just-built backend image)"
-# `pnpm exec` (not a raw node_modules/.bin/prisma path) — `prisma db seed`
-# internally spawns `ts-node` expecting it resolvable on $PATH, which only
-# `pnpm exec` arranges for; a bare shell invocation leaves $PATH unmodified
-# and fails with `spawn ts-node ENOENT`.
-$COMPOSE run --rm backend sh -c "cd backend && pnpm exec prisma migrate deploy && pnpm exec prisma db seed"
+# Seed runs via `node dist/prisma/seed.js` — the ALREADY-COMPILED output
+# `nest build` emits (prisma/*.ts is in tsc's default compile scope, same as
+# src/) — NOT `prisma db seed` / `pnpm exec ts-node ... prisma/seed.ts`.
+# `prisma db seed` shells out to ts-node against the TypeScript *source*
+# (per prisma.config.ts, kept that way deliberately for local dev's fast
+# edit-loop), which imports `../src/modules/admin-auth/password-hash.util` —
+# and this runtime image intentionally does NOT copy `backend/src` (see
+# Dockerfile.backend), only `backend/dist`. Running the compiled script
+# directly needs nothing beyond what's already in the image (same principle
+# the running `backend` container itself already relies on: `CMD ["node",
+# "backend/dist/src/main.js"]` is 100% compiled-output, zero TS source).
+# Bypassing the `prisma db seed` CLI wrapper is safe: seeding isn't
+# migration-tracked, so there's no Prisma-internal state that wrapper alone
+# would have recorded.
+$COMPOSE run --rm backend sh -c "cd backend && pnpm exec prisma migrate deploy && node dist/prisma/seed.js"
 
 log "5/7 running Home CMS static asset migration (Stage 5.21, idempotent — safe to re-run every deploy)"
-$COMPOSE run --rm backend sh -c "cd backend && pnpm exec ts-node --compiler-options '{\"module\":\"commonjs\"}' prisma/seed-home-media.ts"
+# Same reasoning as step 4 — dist/prisma/seed-home-media.js, not ts-node
+# against source (which needs backend/src/app.module.ts and everything it
+# transitively pulls in — the entire NestJS module graph, absent here by
+# design).
+$COMPOSE run --rm backend sh -c "cd backend && node dist/prisma/seed-home-media.js"
 
 log "6/7 deploying backend + web + admin"
 $COMPOSE up -d backend web admin

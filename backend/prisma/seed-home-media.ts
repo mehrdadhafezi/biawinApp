@@ -29,7 +29,14 @@ import { AppModule } from '../src/app.module';
 import { PrismaService } from '../src/infra/prisma/prisma.service';
 import { MediaService } from '../src/modules/media/media.service';
 
-const WEB_PUBLIC_HOME = join(__dirname, '..', '..', 'apps', 'web', 'public', 'home');
+// Deliberately anchored on `process.cwd()`, not `__dirname` — this script is
+// invoked two different ways with two different `__dirname`s (`ts-node` from
+// `backend/prisma/` in local dev, `node` against the compiled
+// `backend/dist/prisma/` in staging/production — see deploy.sh), but both
+// invocations are always run with cwd = `backend/` (pnpm's `--filter` and
+// deploy.sh's `cd backend &&` both guarantee this), so this is the one
+// anchor that's invariant across both.
+const WEB_PUBLIC_HOME = join(process.cwd(), '..', 'apps', 'web', 'public', 'home');
 
 interface MigrationTarget {
   /** Absolute path to the static file, in the same order as the sorted CMS rows. */
@@ -128,6 +135,14 @@ async function main() {
 
   console.log('\nDone.');
   await app.close();
+  // `app.close()` runs Nest's lifecycle hooks but doesn't guarantee every
+  // provider's underlying handle is released (found the hard way: MinIO's
+  // S3 client keeps an HTTP keep-alive socket open, which leaves the event
+  // loop non-empty and this process hanging forever after logging "Done." —
+  // fatal under `docker compose run --rm`, which waits for the container's
+  // own process to exit). A one-off script that has finished its single job
+  // should not depend on every dependency's cleanup being exhaustive.
+  process.exit(0);
 }
 
 main().catch((error: unknown) => {

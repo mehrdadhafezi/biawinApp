@@ -99,13 +99,81 @@ the host directly):
 
 ```
 prisma migrate deploy
-prisma db seed
+node dist/prisma/seed.js
 ```
+
+(Not `prisma db seed` — see "Runtime image packaging" below for why.)
 
 The staging seed creates the same baseline data as local dev (categories,
 services, membership plans, rewards) plus is safe to re-run — `deploy.sh`
 runs this every deploy, and `prisma migrate deploy` is a no-op when there is
 nothing new to apply.
+
+## Runtime image packaging — `backend/dist` vs `backend/src`
+
+**The runtime image intentionally does NOT copy `backend/src`** — only
+`backend/dist` (the compiled output), `backend/prisma`, `backend/package.json`,
+and the copied `apps/web/public/home` assets (see `Dockerfile.backend`). This
+is deliberate, not an oversight: `backend/src` is unconstrained application
+source that keeps growing; shipping it into a "runtime" image would blur the
+line between "compiled artifact" and "buildable source tree" for no benefit —
+the compiled app (`CMD ["node", "backend/dist/src/main.js"]`) already never
+touches it.
+
+This bit real staging on first use (Stage 5.22): `prisma db seed` shells out
+to `ts-node` against `prisma/seed.ts` **source** (per `prisma.config.ts`,
+kept that way deliberately for local dev's fast edit-loop), and that source
+imports `../src/modules/admin-auth/password-hash.util` — a file that
+genuinely doesn't exist in the runtime image. The fix: `deploy.sh` runs the
+seed via the **already-compiled** `node dist/prisma/seed.js` instead
+(`nest build`'s default tsc scope already includes `backend/prisma/*.ts`
+alongside `backend/src/**` — the compiled output was there all along, just
+never invoked). Same for the Stage 5.21 Home media migration:
+`node dist/prisma/seed-home-media.js`, not `ts-node ... prisma/seed-home-media.ts`
+(that script bootstraps the entire NestJS `AppModule` graph via
+`NestFactory.createApplicationContext` — by design, per its own doc comment,
+it must go through the real `MediaService`, so this one script genuinely
+cannot be made independent of the compiled app; running it against `dist/`
+rather than `src/` is what makes that possible without shipping `src/` at
+all). Local dev's own `pnpm --filter @biawin/backend prisma:seed` /
+`seed:home-media` scripts are untouched — they still run via `ts-node`
+against source, since local dev always has `backend/src` on disk.
+
+One subtlety this fix required: `seed-home-media.ts` resolved the static
+asset directory via `join(__dirname, '..', '..', ...)`, which is only
+correct relative to `backend/prisma/` (ts-node, local dev) — the compiled
+`backend/dist/prisma/` sits one directory deeper, so the same computation
+against `dist/` silently pointed one level too high. Fixed by anchoring on
+`process.cwd()` instead (always `backend/`, in every real invocation path)
+rather than `__dirname` (which differs between the two).
+
+A second, unrelated bug turned up while actually verifying the fix (via
+`verify-runtime-image.sh`, below): `seed-home-media.ts` finished its work,
+logged `Done.`, and then **never exited** — `app.close()` runs Nest's
+lifecycle hooks but doesn't guarantee every provider's underlying handle is
+released (the MinIO/S3 client's HTTP keep-alive socket stayed open), leaving
+the event loop non-empty forever. Harmless when run interactively (you just
+never noticed the shell prompt not coming back), fatal under
+`docker compose run --rm`, which blocks until the container's own process
+exits — this would have hung `deploy.sh` step 5/7 indefinitely on real
+staging, a second real deployment blocker this same investigation caught.
+Fixed with an explicit `process.exit(0)` after `app.close()` resolves.
+
+**Verification**: `deploy/staging/verify-runtime-image.sh` builds the real
+`Dockerfile.backend` image and runs all three commands
+(`prisma migrate deploy`, `node dist/prisma/seed.js`,
+`node dist/prisma/seed-home-media.js`) against a throwaway, isolated
+Postgres/Redis/MinIO stack (`docker-compose.verify.yml` — no host ports
+published, safe to run anywhere, including alongside a live staging
+deployment on the same host). A normal `pnpm typecheck`/`build` does **not**
+catch this class of bug — compiling successfully says nothing about which
+compiled files a specific Dockerfile stage actually `COPY`s. Run this
+script before every deploy that touches `Dockerfile.backend`,
+`prisma/seed.ts`, `prisma/seed-home-media.ts`, or anything they import:
+
+```bash
+./deploy/staging/verify-runtime-image.sh
+```
 
 ## Deploying
 

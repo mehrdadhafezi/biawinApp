@@ -1,0 +1,94 @@
+name: biawin-verify
+
+# Ephemeral, isolated stack used ONLY by deploy/staging/verify-runtime-image.sh
+# to prove the real `deploy/staging/Dockerfile.backend` runtime image can
+# actually execute `prisma migrate deploy`, the seed script, and the Stage
+# 5.21 Home media migration — using nothing but what that Dockerfile actually
+# copies into the runtime stage. This is NOT staging and NEVER touches
+# staging's data, containers, network, or volumes: every name here is
+# `biawin-verify`-prefixed and no host ports are published at all (every
+# check runs via `docker compose run` against the internal Docker network,
+# same as deploy.sh's own one-off `run --rm backend ...` steps) — so this is
+# safe to run on the same host as a live staging deployment, or on a laptop,
+# without any port collision or shared state.
+#
+# All credentials below are throwaway, container-local, and torn down with
+# the stack every run (`docker compose down -v`) — never used for anything
+# real. Do not reuse them anywhere.
+
+services:
+  postgres:
+    image: postgres:16-alpine
+    environment:
+      POSTGRES_USER: verify
+      POSTGRES_PASSWORD: verify
+      POSTGRES_DB: verify
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U verify"]
+      interval: 2s
+      timeout: 3s
+      retries: 30
+
+  redis:
+    image: redis:7-alpine
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 2s
+      timeout: 3s
+      retries: 30
+
+  minio:
+    image: minio/minio:latest
+    command: server /data --console-address ":9001"
+    environment:
+      MINIO_ROOT_USER: verify
+      MINIO_ROOT_PASSWORD: verifyverify
+    healthcheck:
+      test: ["CMD", "mc", "ready", "local"]
+      interval: 2s
+      timeout: 3s
+      retries: 30
+
+  minio-init:
+    image: minio/mc:latest
+    depends_on:
+      minio:
+        condition: service_healthy
+    entrypoint: >
+      /bin/sh -c "
+      mc alias set local http://minio:9000 verify verifyverify &&
+      mc mb -p local/biawin-verify &&
+      mc anonymous set download local/biawin-verify
+      "
+
+  backend:
+    build:
+      context: ../..
+      dockerfile: deploy/staging/Dockerfile.backend
+    image: biawin-verify-backend:latest
+    environment:
+      NODE_ENV: production
+      DATABASE_URL: "postgresql://verify:verify@postgres:5432/verify?schema=public"
+      REDIS_URL: "redis://redis:6379"
+      JWT_ACCESS_SECRET: verify-jwt-access-secret-not-for-real-use
+      JWT_REFRESH_SECRET: verify-jwt-refresh-secret-not-for-real-use
+      ADMIN_JWT_ACCESS_SECRET: verify-admin-jwt-access-secret-not-for-real-use
+      ADMIN_JWT_REFRESH_SECRET: verify-admin-jwt-refresh-secret-not-for-real-use
+      # Deliberately set — this is exactly the code path that failed in real
+      # staging (hashPassword() at seed time), so leaving these unset would
+      # make the verification skip the one line that actually broke.
+      ADMIN_SEED_EMAIL: verify-admin@example.invalid
+      ADMIN_SEED_PASSWORD: verify-admin-password-not-for-real-use
+      STORAGE_ENDPOINT: "http://minio:9000"
+      STORAGE_ACCESS_KEY: verify
+      STORAGE_SECRET_KEY: verifyverify
+      STORAGE_BUCKET: biawin-verify
+      STORAGE_FORCE_PATH_STYLE: "true"
+      PUBLIC_API_ORIGIN: "http://localhost:4000"
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+      minio-init:
+        condition: service_completed_successfully

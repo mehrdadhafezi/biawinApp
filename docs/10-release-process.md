@@ -110,31 +110,53 @@ to add it, mirroring steps 1-4 above precisely (same account, same
 mechanism), pointed at the new `admin` container's port `3002` instead of
 `3001`/`4001`:
 
-**Execution order.** Steps 1-4 below (cPanel subdomain, proxy config,
-DNS, SSL) are entirely independent of the Docker side (`deploy.sh`
-building and starting the `admin` container) — neither blocks the other,
-and they may run in either relative order. Two things follow from that:
+**Execution order — revised after a real attempt.** An earlier draft of this
+doc claimed AutoSSL's DCV request never reaches the Docker upstream at all
+(the `proxy.conf` `RewriteCond` below excludes
+`/.well-known/acme-challenge/` from the proxy rule), and so step 4 was safe
+to run before the Docker deploy. **A real attempt on staging contradicted
+that**: with the `admin` container not yet running (nothing listening on
+`127.0.0.1:3002`), AutoSSL's DCV check against
+`http://admin-staging.biawin.ir/.well-known/acme-challenge/...` returned
+`503 Service Unavailable` — not the `404`/static-file-miss you'd expect if
+the request genuinely never touched the reverse proxy. A `503` is what
+LiteSpeed's `mod_proxy` returns when it cannot reach the proxied backend, so
+the most consistent explanation is that the acme-challenge exclusion isn't
+taking effect the way the same pattern's already-proven behavior for
+`staging.biawin.ir`/`api-staging.biawin.ir` suggested it would — on either
+this LiteSpeed build specifically, or for however WHM's AutoSSL actually
+issues the DCV request. This isn't fully root-caused yet (no direct
+inspection of LiteSpeed's live request handling was possible without SSH
+access at investigation time), so treat it as an open question, not settled.
 
-- **AutoSSL (step 4) does not need the `admin` container running.** Its
-  HTTP DCV check requests `/.well-known/acme-challenge/<token>` over plain
-  HTTP, and both `proxy.conf` files below explicitly exclude that path from
-  the `RewriteRule ... [P,L]` proxy line (`RewriteCond %{REQUEST_URI}
-  !^/\.well-known/acme-challenge/`) — the same exclusion already proven
-  working for `staging.biawin.ir`/`api-staging.biawin.ir`'s real
-  certificates. That request falls through to cPanel's normal static docroot
-  serving, where AutoSSL plants the token itself; it never reaches the
-  proxied `127.0.0.1:3002` upstream. So step 4 is safe to run before,
-  during, or after the Docker deploy.
-- **Do not curl the public domain (`http://` or `https://
-  admin-staging.biawin.ir/`) as a *reverse-proxy* health check until after
-  the `admin` container is actually running on `127.0.0.1:3002`.** Every
-  other path (i.e. everything except the excluded acme-challenge prefix)
-  *does* proxy straight through to `127.0.0.1:3002` — if nothing is
-  listening there yet, that curl returns a connection-refused/502 that looks
-  like a broken proxy or a failed AutoSSL but is really just "not deployed
-  yet." Run steps 1-4 first (cPanel/DNS/SSL, all fast and Docker-independent),
-  then run `deploy.sh`, and only curl the public domain once `deploy.sh`
-  itself has confirmed `127.0.0.1:3002` healthy.
+**Revised recommendation: run step 4 (AutoSSL) *after* confirming the
+`admin` container is healthy on `127.0.0.1:3002`, not before.** This
+sidesteps the open question entirely — with something alive on 3002, even a
+proxied-through acme-challenge request gets a real (if wrong, e.g. a 404 from
+the Next.js app) response instead of a dead-upstream 503, and DCV has its
+best chance of succeeding either way. Order:
+
+1. Steps 1-3 below (subdomain, proxy config, DNS) — independent of Docker,
+   do these first.
+2. Run `deploy.sh` (or, before touching real staging, verify the image
+   first with `./deploy/staging/verify-runtime-image.sh` — see
+   [08-staging-deployment.md](08-staging-deployment.md) "Runtime image
+   packaging"). Confirm `admin` is healthy: `curl -I http://127.0.0.1:3002/`.
+3. **Then** run step 4 (AutoSSL).
+4. Only curl the public domain (`http://` or `https://admin-staging.biawin.ir/`)
+   once both 2 and 3 are done — before that, any such curl returning a
+   connection-refused/502/503 is expected and uninformative, not a new bug.
+
+**If AutoSSL still fails once `admin` is confirmed healthy**, that's real
+evidence the acme-challenge exclusion itself doesn't work as intended on
+this LiteSpeed build, and needs a different fix — e.g. an explicit
+`ProxyPass /.well-known/acme-challenge/ !` exclusion (LiteSpeed's own
+`mod_proxy` semantics for negated `ProxyPass` may behave differently from
+the `RewriteCond`-based exclusion used here), a dedicated `Context` block
+(LiteSpeed-native, bypassing the Apache-compatibility translation layer
+entirely), or switching this one domain to AutoSSL's DNS-based DCV instead
+of HTTP DCV. Report the exact `autossl_check` output if this happens rather
+than retrying blindly — the fix depends on which of those it actually is.
 
 1. **Subdomain**: create under the same `biawin` cPanel account via
    `uapi SubDomain addsubdomain`, same as the existing two — **must include
@@ -228,8 +250,10 @@ workflow** on the desired branch.
 
 `deploy.sh` is idempotent — `git reset --hard origin/main`, rebuild images
 (backend + web + admin), bring up infra, run `prisma migrate deploy &&
-prisma db seed` (both safe to re-run), run the Home CMS static asset
-migration (`seed-home-media.ts`, Stage 5.21, also idempotent — skips rows
+node dist/prisma/seed.js` (both safe to re-run — not `prisma db seed`; see
+[08-staging-deployment.md](08-staging-deployment.md) "Runtime image
+packaging" for why), run the Home CMS static asset migration
+(`dist/prisma/seed-home-media.js`, Stage 5.21, also idempotent — skips rows
 that already have a `mediaAssetId`), then cut over backend/web/admin and
 health-check all three.
 
