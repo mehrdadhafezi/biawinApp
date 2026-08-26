@@ -4,9 +4,9 @@
 
 | Environment | URL | `NODE_ENV` | Notes |
 |---|---|---|---|
-| Local dev | `http://localhost:3000` / `:4000` | `development` | [05-development-guide.md](05-development-guide.md) |
-| Staging | `https://staging.biawin.ir` / `https://api-staging.biawin.ir` | `production` (with `STAGING_TEST_AUTH=true`) | [08-staging-deployment.md](08-staging-deployment.md) |
-| Production | `https://biawin.ir` / `https://api.biawin.ir` | `production` | Not live yet |
+| Local dev | `http://localhost:3000` / `:4000` / `:3002` (admin) | `development` | [05-development-guide.md](05-development-guide.md) |
+| Staging | `https://staging.biawin.ir` / `https://api-staging.biawin.ir` / `https://admin-staging.biawin.ir` (Stage 5.22) | `production` (with `STAGING_TEST_AUTH=true`) | [08-staging-deployment.md](08-staging-deployment.md) |
+| Production | `https://biawin.ir` / `https://api.biawin.ir` / `https://admin.biawin.ir` | `production` | Not live yet |
 
 ## One-time server setup
 
@@ -93,6 +93,67 @@ Done (2026-08-22) — staging is fully live on public HTTPS as of this writing.
    ([09-git-workflow.md](09-git-workflow.md)) so future deploys can be
    triggered from the GitHub Actions tab instead of an SSH session.
 
+### Stage 5.22 addendum — `admin-staging.biawin.ir`
+
+Not yet done as of this writing — the repository-side package (Dockerfile,
+compose service, env vars, CORS) is complete and pushed, but the domain
+itself has no vhost/DNS/SSL yet. These are the exact, one-time manual steps
+to add it, mirroring steps 1-4 above precisely (same account, same
+mechanism), pointed at the new `admin` container's port `3002` instead of
+`3001`/`4001`:
+
+1. **Subdomain**: create under the same `biawin` cPanel account via
+   `uapi SubDomain addsubdomain`, same as the existing two.
+2. **Reverse proxy**: same `mod_proxy` per-vhost include hook pattern (not
+   `.htaccess` — see the note above for why):
+   ```
+   /etc/apache2/conf.d/userdata/std/2_4/biawin/admin-staging.biawin.ir/proxy.conf
+   /etc/apache2/conf.d/userdata/ssl/2_4/biawin/admin-staging.biawin.ir/proxy.conf
+   ```
+   `std/` (port 80) content:
+   ```apache
+   RewriteEngine On
+   RewriteCond %{REQUEST_URI} !^/\.well-known/acme-challenge/
+   RewriteCond %{HTTPS} off
+   RewriteRule ^(.*)$ https://%{HTTP_HOST}$1 [R=301,L]
+   RewriteCond %{REQUEST_URI} !^/\.well-known/acme-challenge/
+   RewriteRule ^(.*)$ http://127.0.0.1:3002$1 [P,L]
+   ProxyPreserveHost On
+   ```
+   `ssl/` (port 443) content:
+   ```apache
+   SSLProxyEngine On
+   RewriteEngine On
+   RewriteCond %{REQUEST_URI} !^/\.well-known/acme-challenge/
+   RewriteRule ^(.*)$ http://127.0.0.1:3002$1 [P,L]
+   ProxyPreserveHost On
+   ```
+   Then, as always after editing either file:
+   ```bash
+   /scripts/rebuildhttpdconf && /scripts/restartsrv_httpd
+   ```
+3. **DNS**: point `admin-staging.biawin.ir` at `62.204.61.18` at MizbanCDN
+   (same authoritative nameservers as the other two subdomains). Verify with
+   both `8.8.8.8` and `1.1.1.1` before requesting SSL — AutoSSL's DCV will
+   fail silently-but-informatively if DNS isn't resolving yet.
+4. **SSL**: same `autossl_check` mechanism, with the same `www.` exclusion
+   (the `www.admin-staging.biawin.ir` alias will never get a DNS record):
+   ```bash
+   whmapi1 add_autossl_user_excluded_domains username=biawin \
+     domain=www.admin-staging.biawin.ir
+   /usr/local/cpanel/bin/autossl_check --user=biawin
+   ```
+   Verify afterward with `curl`'s strict hostname checking (no `-k`) that
+   `https://admin-staging.biawin.ir/` reports `SSL certificate verify ok`.
+
+No repo re-clone or code change is needed for this addendum — the `admin`
+service, its Dockerfile, and its compose wiring are already part of the
+repository as of this commit. Once these four steps are done, the very next
+`./deploy/staging/deploy.sh` run (or the current containers, if already
+running) serves the Admin Portal at `https://admin-staging.biawin.ir/`
+immediately — no further deploy is required purely for the domain to start
+working.
+
 ## Deploying a new staging release
 
 ```bash
@@ -104,23 +165,31 @@ cd /srv/biawin-staging
 Or, once GitHub secrets are configured: **Actions → Deploy Staging → Run
 workflow** on the desired branch.
 
-`deploy.sh` is idempotent — `git reset --hard origin/main`, rebuild images,
-bring up infra, run `prisma migrate deploy && prisma db seed` (both safe to
-re-run), then cut over backend/web and health-check both.
+`deploy.sh` is idempotent — `git reset --hard origin/main`, rebuild images
+(backend + web + admin), bring up infra, run `prisma migrate deploy &&
+prisma db seed` (both safe to re-run), run the Home CMS static asset
+migration (`seed-home-media.ts`, Stage 5.21, also idempotent — skips rows
+that already have a `mediaAssetId`), then cut over backend/web/admin and
+health-check all three.
 
 ## Health checks
 
 - Backend: `curl https://api-staging.biawin.ir/api/health` → `{"status":"ok"}`
 - Web: `curl -I https://staging.biawin.ir/` → `200`
-- Both Docker images also have their own `HEALTHCHECK` (visible in `docker ps`),
-  independent of the external curl checks `deploy.sh` runs.
+- Admin: `curl -I https://admin-staging.biawin.ir/` → `200` (Stage 5.22 —
+  once the domain's vhost/DNS/SSL addendum above is done; until then, verify
+  the container itself directly with `curl -I http://127.0.0.1:3002/` on the
+  server)
+- All three Docker images also have their own `HEALTHCHECK` (visible in
+  `docker ps`), independent of the external curl checks `deploy.sh` runs.
 
 ## Rollback
 
-`deploy.sh` does not overwrite a working deployment until the very last step
-(bringing up the new `backend`/`web` containers) — if the health check after
-that fails, the script exits non-zero and prints where to look
-(`docker compose -f deploy/staging/docker-compose.staging.yml logs backend`).
+`deploy.sh` does not overwrite a working deployment until the second-to-last
+step (bringing up the new `backend`/`web`/`admin` containers) — if the
+health check after that fails, the script exits non-zero and prints where to
+look (`docker compose -f deploy/staging/docker-compose.staging.yml logs
+backend` — swap in `web` or `admin` as needed).
 
 To manually roll back to the previous commit:
 
@@ -128,8 +197,8 @@ To manually roll back to the previous commit:
 cd /srv/biawin-staging
 git log --oneline -5          # find the last known-good commit
 git checkout <previous-sha>
-docker compose -f deploy/staging/docker-compose.staging.yml build backend web
-docker compose -f deploy/staging/docker-compose.staging.yml up -d backend web
+docker compose -f deploy/staging/docker-compose.staging.yml build backend web admin
+docker compose -f deploy/staging/docker-compose.staging.yml up -d backend web admin
 ```
 
 Database migrations are additive by convention (Prisma migrations are not

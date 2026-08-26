@@ -14,11 +14,13 @@ Docker (biawin-staging project):
   minio      127.0.0.1:9010 -> 9000  (S3 API)
              127.0.0.1:9011 -> 9001  (console)
   backend    127.0.0.1:4001 -> 4000  (NestJS, built image, no dev tooling running)
-  web        127.0.0.1:3001 -> 3000  (Next.js standalone)
+  web        127.0.0.1:3001 -> 3000  (Next.js, `next build`+`next start`)
+  admin      127.0.0.1:3002 -> 3000  (Next.js Admin Portal, same build approach — Stage 5.22)
 
 LiteSpeed (WHM/cPanel, existing on host):
-  staging.biawin.ir      --reverse proxy-->  127.0.0.1:3001
-  api-staging.biawin.ir  --reverse proxy-->  127.0.0.1:4001
+  staging.biawin.ir        --reverse proxy-->  127.0.0.1:3001
+  api-staging.biawin.ir    --reverse proxy-->  127.0.0.1:4001
+  admin-staging.biawin.ir  --reverse proxy-->  127.0.0.1:3002   (Stage 5.22 — vhost/DNS/SSL not yet created; see docs/10-release-process.md "One-time server setup, Stage 5.22 addendum")
 ```
 
 Every Biawin container binds to `127.0.0.1` only — nothing is reachable from
@@ -28,7 +30,7 @@ outside the host except through LiteSpeed's reverse proxy + TLS termination.
 
 The host already has PostgreSQL on `5432`, a Gateway on `8080`, and another
 Next.js app on `3000` (Beauty Platform / Romina). Biawin staging deliberately
-avoids every occupied port: `3001`, `4001`, `5433`, `6380`, `9010`, `9011`.
+avoids every occupied port: `3001`, `3002`, `4001`, `5433`, `6380`, `9010`, `9011`.
 
 ### Server-side layout
 
@@ -37,6 +39,7 @@ avoids every occupied port: `3001`, `4001`, `5433`, `6380`, `9010`, `9011`.
   deploy/staging/
     Dockerfile.backend
     Dockerfile.web
+    Dockerfile.admin           <- Stage 5.22
     docker-compose.staging.yml
     .env.staging               <- real secrets, created on the server, gitignored
     deploy.sh
@@ -70,8 +73,9 @@ Key staging-specific values:
 | `STAGING_TEST_AUTH` | `true` | Explicitly re-enables the fixed OTP test phone/code (`09121111111` / `123456`) for QA — see below |
 | `SMS_PROVIDER` | `mock` | No real SMS spend on staging |
 | `PAYMENT_PROVIDER` | `zibal` (no merchant ID set) | Architecture wired, no real transactions until real credentials are supplied |
-| `CORS_ORIGINS` | `https://staging.biawin.ir` | Only the staging frontend origin is allowed (no Admin Portal origin yet — Admin has no staging deployment/subdomain as of Stage 5.22) |
-| `NEXT_PUBLIC_API_URL` | `https://api-staging.biawin.ir/api/v1` | Frontend calls the public staging API domain (including the `/api/v1` prefix the backend actually serves — see `backend/src/main.ts`), never an internal Docker hostname |
+| `CORS_ORIGINS` | `https://staging.biawin.ir,https://admin-staging.biawin.ir` | Both staging frontend origins — Customer App and Admin Portal (Stage 5.22) |
+| `NEXT_PUBLIC_API_URL` | `https://api-staging.biawin.ir/api/v1` | Customer frontend calls the public staging API domain (including the `/api/v1` prefix the backend actually serves — see `backend/src/main.ts`), never an internal Docker hostname |
+| `NEXT_PUBLIC_ADMIN_API_URL` | `https://api-staging.biawin.ir/api/v1` | Same rule, for the Admin Portal build (Stage 5.22) — same backend, `/admin/**` routes live on it already |
 | `ADMIN_JWT_ACCESS_SECRET` / `ADMIN_JWT_REFRESH_SECRET` | real random secrets, distinct from `JWT_*` | **Required since Stage 5.16** — the backend fails to boot without these (no default). Missing from this environment until Stage 5.22 found the gap. |
 | `ADMIN_SEED_EMAIL` / `ADMIN_SEED_PASSWORD` | real staging admin credentials | Optional in the schema but required in practice — without these, `prisma db seed` skips creating a `SUPER_ADMIN` and Admin Portal login is impossible on this environment. |
 | `PUBLIC_API_ORIGIN` | `https://api-staging.biawin.ir` | **Required since Stage 5.21** — the code default (`localhost:4000`) is only correct for local dev; every Home CMS image URL is built from this value. |
@@ -110,11 +114,12 @@ cd /srv/biawin-staging
 ./deploy/staging/deploy.sh
 ```
 
-This does: `git fetch/checkout main` → build backend+web images → bring up
-infra and wait for health → run migrate+seed → bring up backend+web → curl
-health checks on both. It exits non-zero (leaving the previous containers
-running) if any step fails before the final cutover — see
-[10-release-process.md](10-release-process.md) for rollback details.
+This does: `git fetch/checkout main` → build backend+web+admin images → bring
+up infra and wait for health → run migrate+seed → Home CMS media migration →
+bring up backend+web+admin → curl health checks on all three. It exits
+non-zero (leaving the previous containers running) if any step fails before
+the final cutover — see [10-release-process.md](10-release-process.md) for
+rollback details.
 
 ## Firewall (CSF/Imunify360)
 
@@ -137,6 +142,11 @@ the server. If `docker network rm biawin-staging_default` is ever run and
 the network recreated, the ports still work: they are permanently allowed to
 this fixed subnet, and the subnet is now pinned so a future recreate cannot
 silently drift.
+
+**Stage 5.22 note**: the `admin` container's internal port is also `3000`
+(same as `web`'s) — this existing rule already covers it, since the rule is
+scoped by port number and subnet, not by container. No firewall change is
+needed for `admin-staging.biawin.ir` to work once its vhost exists.
 
 ## LiteSpeed / domains
 

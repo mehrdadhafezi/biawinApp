@@ -4,9 +4,15 @@
 #   ./deploy/staging/deploy.sh
 #
 # Does: git pull -> build images -> bring up infra -> migrate+seed -> Home
-# CMS media migration -> deploy backend/web -> health check. Exits non-zero
-# and leaves the previous containers running if anything fails before the
-# final cutover.
+# CMS media migration -> deploy backend/web/admin -> health check. Exits
+# non-zero and leaves the previous containers running if anything fails
+# before the final cutover.
+#
+# admin (Stage 5.22) requires admin-staging.biawin.ir's DNS/vhost/SSL to
+# already exist on this server (docs/10-release-process.md "One-time server
+# setup, Stage 5.22 addendum") — the container itself will build and start
+# regardless, but the public domain won't resolve until that manual,
+# one-time step is done.
 set -euo pipefail
 
 REPO_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
@@ -26,8 +32,8 @@ git fetch origin main
 git checkout main
 git reset --hard origin/main
 
-log "2/7 building images (backend + web)"
-$COMPOSE build backend web
+log "2/7 building images (backend + web + admin)"
+$COMPOSE build backend web admin
 
 log "3/7 starting infra (postgres, redis, minio) and waiting for health"
 $COMPOSE up -d postgres redis minio minio-init
@@ -51,8 +57,8 @@ $COMPOSE run --rm backend sh -c "cd backend && pnpm exec prisma migrate deploy &
 log "5/7 running Home CMS static asset migration (Stage 5.21, idempotent — safe to re-run every deploy)"
 $COMPOSE run --rm backend sh -c "cd backend && pnpm exec ts-node --compiler-options '{\"module\":\"commonjs\"}' prisma/seed-home-media.ts"
 
-log "6/7 deploying backend + web"
-$COMPOSE up -d backend web
+log "6/7 deploying backend + web + admin"
+$COMPOSE up -d backend web admin
 
 log "7/7 health check"
 ok=0
@@ -80,4 +86,16 @@ if [ "$web_ok" -ne 1 ]; then
   fail "web did not respond on 127.0.0.1:3001 after deploy"
 fi
 
-log "deploy successful: backend healthy on 127.0.0.1:4001, web responding on 127.0.0.1:3001"
+admin_ok=0
+for i in $(seq 1 30); do
+  if curl -fsS http://127.0.0.1:3002/ >/dev/null 2>&1; then
+    admin_ok=1
+    break
+  fi
+  sleep 2
+done
+if [ "$admin_ok" -ne 1 ]; then
+  fail "admin did not respond on 127.0.0.1:3002 after deploy"
+fi
+
+log "deploy successful: backend healthy on 127.0.0.1:4001, web responding on 127.0.0.1:3001, admin responding on 127.0.0.1:3002"

@@ -3,12 +3,16 @@ name: biawin-staging
 # Fully independent namespace on a shared server — no port, volume, network,
 # or container name here may collide with other projects (Beauty Platform /
 # Romina) already running on this host. Every host bind is loopback-only;
-# LiteSpeed reverse-proxies staging.biawin.ir / api-staging.biawin.ir to
-# 127.0.0.1:3001 / 127.0.0.1:4001 (see docs/08-staging-deployment.md).
+# LiteSpeed reverse-proxies staging.biawin.ir / api-staging.biawin.ir /
+# admin-staging.biawin.ir to 127.0.0.1:3001 / 127.0.0.1:4001 / 127.0.0.1:3002
+# (see docs/08-staging-deployment.md). `admin-staging.biawin.ir` and the
+# `admin` service below are new as of Stage 5.22 — the vhost/DNS/SSL steps
+# for it are a manual one-time addition, not yet done as of this commit
+# (docs/10-release-process.md "One-time server setup, Stage 5.22 addendum").
 #
 # Known-occupied ports on this host (DO NOT reuse): 5432, 8080, 3000.
-# Biawin staging uses: 3001 (web), 4001 (backend), 5433 (postgres),
-# 6380 (redis), 9010/9011 (minio).
+# Biawin staging uses: 3001 (web), 3002 (admin), 4001 (backend),
+# 5433 (postgres), 6380 (redis), 9010/9011 (minio).
 #
 # The default network's subnet is pinned below to 172.19.0.0/16 — the host's
 # CSF/Imunify360 firewall has an explicit /etc/csf/csfpost.sh allow-rule
@@ -113,6 +117,20 @@ services:
     restart: unless-stopped
     ports:
       - "127.0.0.1:3001:3000"
+    depends_on:
+      - backend
+
+  admin:
+    build:
+      context: ../..
+      dockerfile: deploy/staging/Dockerfile.admin
+      args:
+        NEXT_PUBLIC_ADMIN_API_URL: ${NEXT_PUBLIC_ADMIN_API_URL:-https://api-staging.biawin.ir/api/v1}
+    image: biawin-staging-admin:latest
+    container_name: biawin-staging-admin
+    restart: unless-stopped
+    ports:
+      - "127.0.0.1:3002:3000"
     depends_on:
       - backend
 
