@@ -3,11 +3,11 @@
 import type { CSSProperties } from "react";
 import { useEffect, useRef, useState } from "react";
 import { useRouter } from "next/navigation";
-import { SERVICE_MOSAIC_HALVES, SERVICE_MOSAIC_WIDE, type MosaicTheme } from "./home.mock";
-import type { CategoriesSummary } from "./useCategories";
+import { useHomeServiceMosaic } from "./useHomeCms";
+import type { HomeMosaicTheme } from "../../lib/home-api";
 
 /** `.service-mosaic-card.theme-*`/`.service-wide-slide.theme-*` overlay variables, re-read directly from the prototype's CSS this session (Stage 5.14 correction — the first pass had one flat overlay for every tile). */
-const THEME_VARS: Record<MosaicTheme, CSSProperties> = {
+const THEME_VARS: Record<HomeMosaicTheme, CSSProperties> = {
   beauty: { "--ov1": "rgba(255,107,149,.05)", "--ov2": "rgba(214,51,108,.67)" } as CSSProperties,
   insurance: { "--ov1": "rgba(33,150,243,.05)", "--ov2": "rgba(21,101,192,.67)" } as CSSProperties,
   home: { "--ov1": "rgba(141,110,99,.05)", "--ov2": "rgba(99,63,51,.70)" } as CSSProperties,
@@ -24,41 +24,42 @@ const THEME_VARS: Record<MosaicTheme, CSSProperties> = {
  * `.theme-*` overlay tint re-added (same class of bug `ServiceBannerGrid`
  * had — one generic overlay instead of the prototype's per-category one).
  */
-export function ServiceMosaic({ categories, error }: CategoriesSummary) {
+export function ServiceMosaic() {
   const router = useRouter();
+  const { halves, wide } = useHomeServiceMosaic();
   const [wideIndex, setWideIndex] = useState(0);
   const timerRef = useRef<ReturnType<typeof setInterval> | null>(null);
+  // Clamped at render time (not reset via a separate effect) so a change in
+  // `wide.length` between the static fallback and the live CMS result (or
+  // any future Admin edit) never leaves `wideIndex` pointing past the end —
+  // every slide would render inactive (opacity 0) until the interval's next
+  // tick otherwise.
+  const activeWideIndex = wide.length > 0 ? wideIndex % wide.length : 0;
 
   useEffect(() => {
-    timerRef.current = setInterval(() => setWideIndex((i) => (i + 1) % SERVICE_MOSAIC_WIDE.length), 5000);
+    if (wide.length === 0) return;
+    timerRef.current = setInterval(() => setWideIndex((i) => (i + 1) % wide.length), 5000);
     return () => {
       if (timerRef.current) clearInterval(timerRef.current);
     };
-  }, []);
+  }, [wide.length]);
 
-  if (error) return null;
-
-  function categoryId(name: string) {
-    return categories?.find((c) => c.name === name)?.id ?? null;
-  }
-
-  function goToCategory(name: string) {
-    const id = categoryId(name);
-    if (id) router.push(`/services/${id}`);
+  function goToCategory(categoryId: string | null) {
+    if (categoryId) router.push(`/services/${categoryId}`);
   }
 
   return (
     <section className="biawin-sketch-continuation">
       <div className="biawin-service-mosaic">
-        {SERVICE_MOSAIC_HALVES.map((tile) => (
+        {halves.map((tile) => (
           <button
-            key={tile.categoryName}
+            key={tile.id}
             type="button"
-            onClick={() => goToCategory(tile.categoryName)}
+            onClick={() => goToCategory(tile.categoryId)}
             className="biawin-service-mosaic-card biawin-service-mosaic-card--half"
             style={THEME_VARS[tile.theme]}
           >
-            <img src={tile.image} alt={tile.categoryName} loading="lazy" />
+            {tile.image && <img src={tile.image} alt={tile.categoryName} loading="lazy" />}
             <span className="biawin-service-mosaic-shade" />
             <span className="biawin-service-mosaic-copy">
               <small>{tile.kicker}</small>
@@ -68,15 +69,15 @@ export function ServiceMosaic({ categories, error }: CategoriesSummary) {
         ))}
 
         <div className="biawin-service-wide-slider">
-          {SERVICE_MOSAIC_WIDE.map((slide, i) => (
+          {wide.map((slide, i) => (
             <button
-              key={slide.categoryName}
+              key={slide.id}
               type="button"
-              onClick={() => goToCategory(slide.categoryName)}
-              className={`biawin-service-wide-slide${i === wideIndex ? " biawin-service-wide-slide--active" : ""}`}
+              onClick={() => goToCategory(slide.categoryId)}
+              className={`biawin-service-wide-slide${i === activeWideIndex ? " biawin-service-wide-slide--active" : ""}`}
               style={THEME_VARS[slide.theme]}
             >
-              <img src={slide.image} alt={slide.categoryName} loading="lazy" />
+              {slide.image && <img src={slide.image} alt={slide.categoryName} loading="lazy" />}
               <span className="biawin-service-mosaic-shade" />
               <span className="biawin-service-mosaic-copy">
                 <small>{slide.kicker}</small>
@@ -86,13 +87,13 @@ export function ServiceMosaic({ categories, error }: CategoriesSummary) {
             </button>
           ))}
           <div aria-label="اسلایدهای خدمات" className="biawin-service-wide-dots">
-            {SERVICE_MOSAIC_WIDE.map((slide, i) => (
+            {wide.map((slide, i) => (
               <button
-                key={slide.categoryName}
+                key={slide.id}
                 type="button"
                 aria-label={slide.categoryName}
                 onClick={() => setWideIndex(i)}
-                className={i === wideIndex ? "biawin-active" : ""}
+                className={i === activeWideIndex ? "biawin-active" : ""}
               />
             ))}
           </div>

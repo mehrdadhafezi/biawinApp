@@ -77,6 +77,69 @@ interface Paginated<T> {
   take: number;
 }
 
+// --- Home CMS (Stage 5.19 backend, Stage 5.21 Customer integration) --------
+// Matches the real `GET /home/**` public response shapes exactly (verified
+// live against the running backend, not assumed from the planning contract —
+// see backend/src/modules/home/home-*.service.ts's own `toPublicResponse()`
+// methods). Deliberately separate interfaces from `NewsArticle`/
+// `ServiceCategory` in `@biawin/types` (those are the older mock-shaped
+// customer types) — these are the raw API DTOs, transformed into this app's
+// existing Home view models by `components/home/homeCmsAdapter.ts`, never
+// consumed directly by presentation components.
+
+export type HeroCardColor = "blue" | "sky" | "white";
+
+export interface HomeHeroCardDto {
+  id: string;
+  cardKey: "earn" | "biawin" | "reward";
+  label: string;
+  title: string;
+  subtitle: string;
+  displayNumber: string;
+  ownerLabel: string;
+  colorPreset: HeroCardColor;
+  sortOrder: number;
+}
+
+export type HomeBannerTheme = "auto" | "home" | "fashion" | "gold" | "travel";
+
+export interface HomeServiceBannerDto {
+  id: string;
+  categoryId: string;
+  categoryName: string;
+  image: string | null;
+  kicker: string;
+  theme: HomeBannerTheme;
+  wide: boolean;
+  sortOrder: number;
+}
+
+export type HomeMosaicSlot = "half" | "wide";
+export type HomeMosaicTheme = "beauty" | "insurance" | "home" | "digital";
+
+export interface HomeServiceMosaicTileDto {
+  id: string;
+  categoryId: string;
+  categoryName: string;
+  image: string | null;
+  slotType: HomeMosaicSlot;
+  kicker: string;
+  title: string | null;
+  lead: string | null;
+  theme: HomeMosaicTheme;
+  sortOrder: number;
+}
+
+export interface HomeNewsArticleDto {
+  id: string;
+  category: string;
+  image: string | null;
+  kicker: string;
+  title: string;
+  lead: string;
+  sortOrder: number;
+}
+
 export const homeApi = {
   listSubscriptionPlans: () => apiClient.get<Paginated<MembershipPlanDto>>("/subscriptions?limit=20", { public: true }),
   listMyMemberships: () => apiClient.get<Paginated<MembershipDto>>("/membership?limit=20"),
@@ -84,4 +147,11 @@ export const homeApi = {
   listCreditLines: () => apiClient.get<Paginated<CreditLineDto>>("/credit?limit=20"),
   listInstallments: () => apiClient.get<Paginated<InstallmentDto>>("/installments?limit=20"),
   listCategories: () => apiClient.get<Paginated<CategoryDto>>("/categories?limit=20", { public: true }),
+
+  // Never call `/admin/home/**` from the Customer App (Stage 5.21 §8) —
+  // these are exclusively the public, unauthenticated `/home/**` routes.
+  listHomeHeroCards: () => apiClient.get<HomeHeroCardDto[]>("/home/hero-cards", { public: true }),
+  listHomeServiceBanners: () => apiClient.get<HomeServiceBannerDto[]>("/home/service-banners", { public: true }),
+  listHomeServiceMosaicTiles: () => apiClient.get<HomeServiceMosaicTileDto[]>("/home/service-mosaic-tiles", { public: true }),
+  listHomeNewsArticles: () => apiClient.get<HomeNewsArticleDto[]>("/home/news-articles", { public: true }),
 };

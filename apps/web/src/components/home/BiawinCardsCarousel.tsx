@@ -2,58 +2,11 @@
 
 import { useRef, useState } from "react";
 import { color } from "@biawin/ui";
-
-interface CardData {
-  key: "earn" | "biawin" | "reward";
-  label: string;
-  ariaLabel: string;
-  title: string;
-  subtitle: string;
-  number: string;
-  owner: string;
-  gradient: string;
-  iconChip: "trend" | "card" | "gift";
-}
-
-/** `.hero .credit-card` — 3 static demo cards, verbatim prototype copy/numbers (this.section isn't tied to real membership status; the prototype's own cards aren't real financial products). */
-const CARDS: CardData[] = [
-  {
-    key: "earn",
-    label: "کارت درآمد",
-    ariaLabel: "مشاهده کارت کسب درآمد",
-    title: "کارت کسب درآمد",
-    subtitle: "فرصت درآمدزایی از معرفی و فعالیت در اکوسیستم بیاوین",
-    number: "6037 9918 0146 1280",
-    owner: "BIAWIN EARN",
-    gradient: "linear-gradient(135deg,#27384a 0%,#173957 52%,#0d608b 100%)",
-    iconChip: "trend",
-  },
-  {
-    key: "biawin",
-    label: "کارت اصلی",
-    ariaLabel: "مشاهده کارت بیاوین",
-    title: "کارت بیاوین",
-    subtitle: "عضویت اصلی برای دسترسی به اعتبار، خدمات و مزایای باشگاه",
-    number: "6219 8610 4432 1095",
-    owner: "BIAWIN CLUB",
-    gradient: "linear-gradient(135deg,#0f94ec 0%,#0879dc 54%,#064e91 100%)",
-    iconChip: "card",
-  },
-  {
-    key: "reward",
-    label: "کارت جایزه",
-    ariaLabel: "مشاهده کارت جایزه",
-    title: "کارت جایزه",
-    subtitle: "دریافت هدایا، امتیازها و تجربه‌های ویژه اعضای بیاوین",
-    number: "5029 0801 5538 7421",
-    owner: "BIAWIN REWARD",
-    gradient: "linear-gradient(135deg,#29a5a6 0%,#137e98 52%,#0b587d 100%)",
-    iconChip: "gift",
-  },
-];
+import { useHomeHeroCards } from "./useHomeCms";
+import type { HeroIconChip } from "./homeCmsAdapter";
 
 /** `.card-icon svg` — verbatim prototype path data per card (re-verified against the source this session; the "card" icon is a rounded `<rect rx="3">`, not a hand-drawn path, so it's rendered as real SVG primitives below instead of approximated as a `d` path). */
-function CardIcon({ chip }: { chip: CardData["iconChip"] }) {
+function CardIcon({ chip }: { chip: HeroIconChip }) {
   if (chip === "trend") {
     return (
       <>
@@ -97,6 +50,7 @@ function CardIcon({ chip }: { chip: CardData["iconChip"] }) {
  * intended.
  */
 export function BiawinCardsCarousel() {
+  const { cards } = useHomeHeroCards();
   const [activeIndex, setActiveIndex] = useState(1);
   const trackRef = useRef<HTMLDivElement>(null);
 
@@ -134,7 +88,7 @@ export function BiawinCardsCarousel() {
 
       <div style={{ position: "relative", overflow: "hidden", padding: "3px 0 18px" }}>
         <div ref={trackRef} onScroll={handleScroll} dir="ltr" className="biawin-card-track">
-          {CARDS.map((card, index) => (
+          {cards.map((card, index) => (
             <button
               key={card.key}
               type="button"
@@ -176,7 +130,7 @@ export function BiawinCardsCarousel() {
       </div>
 
       <div aria-label="انتخاب کارت" style={{ display: "flex", justifyContent: "center", gap: 7, alignItems: "center", direction: "ltr" }}>
-        {CARDS.map((card, index) => (
+        {cards.map((card, index) => (
           <button
             key={card.key}
             type="button"

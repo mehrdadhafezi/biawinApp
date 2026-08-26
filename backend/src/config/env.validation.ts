@@ -76,6 +76,18 @@ export const envSchema = z.object({
 
   CORS_ORIGINS: z.string().default('http://localhost:3000'),
 
+  // --- Public asset base URL (Stage 5.21) — the origin at which THIS
+  // backend is itself publicly reachable, used only to turn
+  // `MediaStorageService.resolvePublicUrl()`'s output into an absolute URL
+  // a browser can actually fetch (see media-storage.service.ts's own doc
+  // comment: the previous `/media/{filename}`-relative scheme resolved
+  // against whichever frontend origin rendered the `<img>`, not the
+  // backend, and 404'd — never exercised in the browser until Customer
+  // Home actually needed to render a real CMS image). Distinct from
+  // CORS_ORIGINS (frontend origins allowed to call this API) — this is the
+  // backend's own origin.
+  PUBLIC_API_ORIGIN: z.string().url().default('http://localhost:4000'),
+
   // --- Staging-only OTP test bypass (docs/08-staging-deployment.md). Must
   // never be "true" in a real production .env — NODE_ENV=development already
   // covers local dev regardless of this flag.

@@ -1,15 +1,37 @@
 /**
- * Temporary static content for Home sections that have no backing admin
- * API yet — verbatim from `biawin_single_file_app_requested_edits_v15.html`'s
- * `#view-home` (the pixel-perfect migration's single source of truth).
- * Replace each block with a real Admin CMS fetch once that API exists;
- * until then this is the literal prototype copy, not placeholder text.
+ * Stage 5.21 update — this file now serves TWO different roles depending on
+ * the export:
+ *
+ * 1. `HOME_STORIES`, `CATEGORY_TICKER_UP`/`DOWN`/`IMAGE`, `MEMBERSHIP_TIER_IMAGE`
+ *    are still the PRIMARY, live source for their sections
+ *    (`HomeStories`/`CategoriesSection`/`MembershipStoryStrip`) — none of
+ *    these are managed by the Stage 5.19 Home CMS (`docs/home-admin-
+ *    contract.md` §2 deferred `HomeStories`/`BrandIntroduction`/
+ *    `QuickActions`; `CategoriesSection`'s ticker and the membership tier
+ *    images were *originally scoped* for CMS management in that same
+ *    contract, but Stage 5.19's actual backend work only shipped
+ *    `HomeHeroCard`/`HomeServiceBanner`/`HomeServiceMosaicTile`/
+ *    `HomeNewsArticle` — per Stage 5.21's own instruction to use the real,
+ *    as-shipped Stage 5.19 contract rather than the earlier planning
+ *    document, these two sections keep their pre-existing static/live-
+ *    non-CMS sources unchanged).
+ *
+ * 2. `SERVICE_BANNERS`, `SERVICE_MOSAIC_HALVES`/`WIDE`, `NEWS_ARTICLES`, and
+ *    `HERO_CARDS` (new this stage) are now FALLBACK-ONLY content —
+ *    `apps/web/src/components/home/useHomeCms.ts` renders these only if
+ *    the live `GET /home/**` API is unreachable or returns no usable rows.
+ *    The primary path is `homeCmsAdapter.ts` mapping real CMS DTOs into the
+ *    same view-model shapes these arrays already match. Remove this half of
+ *    the file once Stage 5.22 staging QA confirms CMS parity and the
+ *    fallback path is no longer needed (`docs/customer-home-cms-integration-
+ *    report.md` §7).
  *
  * Images referenced below (`/home/...`) are real photos extracted
  * verbatim from the prototype's inline base64 `<img>` tags — see
- * `docs/home-prototype-asset-map.md` for the full extraction mapping.
- * No emoji/icon placeholders remain for any section the prototype has a
- * real photo for (Stage 5.13 correction).
+ * `docs/home-prototype-asset-map.md` for the full extraction mapping. The
+ * same files are now also registered as `MediaAsset` rows and served by the
+ * CMS (`backend/prisma/seed-home-media.ts`) — this file's copies are what
+ * the fallback path (and the CMS seed data itself) both originated from.
  */
 
 export interface HomeStoryItem {
@@ -199,5 +221,55 @@ export const NEWS_ARTICLES: NewsArticle[] = [
     kicker: "راهنمای انتخاب",
     title: "کدام کارت اشتراک بیاوین برای شما مناسب‌تر است؟",
     lead: "کارت شروع، پلاس، خانواده، پرایم، هدیه، سفر، سبک زندگی و سازمانی هرکدام برای یک نوع نیاز و الگوی استفاده طراحی شده‌اند.",
+  },
+];
+
+export interface HeroCardMock {
+  key: "earn" | "biawin" | "reward";
+  label: string;
+  title: string;
+  subtitle: string;
+  number: string;
+  owner: string;
+  gradient: string;
+  iconChip: "trend" | "card" | "gift";
+}
+
+/**
+ * `.hero .credit-card` fallback — moved here from `BiawinCardsCarousel.tsx`
+ * (Stage 5.21) alongside the other 3 CMS-fallback arrays above; the CMS
+ * path builds these exact gradient/iconChip pairs from `colorPreset` via
+ * `homeCmsAdapter.ts`'s `HERO_VISUAL_BY_COLOR` instead.
+ */
+export const HERO_CARDS_FALLBACK: HeroCardMock[] = [
+  {
+    key: "earn",
+    label: "کارت درآمد",
+    title: "کارت کسب درآمد",
+    subtitle: "فرصت درآمدزایی از معرفی و فعالیت در اکوسیستم بیاوین",
+    number: "6037 9918 0146 1280",
+    owner: "BIAWIN EARN",
+    gradient: "linear-gradient(135deg,#27384a 0%,#173957 52%,#0d608b 100%)",
+    iconChip: "trend",
+  },
+  {
+    key: "biawin",
+    label: "کارت اصلی",
+    title: "کارت بیاوین",
+    subtitle: "عضویت اصلی برای دسترسی به اعتبار، خدمات و مزایای باشگاه",
+    number: "6219 8610 4432 1095",
+    owner: "BIAWIN CLUB",
+    gradient: "linear-gradient(135deg,#0f94ec 0%,#0879dc 54%,#064e91 100%)",
+    iconChip: "card",
+  },
+  {
+    key: "reward",
+    label: "کارت جایزه",
+    title: "کارت جایزه",
+    subtitle: "دریافت هدایا، امتیازها و تجربه‌های ویژه اعضای بیاوین",
+    number: "5029 0801 5538 7421",
+    owner: "BIAWIN REWARD",
+    gradient: "linear-gradient(135deg,#29a5a6 0%,#137e98 52%,#0b587d 100%)",
+    iconChip: "gift",
   },
 ];

@@ -2,7 +2,7 @@
 
 import { useRef, useState } from "react";
 import { color } from "@biawin/ui";
-import { NEWS_ARTICLES } from "./home.mock";
+import { useHomeNewsArticles } from "./useHomeCms";
 
 const PERSIAN_DIGITS = ["۰", "۱", "۲", "۳", "۴", "۵", "۶", "۷", "۸", "۹"];
 
@@ -24,6 +24,7 @@ function toPersianDigits(n: number): string {
  * page to open.
  */
 export function NewsCarousel() {
+  const { articles } = useHomeNewsArticles();
   const [current, setCurrent] = useState(1);
   const trackRef = useRef<HTMLDivElement>(null);
 
@@ -57,7 +58,7 @@ export function NewsCarousel() {
     <section className="biawin-news-section">
       <div className="biawin-news-title">
         <strong>مقالات و اخبار بیاوین</strong>
-        <small>{toPersianDigits(NEWS_ARTICLES.length)} مقاله و خبر؛ برای دیدن همه موارد به چپ و راست اسکرول کنید</small>
+        <small>{toPersianDigits(articles.length)} مقاله و خبر؛ برای دیدن همه موارد به چپ و راست اسکرول کنید</small>
       </div>
 
       <div className="biawin-news-carousel-wrap">
@@ -68,10 +69,10 @@ export function NewsCarousel() {
         </button>
 
         <div ref={trackRef} onScroll={handleScroll} className="biawin-news-track">
-          {NEWS_ARTICLES.map((article, i) => (
-            <article key={article.title} className={`biawin-news-card${i === current - 1 ? " biawin-news-card--active" : ""}`}>
+          {articles.map((article, i) => (
+            <article key={article.id} className={`biawin-news-card${i === current - 1 ? " biawin-news-card--active" : ""}`}>
               <div className="biawin-news-media">
-                <img src={article.image} alt={article.category} loading="lazy" />
+                {article.image && <img src={article.image} alt={article.category} loading="lazy" />}
                 <span>{article.category}</span>
               </div>
               <div className="biawin-news-copy">
@@ -96,7 +97,7 @@ export function NewsCarousel() {
       <div className="biawin-news-counter">
         <b>{toPersianDigits(current)}</b>
         <span>از</span>
-        <b>{toPersianDigits(NEWS_ARTICLES.length)}</b>
+        <b>{toPersianDigits(articles.length)}</b>
       </div>
 
       <style>{`

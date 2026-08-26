@@ -8,6 +8,7 @@ import { getSignedUrl } from '@aws-sdk/s3-request-presigner';
 import { Injectable } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
 import { randomUUID } from 'node:crypto';
+import type { Readable } from 'node:stream';
 
 /**
  * Object storage layer, uniform for dev (MinIO) and production (any
@@ -64,6 +65,26 @@ export class StorageService {
     );
   }
 
+  /**
+   * Reads an object's full bytes back out of the bucket — added for Stage
+   * 5.21's `/media/:filename` static-bridge route (`MediaFilesController`),
+   * the first real reader this service has ever needed (every other caller
+   * only ever put/deleted/presigned). Buffers the whole object in memory
+   * rather than streaming the response through — acceptable for the small
+   * photo-sized files (`MEDIA_MAX_FILE_SIZE_BYTES`, 5MB default) this
+   * bucket actually holds; revisit if a much larger file type is ever
+   * stored here.
+   */
+  async getObject(key: string): Promise<{ body: Buffer; contentType: string }> {
+    const command = new GetObjectCommand({ Bucket: this.bucket, Key: key });
+    const response = await this.client.send(command);
+    const body = await streamToBuffer(response.Body as Readable);
+    return {
+      body,
+      contentType: response.ContentType ?? 'application/octet-stream',
+    };
+  }
+
   async getPresignedGetUrl(
     key: string,
     expiresInSeconds = 300,
@@ -84,4 +105,18 @@ export class StorageService {
     });
     return getSignedUrl(this.client, command, { expiresIn: expiresInSeconds });
   }
+}
+
+async function streamToBuffer(stream: Readable): Promise<Buffer> {
+  const chunks: Buffer[] = [];
+  for await (const chunk of stream) {
+    // Always re-wrapped via `Buffer.from()` (even when `chunk` is already a
+    // Buffer) rather than pushed as-is — Node's stream async iterator types
+    // `chunk` as `any`, so an `instanceof Buffer` narrow still leaves a
+    // generic-parameter mismatch (`Buffer<any>` vs. this array's
+    // `Buffer<ArrayBufferLike>`); re-wrapping produces a concretely-typed
+    // Buffer either way, cheaply (a no-op copy when it's already a Buffer).
+    chunks.push(Buffer.from(chunk as Uint8Array));
+  }
+  return Buffer.concat(chunks);
 }

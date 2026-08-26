@@ -23,6 +23,7 @@
     "prisma:generate": "prisma generate",
     "prisma:migrate": "prisma migrate dev",
     "prisma:seed": "prisma db seed",
+    "seed:home-media": "ts-node --compiler-options {\"module\":\"commonjs\"} prisma/seed-home-media.ts",
     "prisma:studio": "prisma studio"
   },
   "dependencies": {

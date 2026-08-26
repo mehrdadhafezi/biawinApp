@@ -11,7 +11,6 @@ import { ServiceBannerGrid } from "../../components/home/ServiceBannerGrid";
 import { MembershipStoryStrip } from "../../components/home/MembershipStoryStrip";
 import { ServiceMosaic } from "../../components/home/ServiceMosaic";
 import { NewsCarousel } from "../../components/home/NewsCarousel";
-import { useCategories } from "../../components/home/useCategories";
 import { useMembershipSummary } from "../../components/home/useMembershipSummary";
 
 /**
@@ -27,11 +26,15 @@ import { useMembershipSummary } from "../../components/home/useMembershipSummary
  *   (AdditionalHomeSections) → BottomNavigation (AppShell)
  *
  * See docs/home-pixel-perfect-migration-report.md for the section-by-section
- * mapping, what stayed real-API-backed vs. mock, and responsive verification.
+ * mapping, what stayed real-API-backed vs. mock, and responsive verification;
+ * docs/customer-home-cms-integration-report.md (Stage 5.21) for which
+ * sections now source from the Home CMS instead. `ServiceBannerGrid`/
+ * `ServiceMosaic` no longer take a shared `categories` prop — Stage 5.19's
+ * CMS rows carry their own `categoryId` directly, so the page no longer
+ * needs to fetch the category catalog just to resolve one by name.
  */
 export default function HomePage() {
   const membershipSummary = useMembershipSummary();
-  const categoriesSummary = useCategories();
 
   return (
     <AppShell activeNavKey="home">
@@ -42,9 +45,9 @@ export default function HomePage() {
       <QuickActions />
       <BrandIntroduction />
       <CategoriesSection />
-      <ServiceBannerGrid {...categoriesSummary} />
+      <ServiceBannerGrid />
       <MembershipStoryStrip {...membershipSummary} />
-      <ServiceMosaic {...categoriesSummary} />
+      <ServiceMosaic />
       <NewsCarousel />
 
       <footer style={{ padding: "26px 20px 34px", background: "#063e75", color: "#fff", textAlign: "center" }}>

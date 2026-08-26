@@ -2,12 +2,11 @@
 
 import type { CSSProperties } from "react";
 import { useRouter } from "next/navigation";
-import { SkeletonBlock } from "../common/SkeletonBlock";
-import { SERVICE_BANNERS, type BannerTheme } from "./home.mock";
-import type { CategoriesSummary } from "./useCategories";
+import { useHomeServiceBanners } from "./useHomeCms";
+import type { HomeBannerTheme } from "../../lib/home-api";
 
 /** `.service-banner.theme-*` overlay variables, re-read directly from the prototype's CSS this session (Stage 5.14 correction). React passes `--custom-property` keys straight through in the `style` object. */
-const THEME_VARS: Record<BannerTheme, Record<string, string>> = {
+const THEME_VARS: Record<HomeBannerTheme, Record<string, string>> = {
   auto: { "--ov1": "rgba(66,66,72,.10)", "--ov2": "rgba(22,22,26,.74)", "--ov3": "rgba(18,18,22,.90)" },
   home: { "--ov1": "rgba(141,110,99,.05)", "--ov2": "rgba(99,63,51,.70)", "--ov3": "rgba(84,53,43,.87)" },
   fashion: { "--ov1": "rgba(156,39,176,.05)", "--ov2": "rgba(106,27,154,.68)", "--ov3": "rgba(88,24,120,.85)" },
@@ -47,13 +46,9 @@ const THEME_VARS: Record<BannerTheme, Record<string, string>> = {
  * negative-z-index trick for its decorative circles and was never
  * affected — this component just didn't have the same protection).
  */
-export function ServiceBannerGrid({ categories, error }: CategoriesSummary) {
+export function ServiceBannerGrid() {
   const router = useRouter();
-  if (error) return null;
-
-  const banners = categories
-    ? SERVICE_BANNERS.map((b) => ({ ...b, category: categories.find((c) => c.name === b.categoryName) })).filter((b) => b.category)
-    : null;
+  const { banners } = useHomeServiceBanners();
 
   return (
     <section className="biawin-service-banner-section">
@@ -66,30 +61,28 @@ export function ServiceBannerGrid({ categories, error }: CategoriesSummary) {
       </div>
 
       <div className="biawin-banner-grid">
-        {banners === null
-          ? [0, 1, 2, 3].map((i) => <SkeletonBlock key={i} height={150} radiusPx={22} />)
-          : banners.map((banner) => (
-              <button
-                key={banner.categoryName}
-                type="button"
-                onClick={() => router.push(`/services/${banner.category!.id}`)}
-                className={`biawin-service-banner${banner.wide ? " biawin-service-banner--wide" : ""}`}
-                style={THEME_VARS[banner.theme] as CSSProperties}
-              >
-                <img src={banner.image} alt={banner.categoryName} loading="lazy" />
-                <div className="biawin-service-banner-content">
-                  <div>
-                    <strong>{banner.categoryName}</strong>
-                    <small>{banner.kicker}</small>
-                  </div>
-                  <span className="biawin-arrow-circle">
-                    <svg viewBox="0 0 24 24" width={16} height={16} fill="none" stroke="#fff" strokeWidth={2}>
-                      <path d="m15 18-6-6 6-6" />
-                    </svg>
-                  </span>
-                </div>
-              </button>
-            ))}
+        {banners.map((banner) => (
+          <button
+            key={banner.id}
+            type="button"
+            onClick={banner.categoryId ? () => router.push(`/services/${banner.categoryId}`) : undefined}
+            className={`biawin-service-banner${banner.wide ? " biawin-service-banner--wide" : ""}`}
+            style={THEME_VARS[banner.theme] as CSSProperties}
+          >
+            {banner.image && <img src={banner.image} alt={banner.categoryName} loading="lazy" />}
+            <div className="biawin-service-banner-content">
+              <div>
+                <strong>{banner.categoryName}</strong>
+                <small>{banner.kicker}</small>
+              </div>
+              <span className="biawin-arrow-circle">
+                <svg viewBox="0 0 24 24" width={16} height={16} fill="none" stroke="#fff" strokeWidth={2}>
+                  <path d="m15 18-6-6 6-6" />
+                </svg>
+              </span>
+            </div>
+          </button>
+        ))}
       </div>
 
       <style>{`
