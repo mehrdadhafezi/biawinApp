@@ -160,20 +160,57 @@ staging, a second real deployment blocker this same investigation caught.
 Fixed with an explicit `process.exit(0)` after `app.close()` resolves.
 
 **Verification**: `deploy/staging/verify-runtime-image.sh` builds the real
-`Dockerfile.backend` image and runs all three commands
-(`prisma migrate deploy`, `node dist/prisma/seed.js`,
-`node dist/prisma/seed-home-media.js`) against a throwaway, isolated
+`Dockerfile.backend` image and runs `prisma migrate deploy` plus both
+seed/media-migration commands against a throwaway, isolated
 Postgres/Redis/MinIO stack (`docker-compose.verify.yml` — no host ports
 published, safe to run anywhere, including alongside a live staging
 deployment on the same host). A normal `pnpm typecheck`/`build` does **not**
 catch this class of bug — compiling successfully says nothing about which
 compiled files a specific Dockerfile stage actually `COPY`s. Run this
-script before every deploy that touches `Dockerfile.backend`,
+script before every deploy that touches `Dockerfile.backend`, `deploy.sh`,
 `prisma/seed.ts`, `prisma/seed-home-media.ts`, or anything they import:
 
 ```bash
 ./deploy/staging/verify-runtime-image.sh
 ```
+
+**A first version of this fix still failed on real staging** — worth
+recording in full, since the failure mode is instructive. `deploy.sh` was
+correctly fixed and the verification script correctly proved the compiled
+commands work inside the real image, but the two scripts each had their
+*own, separately hand-typed copy* of the same two command strings. A real
+deploy on the server still ran the OLD (pre-fix) `prisma db seed` and
+failed the identical way — not because the fix was wrong, but because of an
+entirely different, much sneakier bug: `deploy.sh`'s own step 1 does
+`git reset --hard origin/main`, which overwrites `deploy.sh` **on disk while
+it is the file currently being executed**. On Linux, `git reset --hard`
+replaces a changed file via unlink+recreate; a bash process that already
+has the old file open (which the currently-running `./deploy.sh` does)
+keeps reading that old inode to completion via its existing file
+descriptor — so a deploy invoked from an old copy of the file kept running
+every step *after* the git reset using the pre-fix logic, even though `git`
+itself printed `HEAD is now at <the new commit>` moments earlier. Fixed two
+ways, together:
+
+1. **`deploy.sh` re-execs itself** immediately after the git reset
+   (`DEPLOY_SH_REEXECED=1 exec bash "$REPO_DIR/deploy/staging/deploy.sh"`,
+   guarded so it happens exactly once) — `exec` replaces the running
+   process outright and re-opens the file fresh, so every step after that
+   point is guaranteed to come from the just-updated file, regardless of
+   what was originally invoked or how bash buffered it.
+2. **`SEED_CMD`/`MEDIA_MIGRATION_CMD` are now single-sourced.** `deploy.sh`
+   defines them once, near its own top, and both its own step 4/7 and step
+   5/7 use those variables (not an inline literal). `verify-runtime-image.sh`
+   `source`s `deploy.sh` itself (with `DEPLOY_SH_SOURCE_ONLY=1`, which makes
+   it define those two variables and return immediately — no git, no
+   Docker, nothing else runs) to read the exact same strings, instead of
+   keeping its own hand-copied duplicate. Two independently-maintained
+   copies of the same command drifting apart is exactly what happened —
+   this makes that drift structurally impossible rather than something to
+   remember to keep in sync. `verify-runtime-image.sh` also runs a cheap
+   static check first (`grep`, comments excluded) that fails immediately if
+   `deploy.sh` ever contains a literal `prisma db seed` or
+   `ts-node ... prisma/(seed|seed-home-media).ts` in executable code again.
 
 ## Deploying
 
