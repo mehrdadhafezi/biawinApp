@@ -60,6 +60,18 @@ Done (2026-08-22) — staging is fully live on public HTTPS as of this writing.
    ProxyPreserveHost On
    ```
    (`4001` in place of `3001` for `api-staging.biawin.ir`'s two files.)
+
+   **Update (Stage 5.22 addendum below)**: this `RewriteCond`-negation
+   pattern turned out not to reliably exclude `/.well-known/acme-challenge/`
+   from the proxy rule on this LiteSpeed build — confirmed via
+   `admin-staging.biawin.ir` hitting the exact same issue with byte-for-byte
+   identical rule syntax. These two domains' live files have not been
+   touched (their certs are already issued and nothing is currently broken
+   for them), but the next time either renews, the same DCV failure is
+   possible. See the addendum's "The fix" for the corrected pattern
+   (dedicated match-and-stop `RewriteRule`, not a negated `RewriteCond`) —
+   apply it here too at the next convenient opportunity.
+
    These survive `/scripts/rebuildhttpdconf` (cPanel's official customization
    mechanism) — after editing any of them, always run:
    ```bash
@@ -120,14 +132,9 @@ that**: with the `admin` container not yet running (nothing listening on
 `http://admin-staging.biawin.ir/.well-known/acme-challenge/...` returned
 `503 Service Unavailable` — not the `404`/static-file-miss you'd expect if
 the request genuinely never touched the reverse proxy. A `503` is what
-LiteSpeed's `mod_proxy` returns when it cannot reach the proxied backend, so
-the most consistent explanation is that the acme-challenge exclusion isn't
-taking effect the way the same pattern's already-proven behavior for
-`staging.biawin.ir`/`api-staging.biawin.ir` suggested it would — on either
-this LiteSpeed build specifically, or for however WHM's AutoSSL actually
-issues the DCV request. This isn't fully root-caused yet (no direct
-inspection of LiteSpeed's live request handling was possible without SSH
-access at investigation time), so treat it as an open question, not settled.
+LiteSpeed's `mod_proxy` returns when it cannot reach the proxied backend —
+already a strong hint the acme-challenge exclusion wasn't taking effect,
+confirmed conclusively below once `admin` was actually deployed.
 
 **Revised recommendation: run step 4 (AutoSSL) *after* confirming the
 `admin` container is healthy on `127.0.0.1:3002`, not before.** This
@@ -147,16 +154,47 @@ best chance of succeeding either way. Order:
    once both 2 and 3 are done — before that, any such curl returning a
    connection-refused/502/503 is expected and uninformative, not a new bug.
 
-**If AutoSSL still fails once `admin` is confirmed healthy**, that's real
-evidence the acme-challenge exclusion itself doesn't work as intended on
-this LiteSpeed build, and needs a different fix — e.g. an explicit
-`ProxyPass /.well-known/acme-challenge/ !` exclusion (LiteSpeed's own
-`mod_proxy` semantics for negated `ProxyPass` may behave differently from
-the `RewriteCond`-based exclusion used here), a dedicated `Context` block
-(LiteSpeed-native, bypassing the Apache-compatibility translation layer
-entirely), or switching this one domain to AutoSSL's DNS-based DCV instead
-of HTTP DCV. Report the exact `autossl_check` output if this happens rather
-than retrying blindly — the fix depends on which of those it actually is.
+**Update — this happened, and is now root-caused.** With `admin` confirmed
+healthy on `127.0.0.1:3002`, AutoSSL's DCV request against
+`/.well-known/acme-challenge/<token>` returned `404`, not the `503` seen
+when the container was down. That's conclusive, not ambiguous: the *only*
+thing that changed between the two attempts was whether something was
+listening on `127.0.0.1:3002` — and the response tracked that exactly (dead
+upstream → `503`; live upstream, no matching route → `404` from the Next.js
+app's own catch-all). If the `RewriteCond`-based exclusion were actually
+excluding this path from the proxy rule, the backend's up/down state would
+have been irrelevant to *either* response — Apache/LiteSpeed would have
+served (or failed to find) a static file from the docroot both times. So
+this exclusion mechanism does not work on this LiteSpeed build, for either
+attempt — the request has been proxied through both times.
+
+**This also retroactively undermines the original claim** ("the same
+exclusion already proven working for `staging.biawin.ir`/
+`api-staging.biawin.ir`'s real certificates") from the first version of
+this doc. That claim was inferred from "the certificates got issued," not
+from directly observing the acme-challenge path bypass the proxy — and
+both of those domains had their DNS *and* AutoSSL steps done *before* any
+Docker container existed on `3001`/`4001` (see "One-time server setup"
+steps 3-6 above: DNS/SSL steps 1-4 happen before "Clone the repo" step 5
+and "Deploy" step 6). If the same flaw exists there too, it simply never
+had an opportunity to matter — a proxied-through acme-challenge request
+would have hit nothing but dead upstreams either way at that point in time,
+and cPanel's AutoSSL may tolerate that differently than a live app
+returning a real (wrong) `404`. **Do not treat `staging.biawin.ir`/
+`api-staging.biawin.ir` as proven-safe by this pattern going forward** —
+their certs auto-renew periodically, and a renewal after a live app is
+listening on those ports could hit this exact failure. Apply the fix below
+to their `proxy.conf` files too at the next convenient opportunity (not
+urgent — nothing is currently broken for them).
+
+**The fix**: replace the negated-`RewriteCond` exclusion with a dedicated,
+unconditional, match-and-stop `RewriteRule` for the acme-challenge path,
+placed *before* any redirect/proxy rule. This is the standard, widely-used
+pattern for excluding ACME challenges from a reverse-proxy vhost (a
+positive match that stops all further rewrite processing via `[L]`, rather
+than a negative lookahead that a later rule must also honor) — see the
+updated `std/`/`ssl/` content in step 2 below, now applied to
+`admin-staging.biawin.ir`.
 
 1. **Subdomain**: create under the same `biawin` cPanel account via
    `uapi SubDomain addsubdomain`, same as the existing two — **must include
@@ -193,13 +231,16 @@ than retrying blindly — the fix depends on which of those it actually is.
    /etc/apache2/conf.d/userdata/std/2_4/biawin/admin-staging.biawin.ir/proxy.conf
    /etc/apache2/conf.d/userdata/ssl/2_4/biawin/admin-staging.biawin.ir/proxy.conf
    ```
-   `std/` (port 80) content:
+   `std/` (port 80) content — a dedicated, unconditional match-and-stop rule
+   for the ACME path (`[L]`, no substitution) placed BEFORE the
+   redirect/proxy rules, instead of relying on a negated `RewriteCond` on
+   each of them (see the root-cause note above — this is the corrected
+   pattern, not the original one):
    ```apache
    RewriteEngine On
-   RewriteCond %{REQUEST_URI} !^/\.well-known/acme-challenge/
+   RewriteRule ^/\.well-known/acme-challenge/ - [L]
    RewriteCond %{HTTPS} off
    RewriteRule ^(.*)$ https://%{HTTP_HOST}$1 [R=301,L]
-   RewriteCond %{REQUEST_URI} !^/\.well-known/acme-challenge/
    RewriteRule ^(.*)$ http://127.0.0.1:3002$1 [P,L]
    ProxyPreserveHost On
    ```
@@ -207,7 +248,7 @@ than retrying blindly — the fix depends on which of those it actually is.
    ```apache
    SSLProxyEngine On
    RewriteEngine On
-   RewriteCond %{REQUEST_URI} !^/\.well-known/acme-challenge/
+   RewriteRule ^/\.well-known/acme-challenge/ - [L]
    RewriteRule ^(.*)$ http://127.0.0.1:3002$1 [P,L]
    ProxyPreserveHost On
    ```
