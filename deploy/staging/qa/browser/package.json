@@ -1,0 +1,17 @@
+{
+  "name": "@biawin/staging-browser-qa",
+  "private": true,
+  "version": "0.0.0",
+  "description": "Stage 5.22 authenticated staging visual/UI QA — Playwright, runs only via deploy/staging/run-authenticated-qa.sh inside the dedicated Dockerfile in this directory. Deliberately isolated from backend/apps/* package.json: this is a throwaway QA tool, not an app dependency.",
+  "scripts": {
+    "qa": "ts-node --compiler-options '{\"module\":\"commonjs\"}' browser-qa.ts"
+  },
+  "dependencies": {
+    "playwright": "1.48.2"
+  },
+  "devDependencies": {
+    "ts-node": "^10.9.2",
+    "typescript": "^5.7.3",
+    "@types/node": "^24.0.0"
+  }
+}
