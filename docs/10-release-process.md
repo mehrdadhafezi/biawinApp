@@ -270,6 +270,35 @@ updated `std/`/`ssl/` content in step 2 below, now applied to
    Verify afterward with `curl`'s strict hostname checking (no `-k`) that
    `https://admin-staging.biawin.ir/` reports `SSL certificate verify ok`.
 
+5. **Restart LiteSpeed after AutoSSL reports success — do not skip this.**
+   `autossl_check` reporting `Success! Installing...` proves cPanel wrote the
+   new certificate to its own TLS storage and updated the domain's userdata
+   — it does **not** prove LiteSpeed is actually serving it. On this host,
+   AutoSSL's automatic post-install reload did not reliably propagate to
+   `lshttpd` (real Stage 5.22 result: `autossl_check` reported success, but
+   `openssl s_client -connect admin-staging.biawin.ir:443 -servername
+   admin-staging.biawin.ir` still returned the year-old self-signed
+   placeholder cert immediately afterward). This is a known category of
+   cPanel+LiteSpeed integration gap, not specific to this one domain — a
+   manual restart of the LiteSpeed service via cPanel's own supported
+   service-manager call closes it:
+   ```bash
+   whmapi1 restartservice service=lshttpd
+   ```
+   LiteSpeed's restart model is graceful by design (new workers start,
+   old ones drain — not a hard connection drop), but this does restart the
+   single `lshttpd` process serving every domain on this shared host, not
+   just `admin-staging.biawin.ir` — a brief blip for `staging.biawin.ir`/
+   `api-staging.biawin.ir`/Beauty Platform is possible, an outright config
+   *change* to them is not (this command touches no config, only reloads
+   the running process). Re-verify with the same `openssl s_client` command
+   after — it should now show a `Let's Encrypt` issuer, not the self-signed
+   placeholder. **This applies to every future AutoSSL renewal on this
+   host, automated or manual, for any of the three staging domains** — a
+   renewal succeeding per `autossl_check`/WHM's own logs does not by itself
+   guarantee HTTPS keeps working; verify what's actually served after any
+   renewal, and restart `lshttpd` if it still shows the old certificate.
+
 No repo re-clone or code change is needed for this addendum — the `admin`
 service, its Dockerfile, and its compose wiring are already part of the
 repository as of this commit. Once these four steps are done, the very next
