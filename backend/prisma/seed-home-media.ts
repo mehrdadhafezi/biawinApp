@@ -122,12 +122,43 @@ async function main() {
 
       const buffer = readFileSync(filePath);
       const fileName = filePath.split(/[/\\]/).pop()!;
-      const asset = await mediaService.upload(
-        { originalname: fileName, mimetype: 'image/webp', size: buffer.length, buffer },
-        { altText: row.label },
-        admin.id,
-        {},
-      );
+      let asset;
+      try {
+        asset = await mediaService.upload(
+          { originalname: fileName, mimetype: 'image/webp', size: buffer.length, buffer },
+          { altText: row.label },
+          admin.id,
+          {},
+        );
+      } catch (error: unknown) {
+        // Fails fast with an ACTIONABLE message on the very first upload
+        // instead of an opaque AWS SDK stack trace repeated per file — this
+        // exact class of error (SignatureDoesNotMatch/403) is what broke
+        // real staging (Stage 5.22): STORAGE_ACCESS_KEY/STORAGE_SECRET_KEY
+        // didn't match MinIO's actual root credentials. Fixed at the
+        // infrastructure level (docker-compose.staging.yml now derives both
+        // from MINIO_ROOT_USER/MINIO_ROOT_PASSWORD, so this specific cause
+        // is now structurally impossible there) — this check is defense in
+        // depth for any OTHER way object-storage credentials could still be
+        // wrong (a real credential rotation, a non-Docker invocation, a
+        // different environment entirely).
+        const name = (error as { name?: string; Code?: string })?.name ?? '';
+        const code = (error as { Code?: string })?.Code ?? '';
+        const status = (error as { $metadata?: { httpStatusCode?: number } })
+          ?.$metadata?.httpStatusCode;
+        const looksLikeAuthFailure =
+          /Signature|AccessDenied|InvalidAccessKeyId/i.test(name || code) ||
+          status === 403;
+        if (looksLikeAuthFailure) {
+          console.error(
+            `\nObject storage authentication failed (${name || code || status}) while uploading "${fileName}".\n` +
+              'This looks like STORAGE_ACCESS_KEY/STORAGE_SECRET_KEY not matching the object storage\n' +
+              "server's actual credentials — see docs/08-staging-deployment.md \"MinIO/S3 credential\n" +
+              'consistency" for how staging derives these and why they must never be set independently.',
+          );
+        }
+        throw error;
+      }
       await target.updateRow(prisma, row.id, asset.id, admin.id);
       console.log(`  [linked] ${row.label} -> ${asset.url}`);
     }

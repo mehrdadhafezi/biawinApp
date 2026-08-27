@@ -41,8 +41,18 @@ services:
     image: minio/minio:latest
     command: server /data --console-address ":9001"
     environment:
-      MINIO_ROOT_USER: verify
-      MINIO_ROOT_PASSWORD: verifyverify
+      # Anchored (&) so `backend` below references these same two values via
+      # YAML aliases (*) rather than its own separately-typed copy — mirrors
+      # docker-compose.staging.yml's `${MINIO_ROOT_USER}`/`${MINIO_ROOT_PASSWORD}`
+      # derivation for backend.environment.STORAGE_ACCESS_KEY/SECRET_KEY
+      # (Compose-variable substitution there, YAML alias here — this file
+      # has no env-file to substitute from — same "one source of truth"
+      # principle either way). Two independently-typed copies of these
+      # values is exactly the class of bug that broke real staging
+      # (SignatureDoesNotMatch — see docker-compose.staging.yml's own
+      # comment on this).
+      MINIO_ROOT_USER: &minio_root_user verify
+      MINIO_ROOT_PASSWORD: &minio_root_password verifyverify
     healthcheck:
       test: ["CMD", "mc", "ready", "local"]
       interval: 2s
@@ -54,6 +64,13 @@ services:
     depends_on:
       minio:
         condition: service_healthy
+    # Can't YAML-alias a fragment INSIDE this shell string (aliases
+    # substitute whole nodes, not substrings) — these two literals MUST be
+    # kept equal to the &minio_root_user/&minio_root_password anchors above
+    # by hand. Low risk here specifically (single file, both values one
+    # screen apart, no separate human-filled secrets template involved,
+    # unlike the real .env.staging.example this file intentionally does NOT
+    # mirror that part of).
     entrypoint: >
       /bin/sh -c "
       mc alias set local http://minio:9000 verify verifyverify &&
@@ -80,8 +97,8 @@ services:
       ADMIN_SEED_EMAIL: verify-admin@example.invalid
       ADMIN_SEED_PASSWORD: verify-admin-password-not-for-real-use
       STORAGE_ENDPOINT: "http://minio:9000"
-      STORAGE_ACCESS_KEY: verify
-      STORAGE_SECRET_KEY: verifyverify
+      STORAGE_ACCESS_KEY: *minio_root_user
+      STORAGE_SECRET_KEY: *minio_root_password
       STORAGE_BUCKET: biawin-verify
       STORAGE_FORCE_PATH_STYLE: "true"
       PUBLIC_API_ORIGIN: "http://localhost:4000"

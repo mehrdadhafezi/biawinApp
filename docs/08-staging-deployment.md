@@ -94,6 +94,49 @@ Biawin staging owns its **own** Postgres, Redis, and MinIO containers —
 entirely separate from Beauty Platform's `bp_postgres` / `beauty-platform_postgres_data`.
 No script here ever connects to, inspects, or touches those.
 
+### MinIO/S3 credential consistency
+
+**`.env.staging` does not (and must not) set `STORAGE_ACCESS_KEY` /
+`STORAGE_SECRET_KEY` at all.** `docker-compose.staging.yml`'s `backend`
+service derives both directly from `MINIO_ROOT_USER`/`MINIO_ROOT_PASSWORD`
+(the same two variables `minio` and `minio-init` already use) via its own
+`environment:` block, which Compose always resolves AFTER (and therefore
+overriding) `env_file:` — so even a stale or mismatched
+`STORAGE_ACCESS_KEY`/`STORAGE_SECRET_KEY` sitting in `.env.staging` is
+silently ignored.
+
+This exists because of a real failure on staging (Stage 5.22): an earlier
+version of `.env.staging.example` listed `STORAGE_SECRET_KEY` and
+`MINIO_ROOT_PASSWORD` as two textually-separate `REPLACE_WITH_RANDOM_SECRET`
+placeholders. Generating a random secret "for each" (as instructed,
+literally) produced two different values — MinIO's actual root password
+and what the backend tried to authenticate with — and the Home media
+migration failed its very first upload with `SignatureDoesNotMatch` / HTTP
+403. There is no separate non-root MinIO user anywhere in this stack
+(`minio-init`'s entrypoint only ever runs `mc mb` + `mc anonymous set
+download`, never `mc admin user add`), so the backend has always been
+architecturally required to authenticate as MinIO's own root user — the fix
+just makes that a structural guarantee instead of two independently-typed
+values that happened to need to agree.
+
+**If this ever recurs anyway** (e.g. object storage credentials really were
+rotated and something's still using an old value), `seed-home-media.ts`
+detects an auth-shaped failure (`SignatureDoesNotMatch`, `AccessDenied`,
+`InvalidAccessKeyId`, or a bare HTTP 403) on its very first upload and fails
+with an explicit message pointing back here, rather than a raw AWS SDK
+stack trace repeated across all 17 files.
+
+One thing this fix does **not** need to touch, and is worth knowing
+regardless: MinIO reads `MINIO_ROOT_USER`/`MINIO_ROOT_PASSWORD` from its
+environment on every container start and uses them as the live root
+credentials — unlike Postgres, which only applies `POSTGRES_PASSWORD` at
+first-init of an empty data directory and ignores it on every restart
+after. So MinIO's root credentials are not "baked into" the persistent
+`biawin_staging_minio_data` volume the way Postgres's are — but that's not
+what this fix relies on; it only changes what the *backend* sends, never
+MinIO's own credentials, so the existing volume is never touched or at risk
+here.
+
 First deploy runs, in order, inside the freshly built backend image (never on
 the host directly):
 

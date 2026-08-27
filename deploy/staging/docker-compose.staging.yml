@@ -96,6 +96,28 @@ services:
     restart: unless-stopped
     env_file:
       - .env.staging
+    environment:
+      # Single source of truth for the MinIO/S3 credentials the backend
+      # authenticates with — deliberately NOT read from .env.staging's own
+      # STORAGE_ACCESS_KEY/STORAGE_SECRET_KEY keys (env_file above still
+      # supplies every other variable; Compose's `environment:` always wins
+      # over `env_file:` for a key present in both, which is exactly what
+      # makes this override effective). This bit real staging (Stage 5.22):
+      # .env.staging.example had STORAGE_SECRET_KEY and MINIO_ROOT_PASSWORD
+      # as two textually-separate `REPLACE_WITH_RANDOM_SECRET` placeholders,
+      # and generating a random secret "for each" (per that file's own
+      # instructions) produced two DIFFERENT values — MinIO's actual root
+      # password vs. what the backend tried to authenticate with — a
+      # `SignatureDoesNotMatch`/403 the moment the media migration tried its
+      # first upload. There is no separate non-root MinIO user anywhere in
+      # this stack (see `minio-init` below: only `mc mb` + `mc anonymous
+      # set download`, no `mc admin user add`), so the backend MUST use
+      # MinIO's own root credentials — deriving both from the same
+      # MINIO_ROOT_USER/MINIO_ROOT_PASSWORD (the same variables `minio` and
+      # `minio-init` below already use) makes that structurally guaranteed
+      # instead of something a human can accidentally diverge.
+      STORAGE_ACCESS_KEY: ${MINIO_ROOT_USER:-biawin}
+      STORAGE_SECRET_KEY: ${MINIO_ROOT_PASSWORD:?MINIO_ROOT_PASSWORD is required}
     ports:
       - "127.0.0.1:4001:4000"
     depends_on:
