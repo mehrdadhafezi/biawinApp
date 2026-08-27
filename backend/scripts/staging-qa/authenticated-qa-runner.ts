@@ -119,8 +119,28 @@ interface ApiResponse<T> {
   status: number;
   body: T;
   ok: boolean;
+  /** Populated from the real error envelope's `error.message` when the response was an error — see below. */
+  errorMessage?: string;
 }
 
+/**
+ * Every response from this backend is wrapped by a global interceptor/filter
+ * pair (`ResponseInterceptor` / `HttpExceptionFilter`, registered as
+ * `APP_INTERCEPTOR`/`APP_FILTER` in `backend/src/app.module.ts`) — NEVER a
+ * bare body:
+ *   success: `{ success: true, data: <actual payload> }`
+ *   error:   `{ success: false, error: { code, message, details? } }`
+ * This bit this exact script once already: an earlier version read
+ * `res.body.accessToken` directly on the raw (wrapped) login response,
+ * got `undefined`, sent `Authorization: Bearer undefined` to the very next
+ * call, and that call correctly 401'd — reported as "post-login /me failed:
+ * HTTP 401" when the actual, sole bug was here, in this parsing layer, not
+ * in the login/me contract itself (both behave exactly as the backend
+ * source defines). Unwrapping here, once, means every call site below
+ * keeps working with `res.body.<field>` as if the payload were bare — that
+ * assumption was always correct for the DATA shape, just not for where it
+ * lived in the envelope.
+ */
 async function apiCall<T = unknown>(
   origin: string,
   path: string,
@@ -138,16 +158,35 @@ async function apiCall<T = unknown>(
     headers['Content-Type'] = 'application/json';
   }
   const res = await fetch(`${origin}${path}`, { ...init, headers });
-  let body: unknown = undefined;
+  let parsed: unknown = undefined;
   const text = await res.text();
   if (text) {
     try {
-      body = JSON.parse(text);
+      parsed = JSON.parse(text);
     } catch {
-      body = text;
+      parsed = text;
     }
   }
-  return { status: res.status, body: body as T, ok: res.ok };
+
+  let body: unknown = parsed;
+  let errorMessage: string | undefined;
+  if (parsed && typeof parsed === 'object') {
+    const envelope = parsed as {
+      success?: unknown;
+      data?: unknown;
+      error?: { message?: unknown };
+    };
+    if (envelope.success === true && 'data' in envelope) {
+      body = envelope.data;
+    } else if (envelope.success === false && envelope.error) {
+      errorMessage =
+        typeof envelope.error.message === 'string'
+          ? envelope.error.message
+          : undefined;
+    }
+  }
+
+  return { status: res.status, body: body as T, ok: res.ok, errorMessage };
 }
 
 function assert(condition: boolean, message: string): void {
@@ -177,7 +216,14 @@ async function adminLogin(
     '/api/v1/admin/auth/login',
     { method: 'POST', body: JSON.stringify({ email, password }) },
   );
-  assert(res.ok, `login failed: HTTP ${res.status}`);
+  assert(
+    res.ok,
+    `login failed: HTTP ${res.status}${res.errorMessage ? ' — ' + res.errorMessage : ''}`,
+  );
+  assert(
+    typeof res.body.accessToken === 'string' && res.body.accessToken.length > 0,
+    `login returned HTTP ${res.status} but no usable accessToken — got: ${JSON.stringify(res.body).slice(0, 200)}`,
+  );
   const me = await apiCall<{ role: string; email: string }>(
     API_ORIGIN,
     '/api/v1/admin/auth/me',
@@ -185,7 +231,10 @@ async function adminLogin(
       token: res.body.accessToken,
     },
   );
-  assert(me.ok, `post-login /me failed: HTTP ${me.status}`);
+  assert(
+    me.ok,
+    `post-login /me failed: HTTP ${me.status}${me.errorMessage ? ' — ' + me.errorMessage : ''}`,
+  );
   return {
     accessToken: res.body.accessToken,
     refreshToken: res.body.refreshToken,

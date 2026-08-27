@@ -82,13 +82,44 @@ interface PageIssues {
   failedRequests: string[];
 }
 
+/**
+ * Next.js App Router prefetches RSC (React Server Component) payloads for
+ * `<Link>`s it can see, tagged with a `?_rsc=<buildId>` query param — e.g.
+ * AdminSidebar's sibling Home nav links prefetching while this script is
+ * still on one of them. When this script's own `page.goto()` navigates
+ * away before an in-flight prefetch finishes, Chromium cancels it
+ * client-side and reports `net::ERR_ABORTED` — no request was ever
+ * attempted against a broken endpoint; the browser voluntarily gave up on
+ * a background fetch that navigation made moot. This is standard,
+ * well-documented Next.js App Router behavior in ANY automated test that
+ * navigates through the app, not a sign of anything broken.
+ *
+ * The filter below is deliberately narrow — ALL THREE of:
+ *   1. the specific error text `net::ERR_ABORTED` (not a real network
+ *      failure like ERR_CONNECTION_REFUSED or a timeout),
+ *   2. resourceType `fetch` (RSC payload requests are always background
+ *      `fetch()` calls, never the primary `document` navigation, never an
+ *      `image`/`script`/etc.),
+ *   3. a `_rsc=` query parameter present (Next.js's own literal marker for
+ *      this exact request class)
+ * must hold before a failed request is excluded. A real failure of the
+ * primary document, an API call, a media request, or any non-ERR_ABORTED
+ * error — even on a URL that happens to contain `_rsc=` — still fails the
+ * run, same as before.
+ */
+function isBenignNextRscCancellation(req: Request, errorText: string): boolean {
+  return errorText === 'net::ERR_ABORTED' && req.resourceType() === 'fetch' && req.url().includes('_rsc=');
+}
+
 function trackPageIssues(page: Page): PageIssues {
   const issues: PageIssues = { consoleErrors: [], failedRequests: [] };
   page.on('console', (msg: ConsoleMessage) => {
     if (msg.type() === 'error') issues.consoleErrors.push(msg.text());
   });
   page.on('requestfailed', (req: Request) => {
-    issues.failedRequests.push(`${req.method()} ${req.url()} — ${req.failure()?.errorText ?? 'unknown'}`);
+    const errorText = req.failure()?.errorText ?? 'unknown';
+    if (isBenignNextRscCancellation(req, errorText)) return;
+    issues.failedRequests.push(`${req.method()} ${req.url()} — ${errorText}`);
   });
   page.on('response', (res) => {
     if (res.status() >= 500) {

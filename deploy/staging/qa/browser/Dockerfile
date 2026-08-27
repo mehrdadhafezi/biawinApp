@@ -19,8 +19,8 @@ FROM mcr.microsoft.com/playwright:v1.48.2-jammy
 
 WORKDIR /qa
 
-COPY package.json tsconfig.json ./
-RUN npm install
+COPY package.json package-lock.json tsconfig.json ./
+RUN npm ci
 
 COPY browser-qa.ts ./
 
