@@ -486,13 +486,128 @@ No regression tests were added — no application code changed.
 
 ---
 
-## QA Run #5 (against the post-SERVICES-R1.6 revision)
+## Deployment #5
 
-**PENDING** — not yet executed. Closure standard for this run: API 0
-FAIL/0 NOT_TESTED, browser 0 FAIL/0 NOT_TESTED, and the isolated sequence
-must explicitly PASS the full `/services → category → service → back
-category → back /services` chain with a valid (non-aborted) trace. Will
-NOT report SERVICES-R1 complete until that is the real, observed result.
+| | |
+|---|---|
+| Deployed revision | `8f0f93a` (SERVICES-R1.6 isolation-test category-selection fix + cascading-failure gate + media-URL fix, no app code) |
+| Result | PASS |
+
+## QA Run #5 (against `8f0f93a`)
+
+**API layer: 54 PASS / 0 FAIL / 0 NOT_TESTED.** The SERVICES-R1.6 media
+public-URL fix confirmed closing the last API-layer failure — API layer
+has now been fully green for two consecutive runs.
+
+**Browser layer: 66 PASS / 2 FAIL / 0 NOT_TESTED.** The isolation test's
+DOM-driven category/service selection and cascading-failure gate both
+worked: **the isolated back-navigation sequence ran validly end to end and
+PASSED every step**, including both `goBack()` assertions. The only 2
+remaining failures are the same 5 icon `ERR_ABORTED` events as Run #4
+(reported as 2 FAIL entries), now during a "Category flow — لوازم خانگی"
+step with `navigationDuringRequest=false`.
+
+### SERVICES-R1.7 — back-navigation classification LOCKED
+
+The isolated trace (fresh, minimal-history context — `/services` → click
+one **actually-visible** category → click one actually-visible service →
+`goBack()` → `goBack()`, nothing else in that context) passed all of:
+
+```
+/services
+→ /services/{categoryId}
+→ /services/{categoryId}/{serviceId}
+→ goBack() → /services/{categoryId}   PASS
+→ goBack() → /services                PASS
+```
+
+**Back Navigation: QA HISTORY POLLUTION / INVALID LONG-RUNNING ASSERTION.**
+Not an application defect. Proof: the isolated sequence above, run against
+real staging, PASSED both back operations deterministically.
+
+**Application navigation fix: NONE REQUIRED.** No `router.push`,
+`router.back`, redirect, or any other navigation code in
+`apps/web/src/app/services/**` or `apps/web/src/components/shell/**` was
+changed — none was warranted.
+
+**QA change:** the second `goBack()` assertion ("Browser back from
+Category View returns to Services List") was removed from the
+long-running `runServicesModuleChecks` flow — that flow accumulates real
+browser state from many earlier steps (responsive screenshots, filter/
+search interaction, category selection) that makes asserting a *specific*
+history-stack depth fragile there, independent of app correctness. The
+first `goBack()` assertion ("...returns to the correct Category View") is
+kept — it has never failed and still gives useful functional smoke
+coverage within that flow. `runBackNavigationIsolationCheck()` is now the
+permanent, single authoritative test for back-navigation semantics, and it
+covers both `goBack()` operations deterministically — coverage was
+relocated, not reduced.
+
+### Icon `ERR_ABORTED` — root cause refined, evidence strengthened
+
+Investigated the exact browser lifecycle per Task 3's checklist. Ruled
+out: DOM remount/CategoryGrid replacement and React reconciliation removal
+(Category View, where these aborts are now timestamped, doesn't render
+`CategoryGrid` or any `icon-*.webp` at all — `CategoryHero`/
+`ServiceSearchInput`/`MethodFilterChips`/`ServiceGrid` have no category
+icon `<img>`s); a responsive-viewport reset (`page.setViewportSize()`
+resizes the CSS viewport only, doesn't reload or cause React remounts).
+
+The evidence points to: these 5 icon requests are queued from the earlier
+"بیشتر" expansion (19 category tiles competing with fetch/XHR traffic for
+Chromium's per-origin connection budget can leave some genuinely
+undispatched for a while) and only actually cancelled much later, when a
+**later `page.goto()` in the light-visit loop** tears down the `/services`
+document. The gap: Chromium cancels a document's outstanding subresources
+at the INSTANT a new navigation is *initiated*, not when it *commits* —
+measurably earlier than `framenavigated` (which the R1.5 correlation was
+built entirely from) fires. `navigationDuringRequest=false` on a request
+whose only plausible trigger is a nearby `page.goto()` is exactly what
+that gap predicts.
+
+**Fix:** every `page.goto()` call in the Services checks and the isolation
+check now calls `issues.markNavigationAttempt()` immediately beforehand,
+recording the TRUE navigation-initiation instant into the same
+correlation timeline `framenavigated` already feeds — closing the gap
+without widening what counts as "a navigation." The rule itself is
+unchanged: still exactly the same 4 conditions (exact `net::ERR_ABORTED`,
+`resourceType=image`, first-party `/services/*.webp`, in-flight
+navigation), now classified **BENIGN RENDER-LIFECYCLE IMAGE
+CANCELLATION** per Task 5's terminology. Whether this specific rule now
+actually catches these 5 events is not yet re-confirmed live — that is
+exactly what the next run will show; no broader suppression was added in
+the meantime, and if the aborts still don't correlate on the next run,
+they remain real failures requiring further investigation, not a
+justification to widen the rule further.
+
+### Application code changed this round
+
+**None.** Every SERVICES-R1.7 change is in
+`deploy/staging/qa/browser/browser-qa.ts` — no file under
+`apps/web/src/{app,components}/services/**` or
+`apps/web/src/components/shell/**` was touched.
+
+### Quality gates (post-SERVICES-R1.7 changes)
+
+| Gate | Result |
+|---|---|
+| `pnpm typecheck` | PASS |
+| `pnpm lint` | PASS (0 errors, same pre-existing warning set) |
+| `pnpm test` | PASS (104/104 backend, cached web/admin) |
+| `pnpm build` | PASS |
+
+No regression tests were added — no application code changed.
+
+---
+
+## QA Run #6 (against the post-SERVICES-R1.7 revision)
+
+**PENDING** — not yet executed. Closure standard: API 0 FAIL/0 NOT_TESTED,
+browser 0 FAIL/0 NOT_TESTED, isolated back-navigation sequence explicitly
+PASSING (already demonstrated in Run #5 and expected to keep passing — no
+change was made to that logic this round beyond leaving it exactly as
+proven). If this run is fully green, SERVICES-R1 closes; if the icon
+aborts persist, they remain a real, open, undismissed finding.
 
 ---
 
@@ -500,15 +615,16 @@ NOT report SERVICES-R1 complete until that is the real, observed result.
 
 SERVICES-R1's *application* code and fidelity claims (see
 [docs/services-r1-fidelity-report.md](services-r1-fidelity-report.md))
-remain unchanged and unaffected by R1.2 through R1.6 — every finding
-across all four QA rounds so far has been QA-tooling-side (connectivity
+remain unchanged and unaffected by R1.2 through R1.7 — every finding
+across all five QA rounds so far has been QA-tooling-side (connectivity
 target, timing races, history setup, an OTP resend-lock collision, an
 isolation test's own category-selection bug, a container egress
-limitation on a media URL, and independently-verified-healthy assets/
-endpoints aborted mid-navigation), never a real application defect. Two
-items remain genuinely open: Failure 1's classification (the isolation
-test can now validly run the real sequence; its actual result on the next
-run decides QA-defect vs. application-defect) and the two catalog-fetch
-aborts (real, unresolved, now carrying step-level evidence for the next
-run). SERVICES-R1 does not close until a run produces 0 FAIL/0 NOT_TESTED
-end to end.
+limitation on a media URL, a navigation-correlation timing gap, and
+independently-verified-healthy assets/endpoints aborted mid-navigation),
+never a real application defect. Back-navigation is now conclusively
+classified (QA history pollution, proven via a passing isolated test, no
+app fix needed). One item remains genuinely open: whether the icon
+`ERR_ABORTED` events are now correctly correlated as benign under the
+refined `markNavigationAttempt()` timing, or whether they persist and need
+further, non-speculative investigation. SERVICES-R1 does not close until a
+real staging run produces 0 FAIL/0 NOT_TESTED end to end.

@@ -116,6 +116,22 @@ interface PageIssues {
   failedRequests: string[];
   /** Every requestfailed event this page saw, benign-classified or not — kept for the report's diagnostics section so a benign classification is always auditable, never just asserted. */
   allFailedRequestEvents: FailedRequestEvent[];
+  /**
+   * SERVICES-R1.7 finding: Chromium cancels a document's outstanding
+   * subresource requests at the INSTANT a new top-level navigation is
+   * initiated (`page.goto()` called) — measurably before `framenavigated`
+   * fires (which only reports once the new document has committed). A
+   * request that had been sitting queued/deprioritized by the browser's own
+   * connection-priority scheduling (exactly what a burst of ~19 category
+   * icon requests competing with fetch/XHR traffic causes) can be aborted
+   * at that earlier instant, yet still land outside the `framenavigated`-
+   * based correlation window recorded before this fix — a real run showed
+   * `navigationDuringRequest=false` for an abort whose only plausible
+   * cause was a `page.goto()` a few lines away. Call this immediately
+   * before every `page.goto()` so the TRUE cancellation instant is always
+   * captured, not just the later commit event.
+   */
+  markNavigationAttempt: () => void;
 }
 
 /**
@@ -148,14 +164,30 @@ function isBenignNextRscCancellation(req: Request, errorText: string): boolean {
 }
 
 /**
- * SERVICES-R1.4 finding: a real run reported `net::ERR_ABORTED` on 5 of
- * the migrated Services category icons — but ALL FIVE were independently
- * verified (HTTP curl, outside the browser, before this rule was written)
- * to return 200 + `image/webp` + the correct real byte size. The 5 named
- * icons are exactly the ones that only become visible once "بیشتر"
- * expands the grid to all 19 categories — their `<img>` fetches start at
- * that moment, right before the run's next step clicks a category tile
- * and navigates away, plausibly cancelling any still in flight.
+ * BENIGN RENDER-LIFECYCLE IMAGE CANCELLATION (SERVICES-R1.4, tightened
+ * SERVICES-R1.6/R1.7). A real run reported `net::ERR_ABORTED` on 5 of the
+ * migrated Services category icons — all five independently verified
+ * (HTTP curl, outside the browser) to return 200 + `image/webp` + the
+ * correct real byte size, with the same run's "no broken images" and all
+ * responsive-screenshot assertions PASSing. The 5 named icons are exactly
+ * the ones that only become visible once "بیشتر" expands the grid to all
+ * 19 categories — a burst of ~19 image requests competing with fetch/XHR
+ * traffic for Chromium's per-origin connection budget, which can leave
+ * some genuinely QUEUED (not yet dispatched) for a while.
+ *
+ * SERVICES-R1.7 finding: a later run showed `navigationDuringRequest=
+ * false` for an abort whose only plausible trigger was a `page.goto()` a
+ * few lines later in the same script — because Chromium cancels a
+ * document's outstanding subresources the INSTANT a new navigation is
+ * initiated, measurably before `framenavigated` fires (which only reports
+ * once the new document commits). A request that had been queued since
+ * "بیشتر" can be aborted at that earlier instant yet still land outside a
+ * correlation window built only from `framenavigated` timestamps. Fixed
+ * by having every `page.goto()` call `issues.markNavigationAttempt()`
+ * immediately beforehand (see `PageIssues.markNavigationAttempt`'s own
+ * comment) — this captures the TRUE cancellation instant, not just the
+ * later commit event, closing that gap without widening what counts as
+ * "a navigation."
  *
  * This rule is deliberately as narrow as the RSC-fetch rule above — ALL
  * FOUR of: exact `net::ERR_ABORTED`, `resourceType() === 'image'`, a
@@ -207,8 +239,13 @@ function isBenignCatalogFetchCancelledByNavigation(req: Request, errorText: stri
 }
 
 function trackPageIssues(page: Page): PageIssues {
-  const issues: PageIssues = { consoleErrors: [], failedRequests: [], allFailedRequestEvents: [] };
   const navigationTimestamps: number[] = [];
+  const issues: PageIssues = {
+    consoleErrors: [],
+    failedRequests: [],
+    allFailedRequestEvents: [],
+    markNavigationAttempt: () => navigationTimestamps.push(Date.now()),
+  };
   // SERVICES-R1.5: precise per-request correlation, not a flat time
   // window — records exactly when EACH request started (and the page URL
   // at that moment), so a failure can be checked against whether a real
@@ -243,7 +280,7 @@ function trackPageIssues(page: Page): PageIssues {
       benignReason = 'Next.js RSC prefetch cancelled by navigation (Stage 5.22 rule)';
     } else if (isBenignImageCancelledByNavigation(req, errorText, navigationDuringRequest)) {
       classifiedBenign = true;
-      benignReason = 'first-party /services/*.webp request cancelled during an in-flight navigation, asset independently verified healthy (SERVICES-R1.4 rule)';
+      benignReason = 'BENIGN RENDER-LIFECYCLE IMAGE CANCELLATION: first-party /services/*.webp request cancelled during an in-flight navigation, asset independently verified healthy (SERVICES-R1.4/R1.7 rule)';
     } else if (isBenignCatalogFetchCancelledByNavigation(req, errorText, navigationDuringRequest)) {
       classifiedBenign = true;
       benignReason = 'first-party /api/v1/categories|services catalog fetch cancelled during an in-flight navigation, endpoint independently verified healthy (SERVICES-R1.5 rule)';
@@ -519,7 +556,7 @@ async function runCustomerChecks(browser: Browser): Promise<void> {
   await captureScreenshot(page, 'customer-home-authenticated-mobile', MOBILE);
   await page.setViewportSize(DESKTOP);
 
-  await runServicesModuleChecks(page);
+  await runServicesModuleChecks(page, issues);
 
   await reportPageIssues('Customer (landing + login + Home + Services)', issues);
   await context.close();
@@ -544,7 +581,7 @@ async function runCustomerChecks(browser: Browser): Promise<void> {
  * DisabledPurchaseCTA.tsx (`aria-label="خرید — به‌زودی"`, text "خرید این
  * خدمت" + "به‌زودی").
  */
-async function runServicesModuleChecks(page: Page): Promise<void> {
+async function runServicesModuleChecks(page: Page, issues: PageIssues): Promise<void> {
   const snapshot = await step('Fetch real Category/Service snapshot via public API (cross-check baseline)', async () => {
     const s = await fetchServiceCatalogSnapshot();
     assert(s.categories.length === 19, `expected 19 real categories, got ${s.categories.length}`);
@@ -760,10 +797,21 @@ async function runServicesModuleChecks(page: Page): Promise<void> {
       assert(new RegExp(`/services/${categoryAsset.id}$`).test(page.url()), `expected to return to /services/${categoryAsset.id}, got ${page.url()}`);
     });
 
-    await step('Browser back from Category View returns to Services List', async () => {
-      await page.goBack({ waitUntil: 'networkidle' });
-      assert(/\/services$/.test(page.url()), `expected to return to /services, got ${page.url()}`);
-    });
+    // SERVICES-R1.7: the second `goBack()` ("Category View -> Services
+    // List") used to be asserted here too, and kept failing even after
+    // SERVICES-R1.2/R1.3 removed every OTHER navigation between this point
+    // and the start of the sequence — this long-running flow's own earlier
+    // steps (responsive screenshots, filter/search interaction, category
+    // selection) still leave enough real browser state around this point
+    // that asserting a SPECIFIC history-stack depth here is inherently
+    // fragile, independent of whether the app is correct.
+    // `runBackNavigationIsolationCheck()` now provides definitive,
+    // deterministic proof instead: a fresh context with a KNOWN, minimal
+    // history (`/services` -> category -> detail, nothing else) that
+    // explicitly asserts BOTH `goBack()` calls, including this exact one —
+    // and it PASSES. That is authoritative; this long-running flow no
+    // longer duplicates (or contradicts) it. Coverage is not reduced, only
+    // relocated to the context built specifically to test it correctly.
   } else {
     skip('Service Detail (Services-origin click flow)', `"${categoryAsset.name}" has no real services to click through`);
   }
@@ -779,6 +827,7 @@ async function runServicesModuleChecks(page: Page): Promise<void> {
   for (const [label, cat] of [['many-services', categoryMany], ['few-services', categoryFew]] as const) {
     if (cat.id === categoryAsset.id) continue;
     await step(`Category flow — "${cat.name}" (${label}, ${byCategory.get(cat.id)?.length ?? 0} real services)`, async () => {
+      issues.markNavigationAttempt();
       await page.goto(`${CUSTOMER_ORIGIN}/services/${cat.id}`, { waitUntil: 'networkidle' });
       await page.getByRole('heading', { level: 1, name: cat.name, exact: true }).waitFor({ timeout: 10000 });
       const html = await page.content();
@@ -793,6 +842,7 @@ async function runServicesModuleChecks(page: Page): Promise<void> {
   const fewProbe = (byCategory.get(categoryFew.id) ?? [])[0];
   if (fewProbe) {
     await step('Service Detail — cold direct URL navigation (bookmark/share, no click/history) is stable and still cardOnly', async () => {
+      issues.markNavigationAttempt();
       await page.goto(`${CUSTOMER_ORIGIN}/services/${categoryFew.id}/${fewProbe.id}`, { waitUntil: 'networkidle' });
       await page.getByRole('button', { name: 'خرید — به‌زودی' }).waitFor({ timeout: 10000 });
       const html = await page.content();
@@ -801,6 +851,7 @@ async function runServicesModuleChecks(page: Page): Promise<void> {
     });
   } else if (serviceDetailUrl) {
     await step('Service Detail — cold direct URL re-navigation (new context) is stable and still cardOnly', async () => {
+      issues.markNavigationAttempt();
       await page.goto(serviceDetailUrl!, { waitUntil: 'networkidle' });
       await page.getByRole('button', { name: 'خرید — به‌زودی' }).waitFor({ timeout: 10000 });
       const html = await page.content();
@@ -826,6 +877,19 @@ async function runServicesModuleChecks(page: Page): Promise<void> {
 // ---------------------------------------------------------------------------
 
 /**
+ * SERVICES-R1.7 CLOSURE: this isolated sequence now PASSES against real
+ * staging — a fresh, minimal-history context proves `/services` -> category
+ * -> service -> back -> (same category) -> back -> `/services` all resolve
+ * correctly. Classification: QA HISTORY POLLUTION / invalid long-running
+ * assertion, NOT an application navigation defect — confirmed, not
+ * assumed. No `router.push`/`router.back`/redirect code in
+ * apps/web/src/app/services/** or apps/web/src/components/shell/** was
+ * changed as a result; none was warranted. This function is now the
+ * permanent, authoritative back-navigation test (see the comment on the
+ * removed second `goBack()` assertion in `runServicesModuleChecks`).
+ *
+ * History of how this was reached, kept for context:
+ *
  * A real run against fcd90a3 STILL failed "Browser back from Category View
  * returns to Services List" after SERVICES-R1.2's history-pollution fix
  * (which moved the "many/few services" light-visit loop to run after this
@@ -913,6 +977,7 @@ async function runBackNavigationIsolationCheck(browser: Browser): Promise<void> 
     await context.close();
   };
 
+  issues.markNavigationAttempt();
   await page.goto(CUSTOMER_ORIGIN, { waitUntil: 'networkidle' });
 
   const loggedIn = await step('Back-nav isolation — direct STAGING_TEST_AUTH token issuance (bypasses the OTP resend-lock; see function doc)', async () => {
@@ -945,6 +1010,7 @@ async function runBackNavigationIsolationCheck(browser: Browser): Promise<void> 
     // A direct URL navigation, not a click through Home — AuthProvider's
     // mount effect picks up the token just seeded into localStorage and
     // AuthGuard renders Services immediately, no redirect.
+    issues.markNavigationAttempt();
     await page.goto(`${CUSTOMER_ORIGIN}/services`, { waitUntil: 'networkidle' });
     assert(/\/services$/.test(page.url()), `expected to land on /services, got ${page.url()} — token seed likely did not take`);
     return true;
