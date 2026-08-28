@@ -1,49 +1,46 @@
 "use client";
 
-import { useMemo, useState } from "react";
 import { useRouter } from "next/navigation";
 import { spacing } from "@biawin/ui";
 import { AppShell } from "../../components/shell/AppShell";
-import { CategorySelector } from "../../components/services/CategorySelector";
-import { ServiceGrid } from "../../components/services/ServiceGrid";
+import { CategoryGrid } from "../../components/services/CategoryGrid";
+import { PromoBanner } from "../../components/services/PromoBanner";
 import { useServiceCatalog } from "../../components/services/useServiceCatalog";
-import type { ServiceDto } from "../../lib/services-api";
+import type { CategoryDto } from "../../lib/services-api";
 
 /**
- * Services Module v1 (docs/services-ui-contract.md) — browse-only:
- * category filter + service grid, replacing Stage 5.2's placeholder.
- * Purchase/Checkout/Confirmation are explicitly out of scope (no button
- * or UI for them exists here) — tapping a card goes to a read-only
- * Service Detail page, per the approved contract's Tier 1/2 split.
+ * Services Module R1 (docs/services-r1-fidelity-report.md) — pixel-matched
+ * to `data-view="services"`: promo banner + category icon grid with a
+ * "بیشتر" reveal, replacing Stage 9.1's horizontal category-chip browse
+ * page (that layout belonged to a shared List/Category component pair;
+ * the prototype's List and Category screens are genuinely different
+ * layouts, so this stage splits them — see `CategoryGrid`'s own comment).
+ *
+ * No search box here — `GlobalHeader`'s shell-level search already
+ * represents the prototype's `#serviceSearch` (same placeholder text),
+ * deliberately left disabled; see the fidelity report's "Deferred"
+ * section for why wiring it up is out of this stage's scope.
+ *
+ * Real `Category` rows only (SERVICES-R1 product decision #2) — no
+ * prototype synthetic content is ported in.
  */
 export default function ServicesPage() {
   const router = useRouter();
-  const { categories, services, error } = useServiceCatalog();
-  const [activeCategoryId, setActiveCategoryId] = useState<string | null>(null);
+  const { categories, error } = useServiceCatalog();
 
-  const filteredServices = useMemo(() => {
-    if (services === null) return null;
-    if (activeCategoryId === null) return services;
-    return services.filter((s) => s.categoryId === activeCategoryId);
-  }, [services, activeCategoryId]);
-
-  function handleSelectCategory(categoryId: string | null) {
-    if (categoryId === null) {
-      setActiveCategoryId(null);
-      return;
-    }
-    router.push(`/services/${categoryId}`);
-  }
-
-  function handleSelectService(service: ServiceDto) {
-    router.push(`/services/${service.categoryId}/${service.id}`);
+  function handleSelectCategory(category: CategoryDto) {
+    router.push(`/services/${category.id}`);
   }
 
   return (
     <AppShell activeNavKey="services">
       <div style={{ display: "flex", flexDirection: "column", gap: spacing.md }}>
-        <CategorySelector categories={categories} activeCategoryId={activeCategoryId} onSelect={handleSelectCategory} />
-        <ServiceGrid services={filteredServices} error={error} onSelect={handleSelectService} />
+        <PromoBanner />
+        {error ? (
+          <p style={{ margin: 0, color: "#c0392b" }}>{error}</p>
+        ) : (
+          <CategoryGrid categories={categories} onSelect={handleSelectCategory} />
+        )}
       </div>
     </AppShell>
   );
