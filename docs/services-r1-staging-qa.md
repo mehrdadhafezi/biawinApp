@@ -94,21 +94,154 @@ there is no application behavior to regress-test. The application code
 
 ---
 
-## QA Run #2 (against the post-fix revision)
+## Deployment #2
 
-**PENDING** — not yet executed as of this document's last update. This
-section will be filled in with the real second-run results (API layer +
-browser layer, PASS/FAIL/NOT_TESTED counts, any newly surfaced findings)
-once the redeploy + QA rerun actually happens. It will NOT report PASS
-here until that real run has completed.
+| | |
+|---|---|
+| Deployed revision | `fcd90a3` (SERVICES-R1.3 QA-tooling fixes, on top of `bc2fe24`/`c47702c` — no app code) |
+| Migrations | 7 migrations found, 0 pending |
+| Result | PASS |
+
+## QA Run #2 (against `fcd90a3`)
+
+**API layer: 54 PASS / 0 FAIL / 0 NOT_TESTED.** Confirms the SERVICES-R1.3
+`apiCall()`/`run-authenticated-qa.sh` connectivity fix closed Run #1's fatal
+`fetch failed` — the API-layer connectivity issue is CLOSED, not just
+worked around.
+
+**Browser layer: 54 PASS / 2 FAIL / 0 NOT_TESTED.** All four SERVICES-R1.2/
+R1.3 timing-race fixes confirmed holding: collapsed category count,
+CategoryHero, cardOnly, method filters, local search, and all responsive
+Services screenshots now PASS. Two failures remained:
+
+1. `Browser back from Category View returns to Services List` — expected
+   `/services`, observed `/services/e107aa7e-8f0b-4dba-8d15-6d015f50c91f`
+   (independently confirmed via the real public API to be گردشگری's own
+   real UUID — i.e. `categoryAsset` itself, the SAME category the first
+   `goBack()` already correctly landed on). This persisted after the
+   SERVICES-R1.3 history-pollution fix (moving the "many/few services"
+   light-visit loop to run after this exact sequence), ruling that loop
+   out as the sole cause.
+2. Five `net::ERR_ABORTED` requests on migrated category icons:
+   `icon-otomobil.webp`, `icon-lavazem-khanegi.webp`,
+   `icon-tala-javaher.webp`, `icon-zibaei.webp`, `icon-poushak.webp` — in
+   the same run that PASSed "Services List renders with no broken images",
+   all responsive screenshots, and expanded-category rendering.
+
+### SERVICES-R1.4 investigation
+
+**Failure 2 (icon `ERR_ABORTED`) — RESOLVED, evidence-based.**
+
+Each of the five URLs was requested directly, outside the browser, with no
+navigation involved:
+
+| Asset | HTTP | Content-Type | Size |
+|---|---|---|---|
+| icon-otomobil.webp | 200 | image/webp | 8158 bytes |
+| icon-lavazem-khanegi.webp | 200 | image/webp | 4816 bytes |
+| icon-tala-javaher.webp | 200 | image/webp | 7868 bytes |
+| icon-zibaei.webp | 200 | image/webp | 7228 bytes |
+| icon-poushak.webp | 200 | image/webp | 8668 bytes |
+
+All five: HTTP 200, correct `image/webp` Content-Type, and byte sizes
+matching the real files exactly (confirmed against the original migration
+in SERVICES-R1's fidelity report) — **asset health: PASS, no real asset
+defect.** All five are exactly the icons that only become visible once
+"بیشتر" expands the grid to all 19 categories, i.e. their `<img>` fetches
+start right before the script's next action (clicking a category tile,
+navigating away) — a plausible, narrow benign-cancellation pattern, the
+same class as the Stage 5.22 RSC-fetch rule but for a different request
+type.
+
+**QA filtering change (narrow, not a broad suppression):** `browser-qa.ts`
+now tracks every top-level navigation timestamp and classifies a failed
+request as benign only when **all four** hold: exact `net::ERR_ABORTED`,
+`resourceType() === 'image'`, a first-party `/services/*.webp` path (our
+own migrated icons — never third-party or backend-served), AND a real
+navigation recorded within 2 seconds of the failure. Every classification
+(benign or not) is now written into the report's "Network diagnostics"
+line with the resource type, the page URL at failure time, and the reason
+— auditable, not asserted. A broken image outside a navigation window, a
+non-webp/non-Services path, or any other error text still fails QA
+unchanged.
+
+**Failure 1 (back navigation) — INSTRUMENTED, classification PENDING the
+next real run.**
+
+Router/Link inspection (this session): grepped all of `apps/web/src` for
+`router.push`/`router.replace`/`redirect`/`window.location`/
+`history.*State`. Services List → Category and Category → Service Detail
+are each exactly one `router.push()` call
+([page.tsx:32](../apps/web/src/app/services/page.tsx),
+[[categoryId]/page.tsx:55](<../apps/web/src/app/services/[categoryId]/page.tsx>)).
+`AuthGuard` only ever calls `router.replace` (which overwrites, not adds,
+a history entry) and only fires when the session is unauthenticated —
+false throughout this authenticated run. No other push/replace/redirect
+exists anywhere in Services or shell code. **Nothing found in application
+source explains a doubled history entry** — but that is not the same as
+proof it doesn't exist; Next.js App Router's own internal navigation
+mechanics are outside this codebase and weren't audited.
+
+Per the task's own isolation protocol, `browser-qa.ts` now includes
+`runBackNavigationIsolationCheck()` — a dedicated, freshly authenticated
+context starting at `/services` with zero prior Services history, doing
+exactly: click one category → click one service → `goBack()` → `goBack()`,
+with **no `page.goto()` anywhere in the sequence**, logging
+`window.history.length` and the real URL at every one of the 5 steps into
+the report itself (`Back-nav isolation — full history trace`), not just
+console output. This will give a definitive answer on the next run:
+
+- If the isolated sequence lands on `/services` — the doubled entry is
+  specific to the longer, busier test flow (a QA-only artifact still to be
+  found) and only the QA runner needs further work.
+- If the isolated sequence lands back on the SAME category — this is a
+  real, reproducible application navigation defect and must be root-caused
+  and fixed in Services application code (no referrer hacks, no
+  `router.back()` loops, direct URLs must keep working).
+
+**No fix was applied for Failure 1 in this round** — writing one before
+this evidence exists would be guessing, which the task explicitly
+prohibited. The known-failing assertion inside
+`runServicesModuleChecks` (`Browser back from Category View returns to
+Services List`) is left exactly as-is, and is expected to still report
+FAIL on the next run alongside the new isolation check's trace — this is
+diagnostic, not a regression.
+
+### Application code changed this round
+
+**None.** Every SERVICES-R1.4 change is in `deploy/staging/qa/browser/browser-qa.ts` (diagnostics + the new isolation check) — no file under `apps/web/src/{app,components}/services/**` was touched.
+
+### Quality gates (post-SERVICES-R1.4 changes)
+
+| Gate | Result |
+|---|---|
+| `pnpm typecheck` | PASS |
+| `pnpm lint` | PASS (0 errors, same pre-existing warning set) |
+| `pnpm test` | PASS (backend 104/104; web/admin cached, unaffected) |
+| `pnpm build` | PASS |
+
+No regression tests were added — no application code changed.
+
+---
+
+## QA Run #3 (against the post-SERVICES-R1.4 revision)
+
+**PENDING** — not yet executed. Will record the real API-layer and
+browser-layer results, the back-nav isolation trace's actual output, and
+whatever classification that trace supports, once the redeploy + rerun
+happens. Will NOT report a final PASS here until that real run completes
+and Failure 1 has an evidence-backed classification and (if needed) a fix.
 
 ---
 
 ## Status
 
 SERVICES-R1's *application* code and fidelity claims (see
-[docs/services-r1-fidelity-report.md](services-r1-fidelity-report.md)) are
-unchanged by this document — nothing here found an application defect.
-This document's open item is purely: **re-run the authenticated staging QA
-against the fixed QA tooling and confirm a clean pass**, which has not
-happened yet.
+[docs/services-r1-fidelity-report.md](services-r1-fidelity-report.md))
+remain unchanged and unaffected by any of R1.2/R1.3/R1.4 — every finding so
+far has been QA-tooling-side (connectivity target, timing races, history
+setup) or independently-verified-healthy assets, never an application
+defect. The one open item is Failure 1's root cause, which now has a
+purpose-built, evidence-generating test in place; its classification and
+any resulting fix are pending that test's actual output on the next real
+staging run.

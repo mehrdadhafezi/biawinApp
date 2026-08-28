@@ -81,9 +81,21 @@ function assert(condition: boolean, message: string): void {
   if (!condition) throw new Error(message);
 }
 
+interface FailedRequestEvent {
+  url: string;
+  method: string;
+  resourceType: string;
+  errorText: string;
+  pageUrlAtFailure: string;
+  classifiedBenign: boolean;
+  benignReason?: string;
+}
+
 interface PageIssues {
   consoleErrors: string[];
   failedRequests: string[];
+  /** Every requestfailed event this page saw, benign-classified or not — kept for the report's diagnostics section so a benign classification is always auditable, never just asserted. */
+  allFailedRequestEvents: FailedRequestEvent[];
 }
 
 /**
@@ -115,15 +127,73 @@ function isBenignNextRscCancellation(req: Request, errorText: string): boolean {
   return errorText === 'net::ERR_ABORTED' && req.resourceType() === 'fetch' && req.url().includes('_rsc=');
 }
 
+/**
+ * SERVICES-R1.4 finding: a real run reported `net::ERR_ABORTED` on 5 of
+ * the migrated Services category icons — but ALL FIVE were independently
+ * verified (HTTP curl, outside the browser, before this rule was written)
+ * to return 200 + `image/webp` + the correct real byte size. The 5 named
+ * icons are exactly the ones that only become visible once "بیشتر"
+ * expands the grid to all 19 categories — their `<img>` fetches start at
+ * that moment, right before the run's next step clicks a category tile
+ * and navigates away, plausibly cancelling any still in flight.
+ *
+ * This rule is deliberately as narrow as the RSC-fetch rule above — ALL
+ * FOUR of: exact `net::ERR_ABORTED`, `resourceType() === 'image'`, a
+ * first-party `/services/*.webp` static asset path (our own migrated
+ * icons — never a third-party or backend-served image), AND a real
+ * top-level page navigation recorded within 2s of the failure (tracked
+ * via `framenavigated` on the main frame, independent of this script's
+ * own bookkeeping of when it "meant" to navigate). A broken image outside
+ * that narrow window, a non-webp/non-Services path, or any other error
+ * text still fails the run, unchanged.
+ */
+function isBenignImageCancelledByNavigation(req: Request, errorText: string, navigationNearby: boolean): boolean {
+  return (
+    errorText === 'net::ERR_ABORTED' &&
+    req.resourceType() === 'image' &&
+    /^https?:\/\/[^/]+\/services\/[^/]+\.webp(\?.*)?$/.test(req.url()) &&
+    navigationNearby
+  );
+}
+
+const NAV_CORRELATION_WINDOW_MS = 2000;
+
 function trackPageIssues(page: Page): PageIssues {
-  const issues: PageIssues = { consoleErrors: [], failedRequests: [] };
+  const issues: PageIssues = { consoleErrors: [], failedRequests: [], allFailedRequestEvents: [] };
+  const navigationTimestamps: number[] = [];
+  page.on('framenavigated', (frame) => {
+    if (frame === page.mainFrame()) navigationTimestamps.push(Date.now());
+  });
   page.on('console', (msg: ConsoleMessage) => {
     if (msg.type() === 'error') issues.consoleErrors.push(msg.text());
   });
   page.on('requestfailed', (req: Request) => {
     const errorText = req.failure()?.errorText ?? 'unknown';
-    if (isBenignNextRscCancellation(req, errorText)) return;
-    issues.failedRequests.push(`${req.method()} ${req.url()} — ${errorText}`);
+    const now = Date.now();
+    const navigationNearby = navigationTimestamps.some((t) => Math.abs(t - now) <= NAV_CORRELATION_WINDOW_MS);
+
+    let classifiedBenign = false;
+    let benignReason: string | undefined;
+    if (isBenignNextRscCancellation(req, errorText)) {
+      classifiedBenign = true;
+      benignReason = 'Next.js RSC prefetch cancelled by navigation (Stage 5.22 rule)';
+    } else if (isBenignImageCancelledByNavigation(req, errorText, navigationNearby)) {
+      classifiedBenign = true;
+      benignReason = 'first-party /services/*.webp request cancelled by a page navigation within 2s, asset independently verified healthy (SERVICES-R1.4 rule)';
+    }
+
+    issues.allFailedRequestEvents.push({
+      url: req.url(),
+      method: req.method(),
+      resourceType: req.resourceType(),
+      errorText,
+      pageUrlAtFailure: page.url(),
+      classifiedBenign,
+      benignReason,
+    });
+
+    if (classifiedBenign) return;
+    issues.failedRequests.push(`${req.method()} ${req.url()} — ${errorText} (resourceType=${req.resourceType()}, pageUrlAtFailure=${page.url()})`);
   });
   page.on('response', (res) => {
     if (res.status() >= 500) {
@@ -188,6 +258,7 @@ async function main(): Promise<void> {
   try {
     await runAdminChecks(browser);
     await runCustomerChecks(browser);
+    await runBackNavigationIsolationCheck(browser);
   } finally {
     await browser.close();
     writeReport();
@@ -303,6 +374,38 @@ async function mediaPickerRegressionCheck(page: Page): Promise<void> {
 // Customer checks
 // ---------------------------------------------------------------------------
 
+/** Assumes `page` is already on the landing page. Real UI flow, real STAGING_TEST_AUTH fixed test phone/code — no API shortcut. */
+async function performCustomerLogin(page: Page, label: string): Promise<boolean> {
+  return (
+    (await step(`${label} — STAGING_TEST_AUTH browser login (real UI flow)`, async () => {
+      // LandingCenterCTA.tsx: aria-label="ورود یا ثبت نام در بیاوین".
+      await page.getByRole('button', { name: 'ورود یا ثبت نام در بیاوین' }).click();
+
+      // PhoneStep.tsx: placeholder "09xxxxxxxxx", submit button "دریافت کد ورود".
+      const phoneInput = page.getByPlaceholder('09xxxxxxxxx');
+      await phoneInput.waitFor({ timeout: 10000 });
+      await phoneInput.fill('09121111111');
+      await page.getByRole('button', { name: 'دریافت کد ورود' }).click();
+
+      // OtpStep.tsx: segmented OtpInput (packages/ui) — no confirmed per-digit
+      // selector, so focus the first visible text input in the OTP step and
+      // type the fixed test code; segmented OTP inputs conventionally
+      // auto-advance focus per keystroke.
+      const otpContainer = page.locator('text=تأیید و ادامه').locator('..').locator('..');
+      const firstOtpBox = otpContainer.locator('input').first();
+      await firstOtpBox.waitFor({ timeout: 10000 });
+      await firstOtpBox.click();
+      await page.keyboard.type('123456', { delay: 80 });
+      await page.getByRole('button', { name: 'تأیید و ادامه' }).click();
+
+      await page.waitForURL(/\/home/, { timeout: 15000 });
+      const hasToken = await page.evaluate(() => !!localStorage.getItem('biawin.accessToken'));
+      assert(hasToken, 'expected biawin.accessToken in localStorage after customer login');
+      return true;
+    })) === true
+  );
+}
+
 async function runCustomerChecks(browser: Browser): Promise<void> {
   const context = await browser.newContext({ viewport: DESKTOP });
   const page = await context.newPage();
@@ -315,32 +418,7 @@ async function runCustomerChecks(browser: Browser): Promise<void> {
   });
   await captureScreenshot(page, 'customer-landing-desktop', DESKTOP);
 
-  const loggedIn = await step('Customer STAGING_TEST_AUTH browser login (real UI flow)', async () => {
-    // LandingCenterCTA.tsx: aria-label="ورود یا ثبت نام در بیاوین".
-    await page.getByRole('button', { name: 'ورود یا ثبت نام در بیاوین' }).click();
-
-    // PhoneStep.tsx: placeholder "09xxxxxxxxx", submit button "دریافت کد ورود".
-    const phoneInput = page.getByPlaceholder('09xxxxxxxxx');
-    await phoneInput.waitFor({ timeout: 10000 });
-    await phoneInput.fill('09121111111');
-    await page.getByRole('button', { name: 'دریافت کد ورود' }).click();
-
-    // OtpStep.tsx: segmented OtpInput (packages/ui) — no confirmed per-digit
-    // selector, so focus the first visible text input in the OTP step and
-    // type the fixed test code; segmented OTP inputs conventionally
-    // auto-advance focus per keystroke.
-    const otpContainer = page.locator('text=تأیید و ادامه').locator('..').locator('..');
-    const firstOtpBox = otpContainer.locator('input').first();
-    await firstOtpBox.waitFor({ timeout: 10000 });
-    await firstOtpBox.click();
-    await page.keyboard.type('123456', { delay: 80 });
-    await page.getByRole('button', { name: 'تأیید و ادامه' }).click();
-
-    await page.waitForURL(/\/home/, { timeout: 15000 });
-    const hasToken = await page.evaluate(() => !!localStorage.getItem('biawin.accessToken'));
-    assert(hasToken, 'expected biawin.accessToken in localStorage after customer login');
-    return true;
-  });
+  const loggedIn = await performCustomerLogin(page, 'Customer');
 
   if (!loggedIn) {
     skip('Customer Home screenshots (authenticated)', 'customer browser login did not succeed — see the login step above for why; the API runner\'s STAGING_TEST_AUTH check (authenticated-qa-runner.ts) is the authoritative confirmation that the auth backend itself works, independent of this UI automation');
@@ -669,6 +747,115 @@ async function runServicesModuleChecks(page: Page): Promise<void> {
 }
 
 // ---------------------------------------------------------------------------
+// SERVICES-R1.4 — isolated back-navigation reproduction
+// ---------------------------------------------------------------------------
+
+/**
+ * A real run against fcd90a3 STILL failed "Browser back from Category View
+ * returns to Services List" after SERVICES-R1.2's history-pollution fix
+ * (which moved the "many/few services" light-visit loop to run after this
+ * exact sequence, not before it) — landing on the SAME category URL
+ * (گردشگری's own real UUID) both times, not a different one. That rules
+ * out the light-visit loop as the (sole) cause and means the extra history
+ * entry exists even in the "clean" services -> category -> detail path.
+ *
+ * Router/Link inspection (this session, before writing this function):
+ * grepped the whole of apps/web/src for router.push/replace/redirect/
+ * window.location/history.*State. Services List -> Category is exactly one
+ * `router.push(...)` (apps/web/src/app/services/page.tsx:32); Category ->
+ * Service Detail is exactly one `router.push(...)`
+ * (apps/web/src/app/services/[categoryId]/page.tsx:55). `AuthGuard` only
+ * ever calls `router.replace` (never `push`, so it can't ADD an entry) and
+ * only when `shouldRedirect` is true — false for an authenticated session,
+ * so it does not fire on these routes. No other push/replace/redirect
+ * exists anywhere in the Services or shell code. Nothing in application
+ * source explains a doubled history entry.
+ *
+ * This function is the task's own prescribed isolation protocol: a FRESH
+ * context/page, freshly authenticated, starting at /services with zero
+ * prior Services history, doing exactly click-category -> click-service ->
+ * back -> back with NO page.goto() anywhere in the sequence — and logging
+ * `history.length` + the real URL at every step into the report (not just
+ * console.log) so the raw evidence is auditable, not asserted.
+ */
+async function runBackNavigationIsolationCheck(browser: Browser): Promise<void> {
+  const snapshot = await fetchServiceCatalogSnapshot().catch(() => null);
+  if (!snapshot) {
+    skip('Back-nav isolation — full sequence', 'could not fetch the real Category/Service snapshot to pick a category/service from');
+    return;
+  }
+  const byCategoryCount = new Map<string, number>();
+  for (const s of snapshot.services) byCategoryCount.set(s.categoryId, (byCategoryCount.get(s.categoryId) ?? 0) + 1);
+  const category = snapshot.categories.find((c) => (byCategoryCount.get(c.id) ?? 0) > 0);
+  if (!category) {
+    skip('Back-nav isolation — full sequence', 'no real category with at least one real service was found');
+    return;
+  }
+  const service = snapshot.services.find((s) => s.categoryId === category.id)!;
+
+  const context = await browser.newContext({ viewport: DESKTOP });
+  const page = await context.newPage();
+  const issues = trackPageIssues(page);
+  const trace: string[] = [];
+  const recordStep = async (label: string) => {
+    const historyLength = await page.evaluate(() => window.history.length);
+    const url = page.url();
+    trace.push(`${label}: url=${url} history.length=${historyLength}`);
+    console.log(`[browser-qa] back-nav isolation — ${label}: url=${url} history.length=${historyLength}`);
+  };
+
+  await page.goto(CUSTOMER_ORIGIN, { waitUntil: 'networkidle' });
+  const loggedIn = await performCustomerLogin(page, 'Back-nav isolation');
+  if (!loggedIn) {
+    skip('Back-nav isolation — full sequence', 'fresh-context login did not succeed');
+    await context.close();
+    return;
+  }
+
+  await step('Back-nav isolation — navigate to /services (fresh context, zero prior Services history)', async () => {
+    await page.getByRole('button', { name: 'خدمات', exact: true }).click();
+    await page.waitForURL(/\/services$/, { timeout: 15000 });
+    await page.waitForLoadState('networkidle');
+  });
+  await recordStep('0. at /services');
+
+  await step(`Back-nav isolation — click ONE category ("${category.name}")`, async () => {
+    const tile = page.getByRole('button', { name: category.name, exact: true });
+    await tile.waitFor({ timeout: 10000 });
+    await tile.click();
+    await page.waitForURL(new RegExp(`/services/${category.id}$`), { timeout: 15000 });
+    await page.waitForLoadState('networkidle');
+  });
+  await recordStep(`1. clicked category "${category.name}"`);
+
+  await step(`Back-nav isolation — click ONE service ("${service.title}")`, async () => {
+    const card = page.locator('main button').filter({ has: page.locator('strong') }).first();
+    await card.waitFor({ timeout: 10000 });
+    await card.click();
+    await page.waitForURL(/\/services\/[^/]+\/[^/]+$/, { timeout: 15000 });
+    await page.waitForLoadState('networkidle');
+  });
+  await recordStep(`2. clicked service "${service.title}"`);
+
+  await step('Back-nav isolation — goBack #1 returns to the SAME Category View', async () => {
+    await page.goBack({ waitUntil: 'networkidle' });
+    assert(new RegExp(`/services/${category.id}$`).test(page.url()), `expected /services/${category.id}, got ${page.url()}`);
+  });
+  await recordStep('3. after goBack #1');
+
+  await step('Back-nav isolation — goBack #2 returns to exactly /services', async () => {
+    await page.goBack({ waitUntil: 'networkidle' });
+    assert(/\/services$/.test(page.url()), `expected /services, got ${page.url()}`);
+  });
+  await recordStep('4. after goBack #2');
+
+  record('Back-nav isolation — full history trace', 'PASS', trace.join(' | '));
+
+  await reportPageIssues('Back-nav isolation (fresh context)', issues);
+  await context.close();
+}
+
+// ---------------------------------------------------------------------------
 // Shared helpers
 // ---------------------------------------------------------------------------
 
@@ -680,16 +867,34 @@ async function captureScreenshot(page: Page, name: string, viewport: { width: nu
 }
 
 async function reportPageIssues(context: string, issues: PageIssues): Promise<void> {
+  const benignCount = issues.allFailedRequestEvents.filter((e) => e.classifiedBenign).length;
   if (issues.consoleErrors.length === 0 && issues.failedRequests.length === 0) {
-    record(`Console/network — ${context}`, 'PASS', 'no console errors, no failed/5xx requests observed');
-    return;
+    record(
+      `Console/network — ${context}`,
+      'PASS',
+      `no console errors, no non-benign failed/5xx requests observed${benignCount > 0 ? ` (${benignCount} benign navigation-cancelled request(s) auto-classified — see Network diagnostics)` : ''}`,
+    );
+  } else {
+    record(
+      `Console/network — ${context}`,
+      'FAIL',
+      `${issues.consoleErrors.length} console error(s), ${issues.failedRequests.length} failed/5xx request(s): ` +
+        [...issues.consoleErrors.slice(0, 5), ...issues.failedRequests.slice(0, 5)].join(' | '),
+    );
   }
-  record(
-    `Console/network — ${context}`,
-    'FAIL',
-    `${issues.consoleErrors.length} console error(s), ${issues.failedRequests.length} failed/5xx request(s): ` +
-      [...issues.consoleErrors.slice(0, 5), ...issues.failedRequests.slice(0, 5)].join(' | '),
-  );
+
+  // SERVICES-R1.4: every requestfailed event this page saw, benign or not,
+  // recorded verbatim so a "classified benign" call is always auditable
+  // from the report alone, never just asserted in code. This never
+  // changes PASS/FAIL — that's decided above from issues.failedRequests
+  // only, unaffected by this informational record.
+  if (issues.allFailedRequestEvents.length > 0) {
+    const lines = issues.allFailedRequestEvents.map(
+      (e) =>
+        `${e.classifiedBenign ? 'BENIGN' : 'REAL'}: ${e.method} ${e.url} — ${e.errorText} (resourceType=${e.resourceType}, pageUrlAtFailure=${e.pageUrlAtFailure}${e.benignReason ? `, reason: ${e.benignReason}` : ''})`,
+    );
+    record(`Network diagnostics — ${context}`, 'PASS', `${issues.allFailedRequestEvents.length} requestfailed event(s) observed:\n${lines.join('\n')}`);
+  }
 }
 
 function writeReport(): void {
