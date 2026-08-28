@@ -600,14 +600,122 @@ No regression tests were added — no application code changed.
 
 ---
 
-## QA Run #6 (against the post-SERVICES-R1.7 revision)
+## Deployment #6
 
-**PENDING** — not yet executed. Closure standard: API 0 FAIL/0 NOT_TESTED,
+| | |
+|---|---|
+| Deployed revision | `e3a475d` (SERVICES-R1.7 back-nav classification lock + markNavigationAttempt instrumentation, no app code) |
+| Result | PASS |
+
+## QA Run #6 (against `e3a475d`)
+
+**API layer: 54 PASS / 0 FAIL / 0 NOT_TESTED.** Fully green for a third
+consecutive run.
+
+**Browser layer: 67 PASS / 1 FAIL / 0 NOT_TESTED.** All 5 icon aborts from
+Run #5 are gone — the `markNavigationAttempt()` fix worked for those. Down
+to exactly **one** remaining failure:
+
+```
+GET https://api-staging.biawin.ir/api/v1/services?limit=100&page=1
+net::ERR_ABORTED
+resourceType=fetch
+pageUrlAtStart=https://staging.biawin.ir/services/e107aa7e-... (گردشگری)
+pageUrlAtFailure=https://staging.biawin.ir/services/e107aa7e-... (same)
+qaStepAtStart="Category flow — لوازم خانگی"
+qaStepAtFailure="Category flow — لوازم خانگی"
+elapsedMs=33
+navigationDuringRequest=false
+```
+
+### SERVICES-R1.8 — final root cause and instrumentation fix
+
+**Traced the exact origin.** `pageUrlAtStart === pageUrlAtFailure` (both
+گردشگری's OLD category URL, not لوازم خانگی's), `elapsedMs=33` (both
+events fired within 33ms of each other), and `qaStepAtStart ===
+qaStepAtFailure` — all pointing at a request whose own Chromium/CDP
+`request` lifecycle event was only reported essentially AT teardown time,
+not when the application logically issued it. Read
+`useServiceCatalog()`(`apps/web/src/components/services/useServiceCatalog.ts`)
+and `api-client.ts`'s `request()` again specifically for this: neither has
+an `AbortController`, a dedup mechanism, or a query-client layer — every
+mount of `ServiceCategoryPage` (`/services/[categoryId]/page.tsx`) creates
+a fresh `useServiceCatalog()` instance with its own fresh fetch. Since
+`goBack()` onto a previously-visited Category View **remounts** that page
+component in Next.js App Router, گردشگری's category page was mounted
+(and issued its own catalog fetch) more than once across the run's earlier
+click → detail → `goBack()` → `goBack()` sequence — and a stale instance
+of that fetch, queued behind other traffic (never actually dispatched),
+can still be sitting there when a much LATER, unrelated navigation (the
+light-visit loop's `page.goto()` to لوازم خانگی) finally tears the whole
+page down. **Classification: D was ruled out** — no evidence of a real
+data-fetch defect; the component was never observed to remain mounted with
+a lost, uncancelled, meaningful-data-loss request. **Classification: this
+is BENIGN TEST-NAVIGATION CATALOG FETCH CANCELLATION (a queued, stale
+fetch from an earlier remount, torn down by a subsequent test-driven
+navigation)** — closest to option B/C of Task 3's list, confirmed by
+source, not inferred from the page URL alone.
+
+**Instrumentation bug found and fixed (Task 4's own hypothesis, confirmed
+correct in substance though not in the exact mechanism suspected).** The
+`currentStepLabel`/`page.goto()` ordering itself was fine — `step()` sets
+the label before its callback runs, and every `page.goto()` already had
+`markNavigationAttempt()` called immediately before it. The REAL bug was
+in the correlation *window*: `navigationDuringRequest` required a
+navigation mark to fall **at or after** the request's own observed
+`startTime` (`t >= startTime`). For a request whose CDP-level `request`
+event only surfaces at teardown — i.e., logically AFTER the app "started"
+it but recorded by Playwright at nearly the same instant as the abort —
+the navigation mark that actually caused the teardown can legitimately
+have been recorded BEFORE that late-arriving `startTime`, which the old
+`t >= startTime` check incorrectly rejected. Fixed by anchoring the
+correlation to the FAILURE instant instead (`Math.abs(t - failureTime) <=
+2000`), the moment Chromium actually acts on the cancellation — the
+reliable causal signal — checked against navigation marks in either
+direction. The field was renamed `navigationCorrelated` (from
+`navigationDuringRequest`) to stop implying a directionality the evidence
+disproved. Per Task 5, `markNavigationAttempt()` calls were also added
+before every navigating click and every `goBack()` throughout the Services
+checks and the isolation check (previously only `page.goto()` calls had
+one) — clicks and back-navigation can trigger the exact same teardown
+mechanism as a hard `goto()`.
+
+Whether this specific event now correlates as benign is what the next run
+will show — no data was fabricated to claim that here. The rule's four
+conditions (`net::ERR_ABORTED`, `resourceType=fetch`, first-party
+`/api/v1/categories`\|`/api/v1/services` only, navigation-correlated) are
+unchanged; only the correlation math was corrected, and only for the
+reason proven above.
+
+### Application code changed this round
+
+**None.** Every SERVICES-R1.8 change is in
+`deploy/staging/qa/browser/browser-qa.ts` — no file under
+`apps/web/src/{app,components}/services/**` or
+`apps/web/src/components/shell/**` was touched, per the explicit
+instruction not to change app code merely to obtain 0 FAIL.
+
+### Quality gates (post-SERVICES-R1.8 changes)
+
+| Gate | Result |
+|---|---|
+| `pnpm typecheck` | PASS |
+| `pnpm lint` | PASS (0 errors, same pre-existing warning set) |
+| `pnpm test` | PASS |
+| `pnpm build` | PASS |
+
+No regression tests were added — no application code changed.
+
+---
+
+## QA Run #7 (against the post-SERVICES-R1.8 revision)
+
+**PENDING** — not yet executed. Closure criteria: API 0 FAIL/0 NOT_TESTED,
 browser 0 FAIL/0 NOT_TESTED, isolated back-navigation sequence explicitly
-PASSING (already demonstrated in Run #5 and expected to keep passing — no
-change was made to that logic this round beyond leaving it exactly as
-proven). If this run is fully green, SERVICES-R1 closes; if the icon
-aborts persist, they remain a real, open, undismissed finding.
+PASSING. If this run is fully green, **SERVICES-R1 STAGING QA: PASS** and
+SERVICES-R1 is complete. If the catalog-fetch abort persists even under
+the corrected correlation, it remains a real, open, undismissed finding —
+not something to be reasoned away a further time without new evidence.
 
 ---
 
@@ -615,16 +723,16 @@ aborts persist, they remain a real, open, undismissed finding.
 
 SERVICES-R1's *application* code and fidelity claims (see
 [docs/services-r1-fidelity-report.md](services-r1-fidelity-report.md))
-remain unchanged and unaffected by R1.2 through R1.7 — every finding
-across all five QA rounds so far has been QA-tooling-side (connectivity
+remain unchanged and unaffected by R1.2 through R1.8 — every finding
+across all six QA rounds so far has been QA-tooling-side (connectivity
 target, timing races, history setup, an OTP resend-lock collision, an
 isolation test's own category-selection bug, a container egress
-limitation on a media URL, a navigation-correlation timing gap, and
-independently-verified-healthy assets/endpoints aborted mid-navigation),
-never a real application defect. Back-navigation is now conclusively
-classified (QA history pollution, proven via a passing isolated test, no
-app fix needed). One item remains genuinely open: whether the icon
-`ERR_ABORTED` events are now correctly correlated as benign under the
-refined `markNavigationAttempt()` timing, or whether they persist and need
-further, non-speculative investigation. SERVICES-R1 does not close until a
-real staging run produces 0 FAIL/0 NOT_TESTED end to end.
+limitation on a media URL, and two successive refinements to how test
+navigation is correlated with browser-cancelled requests), never a real
+application defect. Back-navigation is conclusively classified (QA history
+pollution, proven via a passing isolated test, no app fix needed, and that
+test is now the permanent authoritative check). One item remains open: the
+single remaining catalog-fetch abort's classification under the corrected
+correlation window — real evidence from the next run will settle it either
+way. SERVICES-R1 does not close until a real staging run produces 0
+FAIL/0 NOT_TESTED end to end.

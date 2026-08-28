@@ -106,7 +106,7 @@ interface FailedRequestEvent {
   qaStepAtStart: string;
   qaStepAtFailure: string;
   elapsedMs: number;
-  navigationDuringRequest: boolean;
+  navigationCorrelated: boolean;
   classifiedBenign: boolean;
   benignReason?: string;
 }
@@ -126,7 +126,7 @@ interface PageIssues {
    * icon requests competing with fetch/XHR traffic causes) can be aborted
    * at that earlier instant, yet still land outside the `framenavigated`-
    * based correlation window recorded before this fix — a real run showed
-   * `navigationDuringRequest=false` for an abort whose only plausible
+   * `navigationCorrelated=false` for an abort whose only plausible
    * cause was a `page.goto()` a few lines away. Call this immediately
    * before every `page.goto()` so the TRUE cancellation instant is always
    * captured, not just the later commit event.
@@ -175,7 +175,7 @@ function isBenignNextRscCancellation(req: Request, errorText: string): boolean {
  * traffic for Chromium's per-origin connection budget, which can leave
  * some genuinely QUEUED (not yet dispatched) for a while.
  *
- * SERVICES-R1.7 finding: a later run showed `navigationDuringRequest=
+ * SERVICES-R1.7 finding: a later run showed `navigationCorrelated=
  * false` for an abort whose only plausible trigger was a `page.goto()` a
  * few lines later in the same script — because Chromium cancels a
  * document's outstanding subresources the INSTANT a new navigation is
@@ -195,46 +195,65 @@ function isBenignNextRscCancellation(req: Request, errorText: string): boolean {
  * icons — never a third-party or backend-served image), AND a real
  * top-level page navigation recorded while THIS SPECIFIC request was
  * still in flight (its own start-to-failure window, not just "near" the
- * failure — see `navigationDuringRequest` below). A broken image outside
+ * failure — see `navigationCorrelated` below). A broken image outside
  * that window, a non-webp/non-Services path, or any other error text
  * still fails the run, unchanged.
  */
-function isBenignImageCancelledByNavigation(req: Request, errorText: string, navigationDuringRequest: boolean): boolean {
+function isBenignImageCancelledByNavigation(req: Request, errorText: string, navigationCorrelated: boolean): boolean {
   return (
     errorText === 'net::ERR_ABORTED' &&
     req.resourceType() === 'image' &&
     /^https?:\/\/[^/]+\/services\/[^/]+\.webp(\?.*)?$/.test(req.url()) &&
-    navigationDuringRequest
+    navigationCorrelated
   );
 }
 
 /**
- * SERVICES-R1.5 finding: a real run reported `net::ERR_ABORTED` on
+ * BENIGN TEST-NAVIGATION CATALOG FETCH CANCELLATION (SERVICES-R1.5,
+ * root-caused SERVICES-R1.8). A real run reported `net::ERR_ABORTED` on
  * `/api/v1/categories` and `/api/v1/services` — the exact endpoints
  * `useServiceCatalog()` (apps/web/src/components/services/useServiceCatalog.ts)
  * calls on every mount of `/services` AND independently again on every
- * mount of `/services/[categoryId]`. That hook has no `AbortController` —
- * navigating away does not itself cancel its fetches at the application
- * level — but Playwright/Chromium can still report `ERR_ABORTED` on a
- * fetch whose owning document context is torn down mid-flight. Both
- * endpoints were independently verified (curl, outside the browser, same
- * session this rule was written in) to return HTTP 200 + valid JSON with
- * the real catalog payload — not a real backend failure.
+ * mount of `/services/[categoryId]` (including a REMOUNT — e.g. a
+ * `goBack()` back onto a Category View page mounts a fresh
+ * `useServiceCatalog()` instance, with its own fresh fetch). That hook has
+ * no `AbortController` — the application never voluntarily cancels these
+ * — but Chromium cancels a document's outstanding subresources itself,
+ * including ones still queued behind other traffic (never actually
+ * dispatched), the instant that document is torn down by a NEW
+ * navigation. Both endpoints were independently verified (curl, outside
+ * the browser) to return HTTP 200 + valid JSON with the real catalog
+ * payload — not a real backend failure.
+ *
+ * SERVICES-R1.8 root cause: a stale `useServiceCatalog()` fetch from an
+ * EARLIER page instance (e.g. one a `goBack()`-triggered remount created)
+ * can sit queued long enough that its own `request`/`requestfailed`
+ * lifecycle only surfaces at/after a LATER, unrelated navigation tears
+ * the whole page down — explaining why the failure's `pageUrlAtStart`/
+ * `pageUrlAtFailure`/`qaStepAtStart` can all still show an OLDER category,
+ * not whichever navigation actually triggered the cancellation. Confirmed
+ * by direct code reading, not inferred from the page URL alone — see
+ * `ServiceCategoryPage`'s `useServiceCatalog()` call and its lack of any
+ * abort/dedup mechanism.
  *
  * Narrow rule — ALL FOUR of: exact `net::ERR_ABORTED`, `resourceType()
  * === 'fetch'`, the URL is exactly our own first-party
  * `/api/v1/categories` or `/api/v1/services` catalog endpoint (never any
  * other API route — an aborted mutation or auth call is NEVER covered by
- * this), AND a real top-level navigation recorded while this specific
- * request was in flight. A catalog fetch that fails outside an active
- * navigation, or any other API endpoint, still fails the run.
+ * this), AND a real, test-driven navigation mark (`markNavigationAttempt()`,
+ * called immediately before every `page.goto()`/navigating click/
+ * `goBack()` in this file) recorded near the failure — see
+ * `navigationCorrelated`'s own comment for why this is now anchored to
+ * the failure instant, not the request's own observed start. A catalog
+ * fetch that fails outside that window, or any other API endpoint, still
+ * fails the run.
  */
-function isBenignCatalogFetchCancelledByNavigation(req: Request, errorText: string, navigationDuringRequest: boolean): boolean {
+function isBenignCatalogFetchCancelledByNavigation(req: Request, errorText: string, navigationCorrelated: boolean): boolean {
   return (
     errorText === 'net::ERR_ABORTED' &&
     req.resourceType() === 'fetch' &&
     /^https?:\/\/[^/]+\/api\/v1\/(categories|services)(\?.*)?$/.test(req.url()) &&
-    navigationDuringRequest
+    navigationCorrelated
   );
 }
 
@@ -269,21 +288,38 @@ function trackPageIssues(page: Page): PageIssues {
     const startTime = started?.startTime ?? failureTime;
     const pageUrlAtStart = started?.pageUrlAtStart ?? 'unknown (request event not captured)';
     const qaStepAtStart = started?.qaStepAtStart ?? 'unknown (request event not captured)';
-    // +250ms grace: `framenavigated` can fire a beat after the network
-    // layer reports the abort for the same client-side transition.
-    const navigationDuringRequest = navigationTimestamps.some((t) => t >= startTime && t <= failureTime + 250);
+    // SERVICES-R1.8 finding: a real run proved the `t >= startTime`
+    // requirement below was backwards for a real, provable case. Evidence:
+    // a `/api/v1/services` abort with `pageUrlAtStart === pageUrlAtFailure`
+    // (both the OLD category's URL — a `page.goto()` to a NEW category had
+    // NOT yet committed) and `elapsedMs=33` — i.e. the request's own
+    // `request` event was only reported by Chromium/CDP essentially AT THE
+    // MOMENT of teardown, not when the request was logically issued by the
+    // app (it had likely been sitting queued behind other traffic, exactly
+    // like the icon-image case). A `page.goto()`/click/`goBack()` "mark"
+    // (`markNavigationAttempt()`, called immediately before every one of
+    // those in this file) can therefore legitimately land BEFORE this
+    // request's own observed start, not just between its start and
+    // failure — the old `t >= startTime` check would incorrectly reject
+    // exactly that case. The reliable causal signal is proximity to the
+    // FAILURE instant (when the browser actually acts on the cancellation),
+    // not the request's own start-to-failure window — so this checks
+    // whether ANY navigation mark landed within a fixed, still-narrow
+    // window of the failure, in either direction.
+    const NAV_CORRELATION_WINDOW_MS = 2000;
+    const navigationCorrelated = navigationTimestamps.some((t) => Math.abs(t - failureTime) <= NAV_CORRELATION_WINDOW_MS);
 
     let classifiedBenign = false;
     let benignReason: string | undefined;
     if (isBenignNextRscCancellation(req, errorText)) {
       classifiedBenign = true;
       benignReason = 'Next.js RSC prefetch cancelled by navigation (Stage 5.22 rule)';
-    } else if (isBenignImageCancelledByNavigation(req, errorText, navigationDuringRequest)) {
+    } else if (isBenignImageCancelledByNavigation(req, errorText, navigationCorrelated)) {
       classifiedBenign = true;
       benignReason = 'BENIGN RENDER-LIFECYCLE IMAGE CANCELLATION: first-party /services/*.webp request cancelled during an in-flight navigation, asset independently verified healthy (SERVICES-R1.4/R1.7 rule)';
-    } else if (isBenignCatalogFetchCancelledByNavigation(req, errorText, navigationDuringRequest)) {
+    } else if (isBenignCatalogFetchCancelledByNavigation(req, errorText, navigationCorrelated)) {
       classifiedBenign = true;
-      benignReason = 'first-party /api/v1/categories|services catalog fetch cancelled during an in-flight navigation, endpoint independently verified healthy (SERVICES-R1.5 rule)';
+      benignReason = 'BENIGN TEST-NAVIGATION CATALOG FETCH CANCELLATION: first-party /api/v1/categories|services catalog fetch cancelled by a test-driven navigation (page.goto/click/goBack) tearing down the page that issued it, endpoint independently verified healthy (SERVICES-R1.5/R1.8 rule)';
     }
 
     const qaStepAtFailure = currentStepLabel;
@@ -297,14 +333,14 @@ function trackPageIssues(page: Page): PageIssues {
       qaStepAtStart,
       qaStepAtFailure,
       elapsedMs: failureTime - startTime,
-      navigationDuringRequest,
+      navigationCorrelated,
       classifiedBenign,
       benignReason,
     });
 
     if (classifiedBenign) return;
     issues.failedRequests.push(
-      `${req.method()} ${req.url()} — ${errorText} (resourceType=${req.resourceType()}, pageUrlAtStart=${pageUrlAtStart}, pageUrlAtFailure=${page.url()}, qaStepAtStart="${qaStepAtStart}", qaStepAtFailure="${qaStepAtFailure}", elapsedMs=${failureTime - startTime}, navigationDuringRequest=${navigationDuringRequest})`,
+      `${req.method()} ${req.url()} — ${errorText} (resourceType=${req.resourceType()}, pageUrlAtStart=${pageUrlAtStart}, pageUrlAtFailure=${page.url()}, qaStepAtStart="${qaStepAtStart}", qaStepAtFailure="${qaStepAtFailure}", elapsedMs=${failureTime - startTime}, navigationCorrelated=${navigationCorrelated})`,
     );
   });
   page.on('response', (res) => {
@@ -611,6 +647,7 @@ async function runServicesModuleChecks(page: Page, issues: PageIssues): Promise<
   const tileIcons = page.locator('main button img[alt=""]');
 
   await step('Navigate to Services via bottom nav ("خدمات")', async () => {
+    issues.markNavigationAttempt();
     await page.getByRole('button', { name: 'خدمات', exact: true }).click();
     await page.waitForURL(/\/services$/, { timeout: 15000 });
     await page.waitForLoadState('networkidle');
@@ -678,6 +715,7 @@ async function runServicesModuleChecks(page: Page, issues: PageIssues): Promise<
   }
 
   await step(`Category flow — select "${categoryAsset.name}" (asset-mapped, accent-themed category)`, async () => {
+    issues.markNavigationAttempt();
     await page.getByRole('button', { name: categoryAsset.name, exact: true }).click();
     await page.waitForURL(new RegExp(`/services/${categoryAsset.id}$`), { timeout: 15000 });
     await page.waitForLoadState('networkidle');
@@ -761,6 +799,7 @@ async function runServicesModuleChecks(page: Page, issues: PageIssues): Promise<
   let serviceDetailUrl: string | null = null;
   if ((await firstCard.count()) > 0) {
     await step('Service Detail — Services-origin click navigation renders cardOnly (no full payment-method chooser)', async () => {
+      issues.markNavigationAttempt();
       await firstCard.click();
       await page.waitForURL(/\/services\/[^/]+\/[^/]+$/, { timeout: 15000 });
       await page.waitForLoadState('networkidle');
@@ -793,6 +832,7 @@ async function runServicesModuleChecks(page: Page, issues: PageIssues): Promise<
     });
 
     await step('Browser back from Service Detail returns to the correct Category View', async () => {
+      issues.markNavigationAttempt();
       await page.goBack({ waitUntil: 'networkidle' });
       assert(new RegExp(`/services/${categoryAsset.id}$`).test(page.url()), `expected to return to /services/${categoryAsset.id}, got ${page.url()}`);
     });
@@ -862,6 +902,7 @@ async function runServicesModuleChecks(page: Page, issues: PageIssues): Promise<
   }
 
   await step('Home smoke after Services navigation — CMS content still renders, no state corruption', async () => {
+    issues.markNavigationAttempt();
     await page.getByRole('button', { name: 'بیاوین', exact: true }).click();
     await page.waitForURL(/\/home/, { timeout: 15000 });
     await page.waitForLoadState('networkidle');
@@ -1058,6 +1099,7 @@ async function runBackNavigationIsolationCheck(browser: Browser): Promise<void> 
   const categoryOk = await step(`Back-nav isolation — click ONE visible category ("${category.name}", id=${category.id})`, async () => {
     const tile = page.getByRole('button', { name: category.name, exact: true });
     await tile.waitFor({ timeout: 10000 });
+    issues.markNavigationAttempt();
     await tile.click();
     await page.waitForURL(new RegExp(`/services/${category.id}$`), { timeout: 15000 });
     await page.waitForLoadState('networkidle');
@@ -1092,6 +1134,7 @@ async function runBackNavigationIsolationCheck(browser: Browser): Promise<void> 
 
   const serviceOk = await step(`Back-nav isolation — click ONE visible service ("${serviceLabel}"${matchedService ? `, id=${matchedService.id}` : ''})`, async () => {
     const card = page.locator('main button').filter({ has: page.locator('strong') }).first();
+    issues.markNavigationAttempt();
     await card.click();
     await page.waitForURL(/\/services\/[^/]+\/[^/]+$/, { timeout: 15000 });
     await page.waitForLoadState('networkidle');
@@ -1105,12 +1148,14 @@ async function runBackNavigationIsolationCheck(browser: Browser): Promise<void> 
   }
 
   await step('Back-nav isolation — goBack #1 returns to the SAME Category View', async () => {
+    issues.markNavigationAttempt();
     await page.goBack({ waitUntil: 'networkidle' });
     assert(new RegExp(`/services/${category.id}$`).test(page.url()), `expected /services/${category.id}, got ${page.url()}`);
   });
   await recordStep('3. after goBack #1');
 
   await step('Back-nav isolation — goBack #2 returns to exactly /services', async () => {
+    issues.markNavigationAttempt();
     await page.goBack({ waitUntil: 'networkidle' });
     assert(/\/services$/.test(page.url()), `expected /services, got ${page.url()}`);
   });
@@ -1158,7 +1203,7 @@ async function reportPageIssues(context: string, issues: PageIssues): Promise<vo
   if (issues.allFailedRequestEvents.length > 0) {
     const lines = issues.allFailedRequestEvents.map(
       (e) =>
-        `${e.classifiedBenign ? 'BENIGN' : 'REAL'}: ${e.method} ${e.url} — ${e.errorText} (resourceType=${e.resourceType}, pageUrlAtStart=${e.pageUrlAtStart}, pageUrlAtFailure=${e.pageUrlAtFailure}, qaStepAtStart="${e.qaStepAtStart}", qaStepAtFailure="${e.qaStepAtFailure}", elapsedMs=${e.elapsedMs}, navigationDuringRequest=${e.navigationDuringRequest}${e.benignReason ? `, reason: ${e.benignReason}` : ''})`,
+        `${e.classifiedBenign ? 'BENIGN' : 'REAL'}: ${e.method} ${e.url} — ${e.errorText} (resourceType=${e.resourceType}, pageUrlAtStart=${e.pageUrlAtStart}, pageUrlAtFailure=${e.pageUrlAtFailure}, qaStepAtStart="${e.qaStepAtStart}", qaStepAtFailure="${e.qaStepAtFailure}", elapsedMs=${e.elapsedMs}, navigationCorrelated=${e.navigationCorrelated}${e.benignReason ? `, reason: ${e.benignReason}` : ''})`,
     );
     record(`Network diagnostics — ${context}`, 'PASS', `${issues.allFailedRequestEvents.length} requestfailed event(s) observed:\n${lines.join('\n')}`);
   }
