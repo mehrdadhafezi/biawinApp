@@ -42,7 +42,11 @@ const SCREENSHOT_DIR = `${REPORT_DIR}/screenshots`;
 const RUN_ID = new Date().toISOString().replace(/[:.]/g, '-');
 
 const MOBILE = { width: 390, height: 844 };
+const MOBILE_375 = { width: 375, height: 812 };
+const MOBILE_430 = { width: 430, height: 932 };
+const RESPONSIVE_WIDTHS = [MOBILE_375, MOBILE, MOBILE_430];
 const DESKTOP = { width: 1440, height: 900 };
+const API_ORIGIN = process.env.QA_API_ORIGIN || 'https://api-staging.biawin.ir';
 
 type Status = 'PASS' | 'FAIL' | 'NOT_TESTED';
 interface Result {
@@ -139,6 +143,40 @@ async function assertNoBrokenImages(page: Page): Promise<{ total: number; broken
 
 async function assertNoHorizontalOverflow(page: Page): Promise<boolean> {
   return page.evaluate(() => document.documentElement.scrollWidth <= document.documentElement.clientWidth + 1);
+}
+
+interface CategorySnapshot {
+  id: string;
+  name: string;
+  description: string;
+}
+interface ServiceSnapshot {
+  id: string;
+  categoryId: string;
+  title: string;
+  availableMethods: string[];
+}
+
+/**
+ * SERVICES-R1.1 — cross-checks the LIVE rendered Services UI against the
+ * real backend catalog via the same public, unauthenticated endpoints
+ * `useServiceCatalog` itself calls (GET /api/v1/categories, GET
+ * /api/v1/services) — proves the browser is showing real domain data, not
+ * a cached/stale/synthetic substitute, independent of anything this
+ * script clicks through in the UI.
+ */
+async function fetchServiceCatalogSnapshot(): Promise<{ categories: CategorySnapshot[]; services: ServiceSnapshot[] }> {
+  const catRes = await fetch(`${API_ORIGIN}/api/v1/categories?limit=100`);
+  const catJson = (await catRes.json()) as { data: { items: CategorySnapshot[] } };
+
+  const services: ServiceSnapshot[] = [];
+  for (let page = 1; page <= 5; page++) {
+    const res = await fetch(`${API_ORIGIN}/api/v1/services?limit=100&page=${page}`);
+    const json = (await res.json()) as { data: { items: ServiceSnapshot[]; total: number } };
+    services.push(...json.data.items);
+    if (services.length >= json.data.total) break;
+  }
+  return { categories: catJson.data.items, services };
 }
 
 async function main(): Promise<void> {
@@ -326,9 +364,268 @@ async function runCustomerChecks(browser: Browser): Promise<void> {
     assert(await assertNoHorizontalOverflow(page), 'unexpected horizontal overflow on Home (mobile)');
   });
   await captureScreenshot(page, 'customer-home-authenticated-mobile', MOBILE);
+  await page.setViewportSize(DESKTOP);
 
-  await reportPageIssues('Customer (landing + login + Home)', issues);
+  await runServicesModuleChecks(page);
+
+  await reportPageIssues('Customer (landing + login + Home + Services)', issues);
   await context.close();
+}
+
+// ---------------------------------------------------------------------------
+// Services checks (SERVICES-R1.1 — docs/services-r1-staging-qa.md)
+// ---------------------------------------------------------------------------
+
+/**
+ * Authenticated live QA for the SERVICES-R1 fidelity upgrade
+ * (docs/services-r1-fidelity-report.md). Runs inside the same authenticated
+ * `page`/context `runCustomerChecks` already established (real
+ * STAGING_TEST_AUTH login above) — no separate login. Selectors match real
+ * component source, same convention as the rest of this file: CategoryGrid.tsx
+ * (category tiles: `<button><img alt="" /><span>{name}</span></button>`),
+ * MethodFilterChips.tsx/Chip.tsx (`<button aria-pressed>{label}</button>`),
+ * ServiceCard.tsx (`<button><strong>{title}</strong>...</button>` — the only
+ * `<strong>` inside `<main>` on any Services page, since GlobalHeader's own
+ * `<strong>بیاوین</strong>` logo sits outside `PageContainer`'s `<main>`),
+ * ServiceSearchInput.tsx (`placeholder="جستجو در کارت‌های این خدمت..."`),
+ * DisabledPurchaseCTA.tsx (`aria-label="خرید — به‌زودی"`, text "خرید این
+ * خدمت" + "به‌زودی").
+ */
+async function runServicesModuleChecks(page: Page): Promise<void> {
+  const snapshot = await step('Fetch real Category/Service snapshot via public API (cross-check baseline)', async () => {
+    const s = await fetchServiceCatalogSnapshot();
+    assert(s.categories.length === 19, `expected 19 real categories, got ${s.categories.length}`);
+    assert(s.services.length === 108, `expected 108 real services, got ${s.services.length}`);
+    return s;
+  });
+  if (!snapshot) {
+    skip('Services module — all remaining checks', 'could not fetch the real Category/Service snapshot to cross-check against');
+    return;
+  }
+
+  const byCategory = new Map<string, ServiceSnapshot[]>();
+  for (const s of snapshot.services) {
+    const list = byCategory.get(s.categoryId) ?? [];
+    list.push(s);
+    byCategory.set(s.categoryId, list);
+  }
+  const byCount = [...snapshot.categories].sort(
+    (a, b) => (byCategory.get(b.id)?.length ?? 0) - (byCategory.get(a.id)?.length ?? 0),
+  );
+  const categoryMany = byCount[0];
+  const categoryFew = [...byCount].reverse().find((c) => (byCategory.get(c.id)?.length ?? 0) > 0) ?? byCount[byCount.length - 1];
+  const categoryAsset = snapshot.categories.find((c) => c.name === 'گردشگری') ?? categoryMany;
+  const categoryAssetServices = byCategory.get(categoryAsset.id) ?? [];
+
+  const mainStrongTitles = page.locator('main strong');
+  const tileIcons = page.locator('main button img[alt=""]');
+
+  await step('Navigate to Services via bottom nav ("خدمات")', async () => {
+    await page.getByRole('button', { name: 'خدمات', exact: true }).click();
+    await page.waitForURL(/\/services$/, { timeout: 15000 });
+    await page.waitForLoadState('networkidle');
+  });
+
+  await step('Services List renders (promo banner + real category grid, no broken images)', async () => {
+    const { total, broken } = await assertNoBrokenImages(page);
+    assert(total > 0, 'expected at least the promo banner + category icon images on the Services List');
+    assert(broken.length === 0, `${broken.length}/${total} broken <img> elements on Services List: ${broken.slice(0, 3).join(', ')}`);
+    assert(await assertNoHorizontalOverflow(page), 'unexpected horizontal overflow on Services List (desktop)');
+  });
+
+  await step('Services List shows exactly the first 11 real categories by default', async () => {
+    const count = await tileIcons.count();
+    assert(count === Math.min(11, snapshot.categories.length), `expected ${Math.min(11, snapshot.categories.length)} visible category tiles, got ${count}`);
+  });
+
+  await captureScreenshot(page, 'services-list-collapsed-desktop', DESKTOP);
+  for (const vp of RESPONSIVE_WIDTHS) {
+    await page.setViewportSize(vp);
+    await page.waitForTimeout(300);
+    await step(`Services List (collapsed) — no horizontal overflow at ${vp.width}px`, async () => {
+      assert(await assertNoHorizontalOverflow(page), `unexpected horizontal overflow on Services List at ${vp.width}px`);
+    });
+    await captureScreenshot(page, `services-list-collapsed-${vp.width}`, vp);
+  }
+  await page.setViewportSize(DESKTOP);
+
+  const moreButton = page.getByRole('button', { name: 'بیشتر', exact: true });
+  const hasMore = (await moreButton.count()) > 0;
+  if (hasMore) {
+    await step('"بیشتر" reveals all real categories with no duplicates, no layout break', async () => {
+      await moreButton.click();
+      await page.waitForTimeout(300);
+      const count = await tileIcons.count();
+      assert(count === snapshot.categories.length, `expected ${snapshot.categories.length} category tiles after expanding, got ${count}`);
+      assert((await page.getByRole('button', { name: 'کمتر', exact: true }).count()) === 1, 'expected the toggle button to read "کمتر" once expanded');
+      assert(await assertNoHorizontalOverflow(page), 'unexpected horizontal overflow after expanding the category grid');
+    });
+
+    await captureScreenshot(page, 'services-list-expanded-desktop', DESKTOP);
+    for (const vp of RESPONSIVE_WIDTHS) {
+      await page.setViewportSize(vp);
+      await page.waitForTimeout(300);
+      await captureScreenshot(page, `services-list-expanded-${vp.width}`, vp);
+    }
+    await page.setViewportSize(DESKTOP);
+
+    await step('"کمتر" collapses back to 11 categories', async () => {
+      await page.getByRole('button', { name: 'کمتر', exact: true }).click();
+      await page.waitForTimeout(300);
+      const count = await tileIcons.count();
+      assert(count === Math.min(11, snapshot.categories.length), `expected 11 visible category tiles after collapsing, got ${count}`);
+    });
+  } else {
+    skip('"بیشتر"/"کمتر" toggle', `only ${snapshot.categories.length} real categories exist — at or under the 11-item default, no toggle rendered`);
+  }
+
+  await step(`Category flow — select "${categoryAsset.name}" (asset-mapped, accent-themed category)`, async () => {
+    await page.getByRole('button', { name: categoryAsset.name, exact: true }).click();
+    await page.waitForURL(new RegExp(`/services/${categoryAsset.id}$`), { timeout: 15000 });
+    await page.waitForLoadState('networkidle');
+  });
+
+  await step('Category View renders real hero (name/description), search input, and 5 real method-filter chips', async () => {
+    const html = await page.content();
+    assert(html.includes(categoryAsset.name), 'expected the real category name in the Category View hero');
+    assert(html.includes(categoryAsset.description), 'expected the real category description in the Category View hero');
+    await page.getByPlaceholder('جستجو در کارت‌های این خدمت...').waitFor({ timeout: 5000 });
+    for (const label of ['همه', 'اعتباری', 'اقساطی', 'پرداخت کامل', 'رایگان']) {
+      assert((await page.getByRole('button', { name: label, exact: true }).count()) >= 1, `expected a "${label}" filter chip`);
+    }
+    assert(!html.includes('تخفیفی'), 'prototype-only "تخفیفی" chip must not render (no PurchaseMethod schema backing)');
+    assert(!html.includes('ترکیبی'), 'prototype-only "ترکیبی" chip must not render (no PurchaseMethod schema backing)');
+  });
+
+  await captureScreenshot(page, 'services-category-desktop', DESKTOP);
+  for (const vp of RESPONSIVE_WIDTHS) {
+    await page.setViewportSize(vp);
+    await page.waitForTimeout(300);
+    await step(`Category View — no horizontal overflow at ${vp.width}px`, async () => {
+      assert(await assertNoHorizontalOverflow(page), `unexpected horizontal overflow on Category View at ${vp.width}px`);
+    });
+    await captureScreenshot(page, `services-category-${vp.width}`, vp);
+  }
+  await page.setViewportSize(DESKTOP);
+
+  const creditCount = categoryAssetServices.filter((s) => s.availableMethods.includes('credit')).length;
+  await step('Method filter chip "اعتباری" filters to the exact real matching subset', async () => {
+    await page.getByRole('button', { name: 'اعتباری', exact: true }).click();
+    await page.waitForTimeout(300);
+    assert((await page.getByRole('button', { name: 'اعتباری', exact: true }).getAttribute('aria-pressed')) === 'true', 'expected اعتباری chip aria-pressed=true after selection');
+    assert((await page.getByRole('button', { name: 'همه', exact: true }).getAttribute('aria-pressed')) === 'false', 'expected همه chip aria-pressed=false once a specific filter is active');
+    const cardCount = await mainStrongTitles.count();
+    assert(cardCount === creditCount, `expected ${creditCount} rendered service cards for اعتباری in "${categoryAsset.name}", got ${cardCount}`);
+  });
+
+  await step('Method filter — back to "همه" restores the full real category list', async () => {
+    await page.getByRole('button', { name: 'همه', exact: true }).click();
+    await page.waitForTimeout(300);
+    const cardCount = await mainStrongTitles.count();
+    assert(cardCount === categoryAssetServices.length, `expected ${categoryAssetServices.length} rendered service cards for همه in "${categoryAsset.name}", got ${cardCount}`);
+  });
+
+  if (categoryAssetServices.length > 0) {
+    const probe = categoryAssetServices[0];
+    const searchTerm = probe.title.slice(0, Math.min(3, probe.title.length));
+    await step('Local search filters the category\'s real services', async () => {
+      await page.getByPlaceholder('جستجو در کارت‌های این خدمت...').fill(searchTerm);
+      await page.waitForTimeout(300);
+      const html = await page.content();
+      assert(html.includes(probe.title), `expected searching "${searchTerm}" to keep the real service "${probe.title}" visible`);
+      await page.getByPlaceholder('جستجو در کارت‌های این خدمت...').fill('');
+      await page.waitForTimeout(300);
+    });
+  }
+
+  // Light visits — "many services" and "few services" categories (product decision: cover both extremes, not just the asset-mapped one).
+  for (const [label, cat] of [['many-services', categoryMany], ['few-services', categoryFew]] as const) {
+    if (cat.id === categoryAsset.id) continue;
+    await step(`Category flow — "${cat.name}" (${label}, ${byCategory.get(cat.id)?.length ?? 0} real services)`, async () => {
+      await page.goto(`${CUSTOMER_ORIGIN}/services/${cat.id}`, { waitUntil: 'networkidle' });
+      const html = await page.content();
+      assert(html.includes(cat.name), `expected real category name "${cat.name}" in the hero`);
+      const { broken } = await assertNoBrokenImages(page);
+      assert(broken.length === 0, `broken images on "${cat.name}" Category View`);
+      const cardCount = await mainStrongTitles.count();
+      assert(cardCount === (byCategory.get(cat.id)?.length ?? 0), `expected ${byCategory.get(cat.id)?.length ?? 0} cards for "${cat.name}", got ${cardCount}`);
+    });
+  }
+
+  // Back to the asset category for the cardOnly Service Detail flow.
+  await page.goto(`${CUSTOMER_ORIGIN}/services/${categoryAsset.id}`, { waitUntil: 'networkidle' });
+
+  const firstCard = page.locator('main button').filter({ has: page.locator('strong') }).first();
+  let serviceDetailUrl: string | null = null;
+  if ((await firstCard.count()) > 0) {
+    await step('Service Detail — Services-origin click navigation renders cardOnly (no full payment-method chooser)', async () => {
+      await firstCard.click();
+      await page.waitForURL(/\/services\/[^/]+\/[^/]+$/, { timeout: 15000 });
+      await page.waitForLoadState('networkidle');
+      serviceDetailUrl = page.url();
+      const html = await page.content();
+      assert(!html.includes('خرید اعتباری') && !html.includes('خرید قسطی') && !html.includes('رایگان و جایزه'), 'full-mode payment-plan copy must not render from Services-origin navigation');
+      assert(html.includes('خرید این خدمت'), 'expected the real disabled purchase CTA text');
+      assert(html.includes('به‌زودی'), 'expected the "به‌زودی" caption on the disabled CTA');
+      const ctaDisabled = await page.getByRole('button', { name: 'خرید — به‌زودی' }).isDisabled();
+      assert(ctaDisabled, 'expected the purchase CTA button to be disabled');
+    });
+
+    await captureScreenshot(page, 'services-detail-cardonly-desktop', DESKTOP);
+    for (const vp of RESPONSIVE_WIDTHS) {
+      await page.setViewportSize(vp);
+      await page.waitForTimeout(300);
+      await captureScreenshot(page, `services-detail-cardonly-${vp.width}`, vp);
+    }
+    await page.setViewportSize(DESKTOP);
+
+    await step('No dead-end anchors (gallery or otherwise) render on Service Detail', async () => {
+      const deadLinks = await page.evaluate(
+        () => document.querySelectorAll('a[href="#"], a[href="javascript:void(0)"]').length,
+      );
+      assert(deadLinks === 0, `found ${deadLinks} dead-end anchor(s) with no real destination`);
+    });
+
+    await step('Browser back from Service Detail returns to the correct Category View', async () => {
+      await page.goBack({ waitUntil: 'networkidle' });
+      assert(new RegExp(`/services/${categoryAsset.id}$`).test(page.url()), `expected to return to /services/${categoryAsset.id}, got ${page.url()}`);
+    });
+
+    await step('Browser back from Category View returns to Services List', async () => {
+      await page.goBack({ waitUntil: 'networkidle' });
+      assert(/\/services$/.test(page.url()), `expected to return to /services, got ${page.url()}`);
+    });
+  } else {
+    skip('Service Detail (Services-origin click flow)', `"${categoryAsset.name}" has no real services to click through`);
+  }
+
+  const fewProbe = (byCategory.get(categoryFew.id) ?? [])[0];
+  if (fewProbe) {
+    await step('Service Detail — cold direct URL navigation (bookmark/share, no click/history) is stable and still cardOnly', async () => {
+      await page.goto(`${CUSTOMER_ORIGIN}/services/${categoryFew.id}/${fewProbe.id}`, { waitUntil: 'networkidle' });
+      const html = await page.content();
+      assert(!html.includes('خرید اعتباری') && !html.includes('خرید قسطی') && !html.includes('رایگان و جایزه'), 'direct URL navigation must also render cardOnly, not the full chooser');
+      assert(html.includes('خرید این خدمت'), 'expected the disabled purchase CTA on direct URL navigation too');
+    });
+  } else if (serviceDetailUrl) {
+    await step('Service Detail — cold direct URL re-navigation (new context) is stable and still cardOnly', async () => {
+      await page.goto(serviceDetailUrl!, { waitUntil: 'networkidle' });
+      const html = await page.content();
+      assert(html.includes('خرید این خدمت'), 'expected the disabled purchase CTA on direct URL re-navigation');
+    });
+  } else {
+    skip('Service Detail (direct URL navigation)', 'no real service was reachable to test a direct URL against');
+  }
+
+  await step('Home smoke after Services navigation — CMS content still renders, no state corruption', async () => {
+    await page.getByRole('button', { name: 'بیاوین', exact: true }).click();
+    await page.waitForURL(/\/home/, { timeout: 15000 });
+    await page.waitForLoadState('networkidle');
+    const { total, broken } = await assertNoBrokenImages(page);
+    assert(total > 0, 'expected Home CMS content to still render images after navigating through Services');
+    assert(broken.length === 0, `${broken.length}/${total} broken images on Home after Services navigation`);
+    assert(await assertNoHorizontalOverflow(page), 'unexpected horizontal overflow on Home after Services navigation');
+  });
 }
 
 // ---------------------------------------------------------------------------
