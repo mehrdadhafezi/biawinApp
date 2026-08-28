@@ -157,7 +157,29 @@ async function apiCall<T = unknown>(
   ) {
     headers['Content-Type'] = 'application/json';
   }
-  const res = await fetch(`${origin}${path}`, { ...init, headers });
+  let res: Response;
+  try {
+    res = await fetch(`${origin}${path}`, { ...init, headers });
+  } catch (err) {
+    // SERVICES-R1.2 finding: a real staging run reported nothing but the
+    // bare "fetch failed" from undici (Node's fetch), with no way to tell
+    // a DNS failure from ECONNREFUSED from a TLS error from a timeout —
+    // undici puts the actual reason on `err.cause`, one level down from
+    // the outer TypeError this catches, and it never surfaces on its own.
+    // `path` (never a secret — every call site here passes a fixed API
+    // route) and `origin` are safe to log; nothing from `init` (which can
+    // carry a password/token) is included.
+    const cause = err instanceof Error && 'cause' in err ? err.cause : undefined;
+    const causeDetail =
+      cause instanceof Error
+        ? `${cause.name}: ${cause.message}`
+        : cause !== undefined
+          ? String(cause)
+          : 'no cause reported';
+    throw new Error(
+      `network request to ${origin}${path} failed before a response was received — ${causeDetail}`,
+    );
+  }
   let parsed: unknown = undefined;
   const text = await res.text();
   if (text) {

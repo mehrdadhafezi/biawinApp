@@ -434,6 +434,14 @@ async function runServicesModuleChecks(page: Page): Promise<void> {
   });
 
   await step('Services List shows exactly the first 11 real categories by default', async () => {
+    // SERVICES-R1.2 finding: a real run counted 0 tiles here — not an app
+    // defect, a QA race. `useServiceCatalog()`'s categories fetch is a
+    // client-side effect that fires AFTER the client-side route transition
+    // `networkidle` above already resolved; the grid shows 12 skeleton
+    // blocks (no <img>) until that fetch's state update lands. Waiting for
+    // the first real tile closes that race without weakening the assertion
+    // — later steps ("بیشتر") proved the same run's data DID load correctly.
+    await tileIcons.first().waitFor({ timeout: 10000 });
     const count = await tileIcons.count();
     assert(count === Math.min(11, snapshot.categories.length), `expected ${Math.min(11, snapshot.categories.length)} visible category tiles, got ${count}`);
   });
@@ -486,6 +494,12 @@ async function runServicesModuleChecks(page: Page): Promise<void> {
   });
 
   await step('Category View renders real hero (name/description), search input, and 5 real method-filter chips', async () => {
+    // SERVICES-R1.2 finding: same class of race as the collapsed-count
+    // check above — `page.tsx` only renders CategoryHero once `categories`
+    // (fetched client-side) resolves and the real category is found by id;
+    // ServiceSearchInput renders unconditionally, so waiting for it alone
+    // does NOT prove the hero has loaded. Wait for the real <h1> itself.
+    await page.getByRole('heading', { level: 1, name: categoryAsset.name, exact: true }).waitFor({ timeout: 10000 });
     const html = await page.content();
     assert(html.includes(categoryAsset.name), 'expected the real category name in the Category View hero');
     assert(html.includes(categoryAsset.description), 'expected the real category description in the Category View hero');
@@ -538,23 +552,21 @@ async function runServicesModuleChecks(page: Page): Promise<void> {
     });
   }
 
-  // Light visits — "many services" and "few services" categories (product decision: cover both extremes, not just the asset-mapped one).
-  for (const [label, cat] of [['many-services', categoryMany], ['few-services', categoryFew]] as const) {
-    if (cat.id === categoryAsset.id) continue;
-    await step(`Category flow — "${cat.name}" (${label}, ${byCategory.get(cat.id)?.length ?? 0} real services)`, async () => {
-      await page.goto(`${CUSTOMER_ORIGIN}/services/${cat.id}`, { waitUntil: 'networkidle' });
-      const html = await page.content();
-      assert(html.includes(cat.name), `expected real category name "${cat.name}" in the hero`);
-      const { broken } = await assertNoBrokenImages(page);
-      assert(broken.length === 0, `broken images on "${cat.name}" Category View`);
-      const cardCount = await mainStrongTitles.count();
-      assert(cardCount === (byCategory.get(cat.id)?.length ?? 0), `expected ${byCategory.get(cat.id)?.length ?? 0} cards for "${cat.name}", got ${cardCount}`);
-    });
-  }
-
-  // Back to the asset category for the cardOnly Service Detail flow.
-  await page.goto(`${CUSTOMER_ORIGIN}/services/${categoryAsset.id}`, { waitUntil: 'networkidle' });
-
+  // cardOnly Service Detail flow — deliberately immediately after the
+  // search test above with NO intervening navigation (see SERVICES-R1.2
+  // history-pollution finding below): the current page is already
+  // /services/{categoryAsset.id} from the click a few steps up, so this
+  // click is the 3rd, and only the 3rd, history entry: services →
+  // categoryAsset → detail. The "many/few services" light visits used to
+  // sit *between* the search test and this block via `page.goto()` —
+  // each a real, separate history entry — which is exactly what made the
+  // later "back returns to /services" assertion fail (it actually landed
+  // on the "few services" category, the goto entry right before this
+  // block re-navigated to categoryAsset a second time). Moved below, after
+  // the back-navigation checks, where extra history entries can't corrupt
+  // anything downstream. This also removes the tight sequential
+  // goto→goto→goto→click chain that was the most likely source of the
+  // stray net::ERR_ABORTED seen on a category URL in that same run.
   const firstCard = page.locator('main button').filter({ has: page.locator('strong') }).first();
   let serviceDetailUrl: string | null = null;
   if ((await firstCard.count()) > 0) {
@@ -563,6 +575,10 @@ async function runServicesModuleChecks(page: Page): Promise<void> {
       await page.waitForURL(/\/services\/[^/]+\/[^/]+$/, { timeout: 15000 });
       await page.waitForLoadState('networkidle');
       serviceDetailUrl = page.url();
+      // SERVICES-R1.2 finding: same async-data-load race as the two waits
+      // above — the page shows SkeletonBlock placeholders (no CTA at all)
+      // until `servicesApi.getService(id)` resolves. Wait for the real CTA.
+      await page.getByRole('button', { name: 'خرید — به‌زودی' }).waitFor({ timeout: 10000 });
       const html = await page.content();
       assert(!html.includes('خرید اعتباری') && !html.includes('خرید قسطی') && !html.includes('رایگان و جایزه'), 'full-mode payment-plan copy must not render from Services-origin navigation');
       assert(html.includes('خرید این خدمت'), 'expected the real disabled purchase CTA text');
@@ -599,10 +615,33 @@ async function runServicesModuleChecks(page: Page): Promise<void> {
     skip('Service Detail (Services-origin click flow)', `"${categoryAsset.name}" has no real services to click through`);
   }
 
+  // Light visits — "many services" and "few services" categories (product
+  // decision: cover both extremes, not just the asset-mapped one).
+  // Deliberately AFTER the click/back-navigation flow above, not before —
+  // each `page.goto()` here is its own real history entry, which is what
+  // corrupted the "back returns to /services" assertion when this loop
+  // used to sit between the search test and the cardOnly click flow.
+  // Nothing downstream depends on history state, so their position here
+  // is safe regardless of how many entries they add.
+  for (const [label, cat] of [['many-services', categoryMany], ['few-services', categoryFew]] as const) {
+    if (cat.id === categoryAsset.id) continue;
+    await step(`Category flow — "${cat.name}" (${label}, ${byCategory.get(cat.id)?.length ?? 0} real services)`, async () => {
+      await page.goto(`${CUSTOMER_ORIGIN}/services/${cat.id}`, { waitUntil: 'networkidle' });
+      await page.getByRole('heading', { level: 1, name: cat.name, exact: true }).waitFor({ timeout: 10000 });
+      const html = await page.content();
+      assert(html.includes(cat.name), `expected real category name "${cat.name}" in the hero`);
+      const { broken } = await assertNoBrokenImages(page);
+      assert(broken.length === 0, `broken images on "${cat.name}" Category View`);
+      const cardCount = await mainStrongTitles.count();
+      assert(cardCount === (byCategory.get(cat.id)?.length ?? 0), `expected ${byCategory.get(cat.id)?.length ?? 0} cards for "${cat.name}", got ${cardCount}`);
+    });
+  }
+
   const fewProbe = (byCategory.get(categoryFew.id) ?? [])[0];
   if (fewProbe) {
     await step('Service Detail — cold direct URL navigation (bookmark/share, no click/history) is stable and still cardOnly', async () => {
       await page.goto(`${CUSTOMER_ORIGIN}/services/${categoryFew.id}/${fewProbe.id}`, { waitUntil: 'networkidle' });
+      await page.getByRole('button', { name: 'خرید — به‌زودی' }).waitFor({ timeout: 10000 });
       const html = await page.content();
       assert(!html.includes('خرید اعتباری') && !html.includes('خرید قسطی') && !html.includes('رایگان و جایزه'), 'direct URL navigation must also render cardOnly, not the full chooser');
       assert(html.includes('خرید این خدمت'), 'expected the disabled purchase CTA on direct URL navigation too');
@@ -610,6 +649,7 @@ async function runServicesModuleChecks(page: Page): Promise<void> {
   } else if (serviceDetailUrl) {
     await step('Service Detail — cold direct URL re-navigation (new context) is stable and still cardOnly', async () => {
       await page.goto(serviceDetailUrl!, { waitUntil: 'networkidle' });
+      await page.getByRole('button', { name: 'خرید — به‌زودی' }).waitFor({ timeout: 10000 });
       const html = await page.content();
       assert(html.includes('خرید این خدمت'), 'expected the disabled purchase CTA on direct URL re-navigation');
     });

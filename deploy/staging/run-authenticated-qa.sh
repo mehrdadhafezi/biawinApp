@@ -67,20 +67,22 @@ log "1/3 rebuilding the backend image from the current checkout (fast if nothing
 $COMPOSE build backend
 
 log "2/3 running the API-layer QA runner inside the backend image"
-# QA_API_ORIGIN / QA_CUSTOMER_ORIGIN / QA_ADMIN_ORIGIN default to the real
-# public HTTPS domains inside the script itself. If this container turns
-# out NOT to have outbound internet access (untested — the host's own CSF
-# rules are scoped to INPUT/OUTPUT for specific ports, not necessarily
-# container egress; see docs/stage-5.22-authenticated-qa-runner.md), rerun
-# with e.g.:
-#   QA_API_ORIGIN=http://backend:4000 QA_CUSTOMER_ORIGIN=http://web:3000 \
-#     ./deploy/staging/run-authenticated-qa.sh
-# to fall back to the internal Docker network instead — no file edits
-# needed either way.
+# SERVICES-R1.2 real-staging finding: this container is started via
+# `$COMPOSE run --rm backend`, i.e. it's a member of the compose network,
+# NOT a general-internet host — and on this server it genuinely cannot
+# reach the public HTTPS domain it defaulted to (`fetch failed`, no
+# further detail before this was diagnosed; see apiCall()'s now-improved
+# error surfacing in authenticated-qa-runner.ts). This was anticipated
+# ("untested" — see prior revision of this comment) and is now confirmed:
+# default the API-layer run to the internal Docker network origin, which
+# this container is guaranteed to reach on the same compose network,
+# rather than the public domain the browser-qa container (a separate,
+# non-compose `docker run`, closer to a real client) correctly uses. An
+# explicit QA_API_ORIGIN/QA_CUSTOMER_ORIGIN still overrides this default.
 api_exit=0
 $COMPOSE run --rm \
-  -e QA_API_ORIGIN="${QA_API_ORIGIN:-}" \
-  -e QA_CUSTOMER_ORIGIN="${QA_CUSTOMER_ORIGIN:-}" \
+  -e QA_API_ORIGIN="${QA_API_ORIGIN:-http://backend:4000}" \
+  -e QA_CUSTOMER_ORIGIN="${QA_CUSTOMER_ORIGIN:-http://web:3000}" \
   -e QA_ADMIN_ORIGIN="${QA_ADMIN_ORIGIN:-}" \
   -e QA_REPORT_DIR=/tmp/biawin-staging-qa \
   -v "$REPORT_DIR:/tmp/biawin-staging-qa" \
