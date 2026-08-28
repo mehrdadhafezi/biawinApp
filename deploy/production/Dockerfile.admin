@@ -1,0 +1,64 @@
+# Multi-stage build for @biawin/admin (Next.js Admin Portal) in a pnpm/Turborepo
+# monorepo. Build context MUST be the repo root:
+#   docker build -f deploy/production/Dockerfile.admin .
+#
+# Mirrors deploy/production/Dockerfile.web exactly (same rationale: a regular
+# `next build` + `next start` with the full node_modules copied into the
+# runtime image, NOT `output: "standalone"` — Next.js 16's file tracer fails
+# to resolve `@swc/helpers` inside pnpm's isolated `.pnpm` store for this
+# monorepo). `NEXT_PUBLIC_ADMIN_API_URL` is inlined into the client bundle at
+# BUILD time (Next.js `NEXT_PUBLIC_*` convention), same as web's
+# `NEXT_PUBLIC_API_URL` — passed as a --build-arg (docker-compose.production.yml
+# / deploy.sh), never a plain container env var.
+#
+# Unlike Dockerfile.web, this does NOT copy a `public/` directory —
+# `apps/admin/public` is empty (no tracked files, git doesn't track empty
+# directories at all), so the path doesn't exist to copy from after a fresh
+# checkout. `next build` doesn't require one. Add the COPY back if a real
+# static asset (favicon, etc.) is ever added to `apps/admin/public`.
+
+FROM node:20-alpine AS base
+RUN npm install -g pnpm@10.5.2
+WORKDIR /workspace
+
+# ---- deps: install only what @biawin/admin needs (+ its workspace deps) ----
+FROM base AS deps
+COPY pnpm-workspace.yaml pnpm-lock.yaml package.json .npmrc turbo.json ./
+COPY apps/admin/package.json ./apps/admin/package.json
+COPY packages/ui/package.json ./packages/ui/package.json
+COPY packages/types/package.json ./packages/types/package.json
+COPY packages/config/package.json ./packages/config/package.json
+RUN pnpm install --frozen-lockfile --filter=@biawin/admin...
+
+# ---- build ----
+FROM base AS build
+ARG NEXT_PUBLIC_ADMIN_API_URL
+ENV NEXT_PUBLIC_ADMIN_API_URL=$NEXT_PUBLIC_ADMIN_API_URL
+COPY pnpm-workspace.yaml pnpm-lock.yaml package.json .npmrc turbo.json ./
+COPY --from=deps /workspace/node_modules ./node_modules
+COPY --from=deps /workspace/apps/admin/node_modules ./apps/admin/node_modules
+COPY --from=deps /workspace/packages/ui/node_modules ./packages/ui/node_modules
+COPY --from=deps /workspace/packages/types/node_modules ./packages/types/node_modules
+COPY apps/admin ./apps/admin
+COPY packages/ui ./packages/ui
+COPY packages/types ./packages/types
+COPY packages/config ./packages/config
+RUN pnpm --filter=@biawin/admin build
+
+# ---- runtime ----
+FROM base AS runtime
+ENV NODE_ENV=production
+COPY --from=build /workspace/node_modules ./node_modules
+COPY --from=build /workspace/apps/admin/node_modules ./apps/admin/node_modules
+COPY --from=build /workspace/packages/ui/node_modules ./packages/ui/node_modules
+COPY --from=build /workspace/packages/types/node_modules ./packages/types/node_modules
+COPY --from=build /workspace/apps/admin/.next ./apps/admin/.next
+COPY --from=build /workspace/apps/admin/package.json ./apps/admin/package.json
+COPY --from=build /workspace/apps/admin/next.config.ts ./apps/admin/next.config.ts
+
+EXPOSE 3000
+HEALTHCHECK --interval=10s --timeout=5s --start-period=15s --retries=6 \
+  CMD wget -qO- http://127.0.0.1:3000/ || exit 1
+
+WORKDIR /workspace/apps/admin
+CMD ["node_modules/.bin/next", "start", "-p", "3000"]

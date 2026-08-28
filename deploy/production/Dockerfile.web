@@ -1,0 +1,65 @@
+# Multi-stage build for @biawin/web (Next.js) in a pnpm/Turborepo monorepo.
+# Build context MUST be the repo root: docker build -f deploy/production/Dockerfile.web .
+#
+# NEXT_PUBLIC_* variables are inlined into the client bundle at BUILD time, not
+# read at runtime — so NEXT_PUBLIC_API_URL must be passed as a --build-arg
+# (see docker-compose.production.yml / deploy.sh), not just as a container env var.
+#
+# Uses a regular `next build` + `next start` with the full node_modules
+# copied into the runtime image, NOT `output: "standalone"` — standalone was
+# tried and reverted because Next.js 16's file tracer fails to resolve
+# `@swc/helpers` inside pnpm's isolated `.pnpm` store for this monorepo (see
+# apps/web/next.config.ts). This trades some image size for reliability.
+
+FROM node:20-alpine AS base
+# Installed via npm, not `corepack enable` — corepack resolves the pnpm
+# version from the root package.json's `packageManager` field, which isn't
+# present in every stage here, so it falls back to fetching pnpm's latest
+# major (bit us once: pnpm 11.x needs Node >=22, this image ships Node 20).
+# A pinned global install sidesteps that resolution entirely.
+RUN npm install -g pnpm@10.5.2
+WORKDIR /workspace
+
+# ---- deps: install only what @biawin/web needs (+ its workspace deps) ----
+FROM base AS deps
+COPY pnpm-workspace.yaml pnpm-lock.yaml package.json .npmrc turbo.json ./
+COPY apps/web/package.json ./apps/web/package.json
+COPY packages/ui/package.json ./packages/ui/package.json
+COPY packages/types/package.json ./packages/types/package.json
+COPY packages/config/package.json ./packages/config/package.json
+RUN pnpm install --frozen-lockfile --filter=@biawin/web...
+
+# ---- build ----
+# (packages/config has no dependencies of its own — no node_modules to copy)
+FROM base AS build
+ARG NEXT_PUBLIC_API_URL
+ENV NEXT_PUBLIC_API_URL=$NEXT_PUBLIC_API_URL
+COPY pnpm-workspace.yaml pnpm-lock.yaml package.json .npmrc turbo.json ./
+COPY --from=deps /workspace/node_modules ./node_modules
+COPY --from=deps /workspace/apps/web/node_modules ./apps/web/node_modules
+COPY --from=deps /workspace/packages/ui/node_modules ./packages/ui/node_modules
+COPY --from=deps /workspace/packages/types/node_modules ./packages/types/node_modules
+COPY apps/web ./apps/web
+COPY packages/ui ./packages/ui
+COPY packages/types ./packages/types
+COPY packages/config ./packages/config
+RUN pnpm --filter=@biawin/web build
+
+# ---- runtime ----
+FROM base AS runtime
+ENV NODE_ENV=production
+COPY --from=build /workspace/node_modules ./node_modules
+COPY --from=build /workspace/apps/web/node_modules ./apps/web/node_modules
+COPY --from=build /workspace/packages/ui/node_modules ./packages/ui/node_modules
+COPY --from=build /workspace/packages/types/node_modules ./packages/types/node_modules
+COPY --from=build /workspace/apps/web/.next ./apps/web/.next
+COPY --from=build /workspace/apps/web/public ./apps/web/public
+COPY --from=build /workspace/apps/web/package.json ./apps/web/package.json
+COPY --from=build /workspace/apps/web/next.config.ts ./apps/web/next.config.ts
+
+EXPOSE 3000
+HEALTHCHECK --interval=10s --timeout=5s --start-period=15s --retries=6 \
+  CMD wget -qO- http://127.0.0.1:3000/ || exit 1
+
+WORKDIR /workspace/apps/web
+CMD ["node_modules/.bin/next", "start", "-p", "3000"]
