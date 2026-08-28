@@ -349,17 +349,150 @@ No regression tests were added — no application code changed.
 
 ---
 
-## QA Run #4 (against the post-SERVICES-R1.5 revision)
+## Deployment #4
 
-**PENDING** — not yet executed. This is the run that should finally
-produce: (a) the isolation test actually completing its login and
-sequence, (b) its history trace as real evidence, (c) a definitive
-QA-history-defect vs. real-application-defect classification for Failure
-1, and — only if that classification is "QA defect" — a follow-up fix to
-`runServicesModuleChecks`'s own back-navigation assertion (per Task 4's
-explicit ordering: only after the isolated result is known). Will NOT
-report SERVICES-R1 complete, and will NOT claim 0 FAIL/0 NOT_TESTED, until
-that real run's output is in hand.
+| | |
+|---|---|
+| Deployed revision | `89ea33f` (SERVICES-R1.5 isolation-test login fix + catalog-fetch correlation, no app code) |
+| Result | PASS |
+
+## QA Run #4 (against `89ea33f`)
+
+**API layer: 53 PASS / 1 FAIL / 0 NOT_TESTED.**
+
+**Browser layer: 60 PASS / 6 FAIL / 0 NOT_TESTED.** Recorded honestly —
+this is a higher raw FAIL count than Run #3, but it is **not six
+independent product defects**. Four of the six were cascading failures
+from a single invalid prerequisite in the isolation test (the category
+tile it tried to click, "کودک و نوجوان", was never visible in the
+collapsed grid it started on — the click never happened, yet the QA
+runner kept going: it clicked "a service" anyway, then called `goBack()`
+twice, producing an invalid trace of `/services → /home → about:blank`).
+That trace is explicitly **not usable as evidence** about Services
+navigation and was not treated as such. The remaining two are the same
+un-classified catalog-fetch aborts as Run #3, now with `navigationDuring
+Request=false` recorded against them — i.e. the R1.5 precise-correlation
+rule is working correctly and correctly refusing to call these benign.
+
+### SERVICES-R1.6 investigation
+
+**Isolation test's category selection — root-caused and fixed (confirmed
+from source, not a guess).**
+
+`serviceCategoryVisual.ts`'s `CATEGORY_GRID_ORDER` lists 19 real category
+names in the prototype's grid order; `CATEGORY_GRID_DEFAULT_COUNT = 11`
+means only the FIRST 11 of that list render before "بیشتر" is clicked.
+"کودک و نوجوان" is the **last** (19th) entry in that array — one of the 8
+categories only revealed by "بیشتر". The previous isolation test picked
+its category via `snapshot.categories.find(...)` — the first entry in the
+RAW API response, which happens to return "کودک و نوجوان" first (confirmed
+by direct API inspection this session) — with no relationship at all to
+`CategoryGrid`'s actual display order. This is independently confirmed by
+a passing, already-committed unit test
+([CategoryGrid.test.tsx](../apps/web/src/components/services/CategoryGrid.test.tsx)):
+`"renders only the first 11 categories by default... expect(html).not.toContain('کودک و نوجوان')"`
+— i.e. the application's own test suite already proves this category is
+never in the default collapsed view. Direct screenshot inspection wasn't
+available (no filesystem access to the server), but this source-level
+proof is at least as reliable.
+
+Fix: the isolation test no longer assumes API order matches render order,
+for either category or service selection. After landing on `/services`,
+it now reads the REAL rendered tile labels from the DOM
+(`main button:has(img[alt=""])`, the exact CategoryGrid tile selector),
+intersects those visible names against the real snapshot to find one with
+at least one real service, and clicks that specific one. The service pick
+works the same way: it reads the first actually-rendered service card's
+title from the DOM rather than assuming array order. Every forward click
+now asserts the URL genuinely changed before the test proceeds.
+
+**Cascading failures — stopped.** The isolation function previously called
+`step()` for each stage without checking whether the PRIOR stage actually
+succeeded — a failed category click didn't stop the service click or
+either `goBack()` from running. It's now explicitly gated: if the category
+click (or the token issuance, the `/services` landing, or the service
+click) doesn't succeed, every downstream step is marked `NOT_TESTED` with
+a clear reason, `goBack()` is never called, and the history-trace record
+is written as `FAIL — INVALID — sequence aborted: <reason>` with whatever
+partial trace exists, rather than a misleadingly "complete"-looking
+sequence built on an invalid foundation.
+
+**Original long-running back-navigation assertion — UNCHANGED, still
+pending.** Per the task's own explicit ordering (fix only after the
+isolated result is known), no changes were made to
+`runServicesModuleChecks`'s existing back-navigation assertions this
+round. The isolation test can now genuinely reach and test the real
+sequence; its actual PASS/FAIL on the next run is what will finally
+classify Failure 1 as QA history pollution or a real application defect.
+
+**API media public-URL failure — RESOLVED, classification B (container
+egress limitation, not a media defect).**
+`MediaStorageService.resolvePublicUrl()`
+(`backend/src/modules/media/media-storage.service.ts`) always builds an
+ABSOLUTE URL from the backend's own `PUBLIC_API_ORIGIN` config —
+independent of this script's own `API_ORIGIN` override. Running inside the
+backend compose-network container (the SERVICES-R1.3 fix), that
+public-domain URL hits the exact same egress limitation the admin-login
+fix already worked around. Independently confirmed this session: `curl
+https://api-staging.biawin.ir/api/v1/media/<nonexistent-file>` returns a
+real HTTP 404 (not a connection/DNS failure) from a normal internet
+client — proving the route and domain resolve correctly externally; this
+is a container network limitation, not a storage/media defect (rules out
+classification A). Fixed by re-targeting the SAME path onto the script's
+own configured `API_ORIGIN` (matching every other request in this script)
+instead of the hardcoded public domain baked into the returned URL, and
+wrapping the raw `fetch()` in the same cause-surfacing try/catch already
+added to `apiCall()` in SERVICES-R1.3, so a future failure here would show
+the real network error instead of a bare "fetch failed". Public HTTPS
+reachability of the customer-facing path remains covered by the
+browser-qa layer's real-browser image-loading checks (Home's own `<img>`
+tags resolve through the real public domain in every browser-qa run) and
+was independently curl-verified this session for this exact route
+pattern — nothing was weakened, per the explicit instruction not to.
+
+**Two non-navigation catalog aborts — STILL UNRESOLVED, correctly not
+suppressed.** `useServiceCatalog()`
+(`apps/web/src/components/services/useServiceCatalog.ts`) has no
+`AbortController` — reading it confirms the application itself never
+voluntarily cancels these fetches. `api-client.ts`'s `request()` also has
+no timeout/abort logic. With `navigationDuringRequest=false` now proven by
+the SERVICES-R1.5 precise correlation (a real navigation did NOT happen
+between each request's start and its failure), these do not meet the
+narrow benign rule and were correctly left as real failures — **no rule
+was broadened to cover them.** Since a live browser session wasn't
+available to gather more evidence this turn, `browser-qa.ts` now also
+records which QA step was executing when each request started
+(`qaStepAtStart`) and when it failed (`qaStepAtFailure`) — precise
+evidence for whatever the next run's action-to-abort correlation actually
+shows, rather than a further guess at the cause here.
+
+### Application code changed this round
+
+**None.** Every SERVICES-R1.6 change is in
+`deploy/staging/qa/browser/browser-qa.ts` and
+`backend/scripts/staging-qa/authenticated-qa-runner.ts` (both QA tooling)
+— no file under `apps/web/src/{app,components}/services/**` was touched.
+
+### Quality gates (post-SERVICES-R1.6 changes)
+
+| Gate | Result |
+|---|---|
+| `pnpm typecheck` | PASS |
+| `pnpm lint` | PASS (0 errors, same pre-existing warning set) |
+| `pnpm test` | PASS (104/104 backend, cached web/admin) |
+| `pnpm build` | PASS |
+
+No regression tests were added — no application code changed.
+
+---
+
+## QA Run #5 (against the post-SERVICES-R1.6 revision)
+
+**PENDING** — not yet executed. Closure standard for this run: API 0
+FAIL/0 NOT_TESTED, browser 0 FAIL/0 NOT_TESTED, and the isolated sequence
+must explicitly PASS the full `/services → category → service → back
+category → back /services` chain with a valid (non-aborted) trace. Will
+NOT report SERVICES-R1 complete until that is the real, observed result.
 
 ---
 
@@ -367,12 +500,15 @@ that real run's output is in hand.
 
 SERVICES-R1's *application* code and fidelity claims (see
 [docs/services-r1-fidelity-report.md](services-r1-fidelity-report.md))
-remain unchanged and unaffected by R1.2/R1.3/R1.4/R1.5 — every finding
-across all three QA rounds so far has been QA-tooling-side (connectivity
-target, timing races, history setup, a resend-lock collision in the QA
-runner's own auth, and independently-verified-healthy assets/endpoints
-aborted mid-navigation), never a real application defect. The one open
-item is Failure 1's root cause. It now has a working, evidence-generating
-isolated test; its classification and any resulting fix are pending that
-test's actual output on the next real staging run — SERVICES-R1 does not
-close until that run is fully green.
+remain unchanged and unaffected by R1.2 through R1.6 — every finding
+across all four QA rounds so far has been QA-tooling-side (connectivity
+target, timing races, history setup, an OTP resend-lock collision, an
+isolation test's own category-selection bug, a container egress
+limitation on a media URL, and independently-verified-healthy assets/
+endpoints aborted mid-navigation), never a real application defect. Two
+items remain genuinely open: Failure 1's classification (the isolation
+test can now validly run the real sequence; its actual result on the next
+run decides QA-defect vs. application-defect) and the two catalog-fetch
+aborts (real, unresolved, now carrying step-level evidence for the next
+run). SERVICES-R1 does not close until a run produces 0 FAIL/0 NOT_TESTED
+end to end.

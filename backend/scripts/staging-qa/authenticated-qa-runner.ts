@@ -592,17 +592,58 @@ async function main(): Promise<void> {
 
     if (disposableMediaUrl) {
       await step(
-        'Uploaded media is retrievable via its public URL',
+        'Uploaded media is retrievable via its storage route (checked via API_ORIGIN, not the hardcoded public domain — see comment)',
         async () => {
-          const res = await fetch(disposableMediaUrl!);
+          // SERVICES-R1.6 finding: MediaStorageService.resolvePublicUrl()
+          // (backend/src/modules/media/media-storage.service.ts) always
+          // builds an ABSOLUTE URL from the backend's own PUBLIC_API_ORIGIN
+          // config — independent of this script's API_ORIGIN. When this
+          // script runs inside the backend compose-network container (see
+          // deploy/staging/run-authenticated-qa.sh), that public-domain URL
+          // hits the exact same network limitation the admin-login fix
+          // (SERVICES-R1.3) worked around: the container cannot reach its
+          // own public HTTPS domain. External reachability of the SAME
+          // route pattern was independently confirmed this session —
+          // `https://api-staging.biawin.ir/api/v1/media/<nonexistent-file>`
+          // returns a real 404 (not a connection/DNS failure) from a normal
+          // internet client, proving the route+domain resolve correctly;
+          // this is a container egress limitation, not a media/storage
+          // defect. Re-targeting the SAME path onto this script's own
+          // configured API_ORIGIN (internal when run via
+          // run-authenticated-qa.sh, public if ever run standalone) matches
+          // every other request in this script and still proves the file
+          // is genuinely stored and servable end-to-end. Public HTTPS
+          // reachability of the customer-facing path is covered separately
+          // by the browser-qa layer's own real-browser image-loading checks
+          // (Home's `<img>` tags resolve through the real public domain in
+          // every browser-qa run) and was independently curl-verified this
+          // session for the media route pattern specifically.
+          const mediaPath = new URL(disposableMediaUrl!).pathname;
+          const targetUrl = `${API_ORIGIN}${mediaPath}`;
+          let res: Response;
+          try {
+            res = await fetch(targetUrl);
+          } catch (err) {
+            const cause =
+              err instanceof Error && 'cause' in err ? err.cause : undefined;
+            const causeDetail =
+              cause instanceof Error
+                ? `${cause.name}: ${cause.message}`
+                : cause !== undefined
+                  ? String(cause)
+                  : 'no cause reported';
+            throw new Error(
+              `network request to ${targetUrl} failed before a response was received — ${causeDetail}`,
+            );
+          }
           assert(
             res.ok,
-            `expected public media URL to return 200, got ${detail(res)}`,
+            `expected media at ${mediaPath} to be retrievable via API_ORIGIN (${API_ORIGIN}), got HTTP ${res.status}`,
           );
           const ct = res.headers.get('content-type');
           assert(
             !!ct && ct.startsWith('image/'),
-            `expected an image content-type, got ${ct}`,
+            `expected an image content-type from ${targetUrl}, got ${ct}`,
           );
         },
       );

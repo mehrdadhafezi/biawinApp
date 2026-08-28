@@ -62,7 +62,20 @@ function record(name: string, status: Status, detail = ''): void {
   console.log(`[browser-qa] ${marker} ${name}${detail ? ' — ' + detail : ''}`);
 }
 
+/**
+ * SERVICES-R1.6 (Task 8): the currently-running step's name, readable by
+ * `trackPageIssues` so a failed request's diagnostics record exactly which
+ * QA action was in flight when it started/failed — direct evidence for
+ * correlating an abort with a specific script action, not a guess. A
+ * single module-level variable is safe here because `main()` runs every
+ * check sequentially (admin, then customer, then the isolation context),
+ * never in parallel.
+ */
+let currentStepLabel = '(before any step)';
+
 async function step<T>(name: string, fn: () => Promise<T>): Promise<T | undefined> {
+  const previousLabel = currentStepLabel;
+  currentStepLabel = name;
   try {
     const value = await fn();
     record(name, 'PASS');
@@ -70,6 +83,8 @@ async function step<T>(name: string, fn: () => Promise<T>): Promise<T | undefine
   } catch (err) {
     record(name, 'FAIL', err instanceof Error ? err.message : String(err));
     return undefined;
+  } finally {
+    currentStepLabel = previousLabel;
   }
 }
 
@@ -88,6 +103,8 @@ interface FailedRequestEvent {
   errorText: string;
   pageUrlAtStart: string;
   pageUrlAtFailure: string;
+  qaStepAtStart: string;
+  qaStepAtFailure: string;
   elapsedMs: number;
   navigationDuringRequest: boolean;
   classifiedBenign: boolean;
@@ -197,13 +214,13 @@ function trackPageIssues(page: Page): PageIssues {
   // at that moment), so a failure can be checked against whether a real
   // navigation happened strictly between that request's own start and its
   // failure, not merely "close in time" to the failure by coincidence.
-  const requestStarts = new Map<Request, { startTime: number; pageUrlAtStart: string }>();
+  const requestStarts = new Map<Request, { startTime: number; pageUrlAtStart: string; qaStepAtStart: string }>();
 
   page.on('framenavigated', (frame) => {
     if (frame === page.mainFrame()) navigationTimestamps.push(Date.now());
   });
   page.on('request', (req: Request) => {
-    requestStarts.set(req, { startTime: Date.now(), pageUrlAtStart: page.url() });
+    requestStarts.set(req, { startTime: Date.now(), pageUrlAtStart: page.url(), qaStepAtStart: currentStepLabel });
   });
   page.on('console', (msg: ConsoleMessage) => {
     if (msg.type() === 'error') issues.consoleErrors.push(msg.text());
@@ -214,6 +231,7 @@ function trackPageIssues(page: Page): PageIssues {
     const started = requestStarts.get(req);
     const startTime = started?.startTime ?? failureTime;
     const pageUrlAtStart = started?.pageUrlAtStart ?? 'unknown (request event not captured)';
+    const qaStepAtStart = started?.qaStepAtStart ?? 'unknown (request event not captured)';
     // +250ms grace: `framenavigated` can fire a beat after the network
     // layer reports the abort for the same client-side transition.
     const navigationDuringRequest = navigationTimestamps.some((t) => t >= startTime && t <= failureTime + 250);
@@ -231,6 +249,7 @@ function trackPageIssues(page: Page): PageIssues {
       benignReason = 'first-party /api/v1/categories|services catalog fetch cancelled during an in-flight navigation, endpoint independently verified healthy (SERVICES-R1.5 rule)';
     }
 
+    const qaStepAtFailure = currentStepLabel;
     issues.allFailedRequestEvents.push({
       url: req.url(),
       method: req.method(),
@@ -238,6 +257,8 @@ function trackPageIssues(page: Page): PageIssues {
       errorText,
       pageUrlAtStart,
       pageUrlAtFailure: page.url(),
+      qaStepAtStart,
+      qaStepAtFailure,
       elapsedMs: failureTime - startTime,
       navigationDuringRequest,
       classifiedBenign,
@@ -246,7 +267,7 @@ function trackPageIssues(page: Page): PageIssues {
 
     if (classifiedBenign) return;
     issues.failedRequests.push(
-      `${req.method()} ${req.url()} — ${errorText} (resourceType=${req.resourceType()}, pageUrlAtStart=${pageUrlAtStart}, pageUrlAtFailure=${page.url()}, elapsedMs=${failureTime - startTime}, navigationDuringRequest=${navigationDuringRequest})`,
+      `${req.method()} ${req.url()} — ${errorText} (resourceType=${req.resourceType()}, pageUrlAtStart=${pageUrlAtStart}, pageUrlAtFailure=${page.url()}, qaStepAtStart="${qaStepAtStart}", qaStepAtFailure="${qaStepAtFailure}", elapsedMs=${failureTime - startTime}, navigationDuringRequest=${navigationDuringRequest})`,
     );
   });
   page.on('response', (res) => {
@@ -873,12 +894,7 @@ async function runBackNavigationIsolationCheck(browser: Browser): Promise<void> 
   }
   const byCategoryCount = new Map<string, number>();
   for (const s of snapshot.services) byCategoryCount.set(s.categoryId, (byCategoryCount.get(s.categoryId) ?? 0) + 1);
-  const category = snapshot.categories.find((c) => (byCategoryCount.get(c.id) ?? 0) > 0);
-  if (!category) {
-    skip('Back-nav isolation — full sequence', 'no real category with at least one real service was found');
-    return;
-  }
-  const service = snapshot.services.find((s) => s.categoryId === category.id)!;
+  const byCategoryId = new Map(snapshot.categories.map((c) => [c.id, c]));
 
   const context = await browser.newContext({ viewport: DESKTOP });
   const page = await context.newPage();
@@ -889,6 +905,12 @@ async function runBackNavigationIsolationCheck(browser: Browser): Promise<void> 
     const url = page.url();
     trace.push(`${label}: url=${url} history.length=${historyLength}`);
     console.log(`[browser-qa] back-nav isolation — ${label}: url=${url} history.length=${historyLength}`);
+  };
+  const abortInvalid = async (reason: string, ...untestedSteps: string[]) => {
+    for (const name of untestedSteps) skip(name, reason);
+    record('Back-nav isolation — full history trace', 'FAIL', `INVALID — sequence aborted: ${reason}. Partial trace: ${trace.join(' | ') || '(none recorded)'}`);
+    await reportPageIssues('Back-nav isolation (fresh context)', issues);
+    await context.close();
   };
 
   await page.goto(CUSTOMER_ORIGIN, { waitUntil: 'networkidle' });
@@ -915,37 +937,106 @@ async function runBackNavigationIsolationCheck(browser: Browser): Promise<void> 
     return true;
   });
   if (loggedIn !== true) {
-    skip('Back-nav isolation — full sequence', 'direct token issuance did not succeed');
-    await context.close();
+    await abortInvalid('direct token issuance did not succeed', 'Back-nav isolation — click ONE category', 'Back-nav isolation — click ONE service', 'Back-nav isolation — goBack #1', 'Back-nav isolation — goBack #2');
     return;
   }
 
-  await step('Back-nav isolation — navigate to /services (fresh context, zero prior Services history)', async () => {
+  const atServices = await step('Back-nav isolation — navigate to /services (fresh context, zero prior Services history)', async () => {
     // A direct URL navigation, not a click through Home — AuthProvider's
     // mount effect picks up the token just seeded into localStorage and
     // AuthGuard renders Services immediately, no redirect.
     await page.goto(`${CUSTOMER_ORIGIN}/services`, { waitUntil: 'networkidle' });
     assert(/\/services$/.test(page.url()), `expected to land on /services, got ${page.url()} — token seed likely did not take`);
+    return true;
   });
   await recordStep('0. at /services');
+  if (atServices !== true) {
+    await abortInvalid('did not land on /services', 'Back-nav isolation — click ONE category', 'Back-nav isolation — click ONE service', 'Back-nav isolation — goBack #1', 'Back-nav isolation — goBack #2');
+    return;
+  }
 
-  await step(`Back-nav isolation — click ONE category ("${category.name}")`, async () => {
+  // SERVICES-R1.6 finding: the previous version picked `category` as the
+  // FIRST entry in the raw API response (snapshot.categories[0]) — which
+  // happened to be "کودک و نوجوان", the LAST entry in
+  // CATEGORY_GRID_ORDER (serviceCategoryVisual.ts) and therefore one of
+  // the 8 categories ONLY revealed by "بیشتر" (CATEGORY_GRID_DEFAULT_COUNT
+  // = 11), never visible in the default collapsed grid this test lands
+  // on. Confirmed straight from source, not a screenshot guess — the same
+  // fact is independently asserted by a passing, committed unit test
+  // (CategoryGrid.test.tsx: "the 8 بیشتر-revealed categories must NOT be
+  // in the initial render", explicitly checking کودک و نوجوان's absence).
+  // Fixed by reading the category to click from what's ACTUALLY rendered
+  // and visible right now (the real tile labels in the DOM), intersected
+  // with the real snapshot — never assumed from API response order again.
+  const category = await step('Back-nav isolation — select a category that is actually visible in the collapsed grid', async () => {
+    const tiles = page.locator('main button').filter({ has: page.locator('img[alt=""]') });
+    await tiles.first().waitFor({ timeout: 10000 });
+    const count = await tiles.count();
+    const visibleNames: string[] = [];
+    for (let i = 0; i < count; i++) {
+      const text = (await tiles.nth(i).innerText()).trim();
+      if (text) visibleNames.push(text);
+    }
+    assert(visibleNames.length > 0, 'expected at least one visible category tile');
+    const match = visibleNames.map((name) => snapshot.categories.find((c) => c.name === name)).find((c) => c && (byCategoryCount.get(c.id) ?? 0) > 0);
+    assert(match !== undefined, `none of the ${visibleNames.length} visible tiles (${visibleNames.join(', ')}) matched a real category with at least one real service`);
+    return match!;
+  });
+  await recordStep(`0b. selected visible category "${category?.name ?? '(none)'}"`);
+  if (!category) {
+    await abortInvalid('no visible, clickable category with real services could be selected', 'Back-nav isolation — click ONE service', 'Back-nav isolation — goBack #1', 'Back-nav isolation — goBack #2');
+    return;
+  }
+
+  const categoryUrlBefore = page.url();
+  const categoryOk = await step(`Back-nav isolation — click ONE visible category ("${category.name}", id=${category.id})`, async () => {
     const tile = page.getByRole('button', { name: category.name, exact: true });
     await tile.waitFor({ timeout: 10000 });
     await tile.click();
     await page.waitForURL(new RegExp(`/services/${category.id}$`), { timeout: 15000 });
     await page.waitForLoadState('networkidle');
+    assert(page.url() !== categoryUrlBefore, `expected the URL to change after clicking "${category.name}", stayed at ${categoryUrlBefore}`);
+    return true;
   });
-  await recordStep(`1. clicked category "${category.name}"`);
+  await recordStep(`1. clicked category "${category.name}" (urlBefore=${categoryUrlBefore})`);
+  if (categoryOk !== true) {
+    await abortInvalid('category click did not succeed — see the category-click failure above; no forward navigation exists to test back from', 'Back-nav isolation — click ONE service', 'Back-nav isolation — goBack #1', 'Back-nav isolation — goBack #2');
+    return;
+  }
 
-  await step(`Back-nav isolation — click ONE service ("${service.title}")`, async () => {
+  // Service is likewise selected from what's actually rendered in the
+  // Category View (never hidden behind a "بیشتر"-style collapse there —
+  // ServiceGrid shows every matching service — but reading the real
+  // rendered card, not assuming array order, keeps this consistent with
+  // the category-selection fix above and with Task 5's "prove the click
+  // actually changed the URL" requirement).
+  const serviceUrlBefore = page.url();
+  const serviceLabel = await step('Back-nav isolation — read the first visible service card title', async () => {
     const card = page.locator('main button').filter({ has: page.locator('strong') }).first();
     await card.waitFor({ timeout: 10000 });
+    const title = (await card.locator('strong').innerText()).trim();
+    assert(title.length > 0, 'expected a non-empty service card title');
+    return title;
+  });
+  if (!serviceLabel) {
+    await abortInvalid('no visible, clickable service card was found in the selected category', 'Back-nav isolation — goBack #1', 'Back-nav isolation — goBack #2');
+    return;
+  }
+  const matchedService = byCategoryId.has(category.id) ? snapshot.services.find((s) => s.categoryId === category.id && s.title === serviceLabel) : undefined;
+
+  const serviceOk = await step(`Back-nav isolation — click ONE visible service ("${serviceLabel}"${matchedService ? `, id=${matchedService.id}` : ''})`, async () => {
+    const card = page.locator('main button').filter({ has: page.locator('strong') }).first();
     await card.click();
     await page.waitForURL(/\/services\/[^/]+\/[^/]+$/, { timeout: 15000 });
     await page.waitForLoadState('networkidle');
+    assert(page.url() !== serviceUrlBefore, `expected the URL to change after clicking "${serviceLabel}", stayed at ${serviceUrlBefore}`);
+    return true;
   });
-  await recordStep(`2. clicked service "${service.title}"`);
+  await recordStep(`2. clicked service "${serviceLabel}" (urlBefore=${serviceUrlBefore})`);
+  if (serviceOk !== true) {
+    await abortInvalid('service click did not succeed — see the service-click failure above; no forward navigation exists to test back from', 'Back-nav isolation — goBack #1', 'Back-nav isolation — goBack #2');
+    return;
+  }
 
   await step('Back-nav isolation — goBack #1 returns to the SAME Category View', async () => {
     await page.goBack({ waitUntil: 'networkidle' });
@@ -1001,7 +1092,7 @@ async function reportPageIssues(context: string, issues: PageIssues): Promise<vo
   if (issues.allFailedRequestEvents.length > 0) {
     const lines = issues.allFailedRequestEvents.map(
       (e) =>
-        `${e.classifiedBenign ? 'BENIGN' : 'REAL'}: ${e.method} ${e.url} — ${e.errorText} (resourceType=${e.resourceType}, pageUrlAtStart=${e.pageUrlAtStart}, pageUrlAtFailure=${e.pageUrlAtFailure}, elapsedMs=${e.elapsedMs}, navigationDuringRequest=${e.navigationDuringRequest}${e.benignReason ? `, reason: ${e.benignReason}` : ''})`,
+        `${e.classifiedBenign ? 'BENIGN' : 'REAL'}: ${e.method} ${e.url} — ${e.errorText} (resourceType=${e.resourceType}, pageUrlAtStart=${e.pageUrlAtStart}, pageUrlAtFailure=${e.pageUrlAtFailure}, qaStepAtStart="${e.qaStepAtStart}", qaStepAtFailure="${e.qaStepAtFailure}", elapsedMs=${e.elapsedMs}, navigationDuringRequest=${e.navigationDuringRequest}${e.benignReason ? `, reason: ${e.benignReason}` : ''})`,
     );
     record(`Network diagnostics — ${context}`, 'PASS', `${issues.allFailedRequestEvents.length} requestfailed event(s) observed:\n${lines.join('\n')}`);
   }
