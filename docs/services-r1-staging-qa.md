@@ -224,13 +224,142 @@ No regression tests were added — no application code changed.
 
 ---
 
-## QA Run #3 (against the post-SERVICES-R1.4 revision)
+## Deployment #3
 
-**PENDING** — not yet executed. Will record the real API-layer and
-browser-layer results, the back-nav isolation trace's actual output, and
-whatever classification that trace supports, once the redeploy + rerun
-happens. Will NOT report a final PASS here until that real run completes
-and Failure 1 has an evidence-backed classification and (if needed) a fix.
+| | |
+|---|---|
+| Deployed revision | `dcdc10c` (SERVICES-R1.4 icon-abort fix + back-nav isolation instrumentation, no app code) |
+| Result | PASS |
+
+## QA Run #3 (against `dcdc10c`)
+
+**API layer: 54 PASS / 0 FAIL / 0 NOT_TESTED.** Connectivity fix from
+SERVICES-R1.3 continues to hold.
+
+**Browser layer: 56 PASS / 3 FAIL / 1 NOT_TESTED.** This is a HIGHER
+raw fail/not-tested count than Run #2's 2 FAIL — recorded honestly, but it
+does **not** mean three newly discovered product defects. All of it came
+from the SERVICES-R1.4 diagnostics themselves:
+
+- The 5 icon `ERR_ABORTED` failures from Run #2 are GONE — the narrow
+  navigation-correlation rule worked as designed.
+- 1 of the 3 new FAILs is the SAME pre-existing "Browser back from
+  Category View returns to Services List" failure, carried over unchanged
+  from Run #2 (expected — no fix was applied to it yet, by design).
+- 1 NOT_TESTED is the new isolated back-navigation check's own login step
+  failing before the sequence it exists to test could even run (see
+  below) — this is the isolation check correctly reporting that it
+  couldn't do its job, not a Services product defect.
+- The remaining 2 FAILs are the 3 new `net::ERR_ABORTED` events on
+  `/api/v1/categories` and `/api/v1/services?limit=100&page=1` (reported
+  as 2 distinct FAIL entries covering 3 request events) — a request class
+  the SERVICES-R1.4 diagnostics surfaced but did not yet have a
+  classification rule for.
+
+### SERVICES-R1.5 investigation
+
+**Isolated back-navigation test — login root-caused and fixed (NOT a
+selector bug).**
+
+The isolation test's fresh-context login timed out waiting for the OTP
+input screen (`locator('text=تأیید و ادامه')...` never resolved), even
+though the exact same `performCustomerLogin()` code succeeded minutes
+earlier in the same run via `runCustomerChecks`. Reading
+`backend/src/modules/auth/otp.service.ts` found the real cause: `issue()`
+enforces a per-phone resend lock — "at most one live code per phone at a
+time," TTL = `OTP_TTL_SECONDS` (default 120s). `runCustomerChecks`'s login
+had already consumed the fixed STAGING_TEST_AUTH phone's (`09121111111`)
+one resend slot; the isolation check's second login attempt, moments
+later in the same run, hit that lock (HTTP 429, "کد قبلی هنوز معتبر
+است") — so the phone-step submission never transitioned to an OTP screen,
+and the locator had nothing to wait for. **Comparing the two login paths
+found no selector difference at all — both use identical code.**
+
+Fix: the isolation check now authenticates via a direct call to
+`/api/v1/auth/otp/verify` (Playwright's `page.request`, not page JS — no
+CORS concerns) using the SAME test-mode bypass `verify()` already grants
+the fixed phone/code — which requires no prior `/otp/request` call at all
+(confirmed by reading `verify()`: the bypass returns immediately for
+`phone === DEV_TEST_PHONE && code === DEV_TEST_CODE`, entirely skipping
+the resend-locked `issue()` path). This is the exact same mechanism
+`backend/scripts/staging-qa/authenticated-qa-runner.ts`'s own
+`customerAuthCheck()` already uses. The real access/refresh token pair
+returned is seeded into `localStorage` before the first navigation to
+`/services`, so `AuthProvider`'s mount effect picks it up immediately — a
+real, backend-issued session, just obtained without re-triggering an
+already-exercised, now-rate-limited UI flow. No production/application UI
+code was touched.
+
+**Three catalog-fetch `ERR_ABORTED` events — RESOLVED, evidence-based, same
+narrow-rule pattern as the icon fix.**
+
+`/api/v1/categories?limit=100` and `/api/v1/services?limit=100&page=1`
+(reported twice) are exactly the endpoints `useServiceCatalog()`
+(`apps/web/src/components/services/useServiceCatalog.ts`) calls on every
+mount of `/services` and independently again on every mount of
+`/services/[categoryId]` — real application behavior, not QA-script
+requests. Both endpoints were independently re-verified outside the
+browser (HTTP 200, valid JSON, real payload) in this session. The same
+run's Category Hero/filters/search/service-detail PASSes (all cross-
+checked against the real API snapshot) prove the catalog data did render
+correctly — condition 2 and 6 of the task's own 6-condition rule.
+
+The diagnostics were upgraded from a flat "navigation happened within Ns
+of the failure" window to precise per-request correlation: every request
+now has its own start timestamp and starting page URL recorded
+(`page.on('request')`), and a failure is only correlated to navigation if
+a real `framenavigated` event landed strictly between THAT request's own
+start and its failure (+250ms grace for event-ordering). A new
+`isBenignCatalogFetchCancelledByNavigation()` rule requires all of: exact
+`net::ERR_ABORTED`, `resourceType() === 'fetch'`, the URL is exactly our
+own first-party `/api/v1/categories` or `/api/v1/services` endpoint (never
+any other API route — an aborted mutation or auth call is never covered),
+and that precise in-flight-navigation correlation. The pre-existing image
+rule was upgraded to the same precise correlation. Every classification
+(benign or not) is written into the report's "Network diagnostics" line
+with full timing (`pageUrlAtStart`, `pageUrlAtFailure`, `elapsedMs`,
+`navigationDuringRequest`) for auditability.
+
+**Back-navigation defect itself — STILL UNCLASSIFIED.** The isolation
+test's login is fixed, but it has not yet actually RUN against real
+staging with a working login — so Task 2/3's actual isolated trace (and
+therefore the QA-defect-vs-application-defect classification) is still
+pending the next real run. No navigation code was touched. The
+pre-existing failing assertion inside `runServicesModuleChecks` is left
+exactly as-is (per the task's own ordering: fix it only after the isolated
+result is known) and is expected to still report FAIL on the next run
+alongside the isolation check's actual trace output.
+
+### Application code changed this round
+
+**None.** Every SERVICES-R1.5 change is in
+`deploy/staging/qa/browser/browser-qa.ts` — no file under
+`apps/web/src/{app,components}/services/**` was touched.
+
+### Quality gates (post-SERVICES-R1.5 changes)
+
+| Gate | Result |
+|---|---|
+| `pnpm typecheck` | PASS |
+| `pnpm lint` | PASS (0 errors, same pre-existing warning set) |
+| `pnpm test` | PASS |
+| `pnpm build` | PASS |
+
+No regression tests were added — no application code changed.
+
+---
+
+## QA Run #4 (against the post-SERVICES-R1.5 revision)
+
+**PENDING** — not yet executed. This is the run that should finally
+produce: (a) the isolation test actually completing its login and
+sequence, (b) its history trace as real evidence, (c) a definitive
+QA-history-defect vs. real-application-defect classification for Failure
+1, and — only if that classification is "QA defect" — a follow-up fix to
+`runServicesModuleChecks`'s own back-navigation assertion (per Task 4's
+explicit ordering: only after the isolated result is known). Will NOT
+report SERVICES-R1 complete, and will NOT claim 0 FAIL/0 NOT_TESTED, until
+that real run's output is in hand.
 
 ---
 
@@ -238,10 +367,12 @@ and Failure 1 has an evidence-backed classification and (if needed) a fix.
 
 SERVICES-R1's *application* code and fidelity claims (see
 [docs/services-r1-fidelity-report.md](services-r1-fidelity-report.md))
-remain unchanged and unaffected by any of R1.2/R1.3/R1.4 — every finding so
-far has been QA-tooling-side (connectivity target, timing races, history
-setup) or independently-verified-healthy assets, never an application
-defect. The one open item is Failure 1's root cause, which now has a
-purpose-built, evidence-generating test in place; its classification and
-any resulting fix are pending that test's actual output on the next real
-staging run.
+remain unchanged and unaffected by R1.2/R1.3/R1.4/R1.5 — every finding
+across all three QA rounds so far has been QA-tooling-side (connectivity
+target, timing races, history setup, a resend-lock collision in the QA
+runner's own auth, and independently-verified-healthy assets/endpoints
+aborted mid-navigation), never a real application defect. The one open
+item is Failure 1's root cause. It now has a working, evidence-generating
+isolated test; its classification and any resulting fix are pending that
+test's actual output on the next real staging run — SERVICES-R1 does not
+close until that run is fully green.

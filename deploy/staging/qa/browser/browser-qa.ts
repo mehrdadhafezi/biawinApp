@@ -86,7 +86,10 @@ interface FailedRequestEvent {
   method: string;
   resourceType: string;
   errorText: string;
+  pageUrlAtStart: string;
   pageUrlAtFailure: string;
+  elapsedMs: number;
+  navigationDuringRequest: boolean;
   classifiedBenign: boolean;
   benignReason?: string;
 }
@@ -141,45 +144,91 @@ function isBenignNextRscCancellation(req: Request, errorText: string): boolean {
  * FOUR of: exact `net::ERR_ABORTED`, `resourceType() === 'image'`, a
  * first-party `/services/*.webp` static asset path (our own migrated
  * icons — never a third-party or backend-served image), AND a real
- * top-level page navigation recorded within 2s of the failure (tracked
- * via `framenavigated` on the main frame, independent of this script's
- * own bookkeeping of when it "meant" to navigate). A broken image outside
- * that narrow window, a non-webp/non-Services path, or any other error
- * text still fails the run, unchanged.
+ * top-level page navigation recorded while THIS SPECIFIC request was
+ * still in flight (its own start-to-failure window, not just "near" the
+ * failure — see `navigationDuringRequest` below). A broken image outside
+ * that window, a non-webp/non-Services path, or any other error text
+ * still fails the run, unchanged.
  */
-function isBenignImageCancelledByNavigation(req: Request, errorText: string, navigationNearby: boolean): boolean {
+function isBenignImageCancelledByNavigation(req: Request, errorText: string, navigationDuringRequest: boolean): boolean {
   return (
     errorText === 'net::ERR_ABORTED' &&
     req.resourceType() === 'image' &&
     /^https?:\/\/[^/]+\/services\/[^/]+\.webp(\?.*)?$/.test(req.url()) &&
-    navigationNearby
+    navigationDuringRequest
   );
 }
 
-const NAV_CORRELATION_WINDOW_MS = 2000;
+/**
+ * SERVICES-R1.5 finding: a real run reported `net::ERR_ABORTED` on
+ * `/api/v1/categories` and `/api/v1/services` — the exact endpoints
+ * `useServiceCatalog()` (apps/web/src/components/services/useServiceCatalog.ts)
+ * calls on every mount of `/services` AND independently again on every
+ * mount of `/services/[categoryId]`. That hook has no `AbortController` —
+ * navigating away does not itself cancel its fetches at the application
+ * level — but Playwright/Chromium can still report `ERR_ABORTED` on a
+ * fetch whose owning document context is torn down mid-flight. Both
+ * endpoints were independently verified (curl, outside the browser, same
+ * session this rule was written in) to return HTTP 200 + valid JSON with
+ * the real catalog payload — not a real backend failure.
+ *
+ * Narrow rule — ALL FOUR of: exact `net::ERR_ABORTED`, `resourceType()
+ * === 'fetch'`, the URL is exactly our own first-party
+ * `/api/v1/categories` or `/api/v1/services` catalog endpoint (never any
+ * other API route — an aborted mutation or auth call is NEVER covered by
+ * this), AND a real top-level navigation recorded while this specific
+ * request was in flight. A catalog fetch that fails outside an active
+ * navigation, or any other API endpoint, still fails the run.
+ */
+function isBenignCatalogFetchCancelledByNavigation(req: Request, errorText: string, navigationDuringRequest: boolean): boolean {
+  return (
+    errorText === 'net::ERR_ABORTED' &&
+    req.resourceType() === 'fetch' &&
+    /^https?:\/\/[^/]+\/api\/v1\/(categories|services)(\?.*)?$/.test(req.url()) &&
+    navigationDuringRequest
+  );
+}
 
 function trackPageIssues(page: Page): PageIssues {
   const issues: PageIssues = { consoleErrors: [], failedRequests: [], allFailedRequestEvents: [] };
   const navigationTimestamps: number[] = [];
+  // SERVICES-R1.5: precise per-request correlation, not a flat time
+  // window — records exactly when EACH request started (and the page URL
+  // at that moment), so a failure can be checked against whether a real
+  // navigation happened strictly between that request's own start and its
+  // failure, not merely "close in time" to the failure by coincidence.
+  const requestStarts = new Map<Request, { startTime: number; pageUrlAtStart: string }>();
+
   page.on('framenavigated', (frame) => {
     if (frame === page.mainFrame()) navigationTimestamps.push(Date.now());
+  });
+  page.on('request', (req: Request) => {
+    requestStarts.set(req, { startTime: Date.now(), pageUrlAtStart: page.url() });
   });
   page.on('console', (msg: ConsoleMessage) => {
     if (msg.type() === 'error') issues.consoleErrors.push(msg.text());
   });
   page.on('requestfailed', (req: Request) => {
     const errorText = req.failure()?.errorText ?? 'unknown';
-    const now = Date.now();
-    const navigationNearby = navigationTimestamps.some((t) => Math.abs(t - now) <= NAV_CORRELATION_WINDOW_MS);
+    const failureTime = Date.now();
+    const started = requestStarts.get(req);
+    const startTime = started?.startTime ?? failureTime;
+    const pageUrlAtStart = started?.pageUrlAtStart ?? 'unknown (request event not captured)';
+    // +250ms grace: `framenavigated` can fire a beat after the network
+    // layer reports the abort for the same client-side transition.
+    const navigationDuringRequest = navigationTimestamps.some((t) => t >= startTime && t <= failureTime + 250);
 
     let classifiedBenign = false;
     let benignReason: string | undefined;
     if (isBenignNextRscCancellation(req, errorText)) {
       classifiedBenign = true;
       benignReason = 'Next.js RSC prefetch cancelled by navigation (Stage 5.22 rule)';
-    } else if (isBenignImageCancelledByNavigation(req, errorText, navigationNearby)) {
+    } else if (isBenignImageCancelledByNavigation(req, errorText, navigationDuringRequest)) {
       classifiedBenign = true;
-      benignReason = 'first-party /services/*.webp request cancelled by a page navigation within 2s, asset independently verified healthy (SERVICES-R1.4 rule)';
+      benignReason = 'first-party /services/*.webp request cancelled during an in-flight navigation, asset independently verified healthy (SERVICES-R1.4 rule)';
+    } else if (isBenignCatalogFetchCancelledByNavigation(req, errorText, navigationDuringRequest)) {
+      classifiedBenign = true;
+      benignReason = 'first-party /api/v1/categories|services catalog fetch cancelled during an in-flight navigation, endpoint independently verified healthy (SERVICES-R1.5 rule)';
     }
 
     issues.allFailedRequestEvents.push({
@@ -187,13 +236,18 @@ function trackPageIssues(page: Page): PageIssues {
       method: req.method(),
       resourceType: req.resourceType(),
       errorText,
+      pageUrlAtStart,
       pageUrlAtFailure: page.url(),
+      elapsedMs: failureTime - startTime,
+      navigationDuringRequest,
       classifiedBenign,
       benignReason,
     });
 
     if (classifiedBenign) return;
-    issues.failedRequests.push(`${req.method()} ${req.url()} — ${errorText} (resourceType=${req.resourceType()}, pageUrlAtFailure=${page.url()})`);
+    issues.failedRequests.push(
+      `${req.method()} ${req.url()} — ${errorText} (resourceType=${req.resourceType()}, pageUrlAtStart=${pageUrlAtStart}, pageUrlAtFailure=${page.url()}, elapsedMs=${failureTime - startTime}, navigationDuringRequest=${navigationDuringRequest})`,
+    );
   });
   page.on('response', (res) => {
     if (res.status() >= 500) {
@@ -777,6 +831,39 @@ async function runServicesModuleChecks(page: Page): Promise<void> {
  * back -> back with NO page.goto() anywhere in the sequence — and logging
  * `history.length` + the real URL at every step into the report (not just
  * console.log) so the raw evidence is auditable, not asserted.
+ *
+ * SERVICES-R1.5 finding: the FIRST version of this function reused
+ * `performCustomerLogin()` (the real click-through OTP UI flow) for the
+ * fresh context and timed out waiting for the OTP input to appear. This
+ * was NOT a selector bug — `performCustomerLogin` is the exact same code
+ * `runCustomerChecks` uses successfully earlier in the SAME run. The real
+ * cause, confirmed by reading `backend/src/modules/auth/otp.service.ts`:
+ * `issue()` enforces a per-phone "at most one live code at a time" resend
+ * lock (`otp:resend-lock:${phone}`, TTL = OTP_TTL_SECONDS, default 120s) —
+ * requesting a SECOND code for the fixed STAGING_TEST_AUTH phone
+ * (09121111111) within that window throws HTTP 429 ("کد قبلی هنوز معتبر
+ * است"), so the phone-step submit never reaches the OTP screen and the
+ * locator genuinely has nothing to wait for. `runCustomerChecks`'s login
+ * had already consumed that phone's resend slot moments earlier in the
+ * same run. Clicking through the OTP UI a second time was never going to
+ * work reliably regardless of selector.
+ *
+ * The fix uses the SAME bypass `verify()` already grants test credentials
+ * (see that file: `testBypassEnabled && phone === DEV_TEST_PHONE && code
+ * === DEV_TEST_CODE` returns immediately, with NO dependency on a prior
+ * `issue()`/send call at all) — exactly how
+ * `backend/scripts/staging-qa/authenticated-qa-runner.ts`'s own
+ * `customerAuthCheck()` already authenticates, calling `/otp/verify`
+ * directly without ever calling `/otp/request` first. Calling it here via
+ * `page.request` (Playwright's own HTTP client, not page JS — no CORS
+ * concerns) gets a REAL backend-issued token pair without touching the
+ * resend-locked send endpoint at all, then seeds `localStorage` with it
+ * before the very next navigation, which is exactly when `AuthProvider`'s
+ * mount effect (apps/web/src/lib/auth/auth-context.tsx) reads it. This is
+ * not a fake session — it's the same token shape a real login produces,
+ * obtained through the same documented test-mode bypass, just without
+ * re-triggering a UI flow already exercised (and rate-limited) elsewhere
+ * in this run.
  */
 async function runBackNavigationIsolationCheck(browser: Browser): Promise<void> {
   const snapshot = await fetchServiceCatalogSnapshot().catch(() => null);
@@ -805,17 +892,40 @@ async function runBackNavigationIsolationCheck(browser: Browser): Promise<void> 
   };
 
   await page.goto(CUSTOMER_ORIGIN, { waitUntil: 'networkidle' });
-  const loggedIn = await performCustomerLogin(page, 'Back-nav isolation');
-  if (!loggedIn) {
-    skip('Back-nav isolation — full sequence', 'fresh-context login did not succeed');
+
+  const loggedIn = await step('Back-nav isolation — direct STAGING_TEST_AUTH token issuance (bypasses the OTP resend-lock; see function doc)', async () => {
+    const res = await page.request.post(`${API_ORIGIN}/api/v1/auth/otp/verify`, {
+      data: { phone: '09121111111', code: '123456' },
+      headers: { 'Content-Type': 'application/json' },
+    });
+    assert(res.ok(), `expected the STAGING_TEST_AUTH verify bypass to succeed, got HTTP ${res.status()}`);
+    const json = (await res.json()) as { success?: boolean; data?: unknown };
+    const data = (json.success === true ? json.data : json) as { status?: string; accessToken?: string; refreshToken?: string };
+    assert(
+      data.status === 'authenticated' && typeof data.accessToken === 'string' && typeof data.refreshToken === 'string',
+      `expected an authenticated session with tokens, got status="${data.status}"`,
+    );
+    await page.evaluate(
+      ({ accessToken, refreshToken }) => {
+        localStorage.setItem('biawin.accessToken', accessToken);
+        localStorage.setItem('biawin.refreshToken', refreshToken);
+      },
+      { accessToken: data.accessToken!, refreshToken: data.refreshToken! },
+    );
+    return true;
+  });
+  if (loggedIn !== true) {
+    skip('Back-nav isolation — full sequence', 'direct token issuance did not succeed');
     await context.close();
     return;
   }
 
   await step('Back-nav isolation — navigate to /services (fresh context, zero prior Services history)', async () => {
-    await page.getByRole('button', { name: 'خدمات', exact: true }).click();
-    await page.waitForURL(/\/services$/, { timeout: 15000 });
-    await page.waitForLoadState('networkidle');
+    // A direct URL navigation, not a click through Home — AuthProvider's
+    // mount effect picks up the token just seeded into localStorage and
+    // AuthGuard renders Services immediately, no redirect.
+    await page.goto(`${CUSTOMER_ORIGIN}/services`, { waitUntil: 'networkidle' });
+    assert(/\/services$/.test(page.url()), `expected to land on /services, got ${page.url()} — token seed likely did not take`);
   });
   await recordStep('0. at /services');
 
@@ -891,7 +1001,7 @@ async function reportPageIssues(context: string, issues: PageIssues): Promise<vo
   if (issues.allFailedRequestEvents.length > 0) {
     const lines = issues.allFailedRequestEvents.map(
       (e) =>
-        `${e.classifiedBenign ? 'BENIGN' : 'REAL'}: ${e.method} ${e.url} — ${e.errorText} (resourceType=${e.resourceType}, pageUrlAtFailure=${e.pageUrlAtFailure}${e.benignReason ? `, reason: ${e.benignReason}` : ''})`,
+        `${e.classifiedBenign ? 'BENIGN' : 'REAL'}: ${e.method} ${e.url} — ${e.errorText} (resourceType=${e.resourceType}, pageUrlAtStart=${e.pageUrlAtStart}, pageUrlAtFailure=${e.pageUrlAtFailure}, elapsedMs=${e.elapsedMs}, navigationDuringRequest=${e.navigationDuringRequest}${e.benignReason ? `, reason: ${e.benignReason}` : ''})`,
     );
     record(`Network diagnostics — ${context}`, 'PASS', `${issues.allFailedRequestEvents.length} requestfailed event(s) observed:\n${lines.join('\n')}`);
   }
