@@ -1,11 +1,69 @@
 # Production Deployment — Biawin Home CMS
 ## Stage P.1 — Preflight & Runbook
 
-**Status as of this writing: PREFLIGHT ONLY. Production has not been
-deployed. No production server, DNS, vhost, certificate, database, or
-object storage has been touched by this stage.** Every command in this
-document is provided for execution by the account owner; nothing here was
-run against a real production system while preparing it.
+## PRODUCTION DEPLOYMENT STATUS: DEFERRED
+
+**Continue full application development on staging. Final production
+cutover will occur only after full application acceptance — not now, and
+not automatically once a future stage closes.** This is a deliberate
+product decision made after this runbook's preflight surfaced that
+`biawin.ir` is a live, active WordPress site (§2/§16) — it must remain
+completely untouched while development continues.
+
+Two things this status does **not** mean:
+
+- It does **not** mean the Home CMS release is unready. See the explicit
+  distinction below — engineering readiness and deployment execution are
+  two different questions with two different, independently-tracked
+  answers.
+- It does **not** mean this runbook or the `deploy/production/` scaffold
+  (commit `548544a`) are stale or should be discarded. Both remain the
+  intended path for the eventual cutover — they are paused, not withdrawn.
+
+| | |
+|---|---|
+| **ENGINEERING RELEASE READINESS** | Home CMS = **PRODUCTION READY** (Stage 5.22 closure, `2fc7e69`, unchanged — see §0) |
+| **ACTUAL PRODUCTION DEPLOYMENT** | **NOT EXECUTED / DEFERRED BY PRODUCT DECISION** |
+
+### What happens next
+
+1. All further Biawin App development continues against staging:
+   Customer `https://staging.biawin.ir`, API `https://api-staging.biawin.ir`,
+   Admin `https://admin-staging.biawin.ir`.
+2. `biawin.ir` (the live WordPress site), `api.biawin.ir`, and
+   `admin.biawin.ir`'s eventual vhost are **not** touched — no DNS change,
+   no vhost change, no TLS request, no WordPress modification — until a
+   deliberate future cutover decision.
+3. `deploy/production/**` and this document are kept current as the
+   intended eventual path, but are not executed against
+   `62.204.61.18` (the confirmed production server, per the account
+   owner) until that decision is made.
+4. **Before the eventual cutover**, a new production preflight will be
+   performed against whatever the *final* application revision is at that
+   time — not a blind re-execution of today's Home-CMS-only release
+   candidate (`biawin-home-cms-v1` / `2fc7e69`). That tag remains as
+   historical evidence of what was release-ready at this point in time, not
+   as a standing instruction to deploy it later without review.
+5. `SMS_PROVIDER=mock` remains acceptable for continued staging
+   development; a real, credentialed SMS provider is a mandatory
+   prerequisite for production Customer cutover specifically (§6/§9,
+   unchanged). `STAGING_TEST_AUTH` remains staging-only and must never be
+   enabled in a production environment (§6, unchanged) — both already
+   documented below and reaffirmed here.
+
+**No parallel, continuously-maintained production deployment is being
+stood up.** The scaffold in `deploy/production/` exists in the repository,
+versioned and ready, but nothing on `62.204.61.18` runs it yet — there is
+no second live environment to keep in sync with ongoing staging work.
+
+---
+
+**Preflight status (Stage P.1, historical — see the DEFERRED status
+above for the current, governing status): PREFLIGHT ONLY. Production has
+not been deployed. No production server, DNS, vhost, certificate,
+database, or object storage has been touched by this stage.** Every
+command in this document is provided for execution by the account owner;
+nothing here was run against a real production system while preparing it.
 
 ---
 
@@ -654,27 +712,42 @@ git push origin main
 
 ---
 
-## 16. Open questions — must be answered before proceeding past preflight
+## 16. Open questions — resolved by product decision (deployment itself remains deferred)
 
-1. Is `62.204.61.18` the intended production server, or a separate,
-   dedicated machine? (§2/§3)
-2. What is the plan for `biawin.ir`'s existing live WordPress site? (§2/§3)
-3. Once the host is confirmed: do the proposed ports/subnet in
+1. ~~Is `62.204.61.18` the intended production server, or a separate,
+   dedicated machine?~~ **Answered: yes, `62.204.61.18` is the confirmed
+   production server.** (§2/§3)
+2. ~~What is the plan for `biawin.ir`'s existing live WordPress site?~~
+   **Answered: it must remain completely untouched. Production cutover —
+   and with it, any change to `biawin.ir` — is deferred until full
+   application acceptance; see the DEFERRED status at the top of this
+   document.** (§2/§3)
+3. Once cutover is eventually scheduled: do the proposed ports/subnet in
    `docker-compose.production.yml` actually avoid collision with whatever
-   else runs there? (§2/§3's discovery command answers this directly)
-4. When will a real SMS provider be credentialed? Customer cutover should
-   not proceed with `SMS_PROVIDER=mock` (§6/§9) — Admin/CMS-management
-   deployment is not blocked by this, only real Customer login is.
+   else runs on `62.204.61.18` at that time? Still open — re-run §3's
+   discovery command close to the actual cutover date, not now, since
+   staging's own footprint on that host may have changed by then.
+4. When will a real SMS provider be credentialed? Still open — a
+   prerequisite for Customer cutover specifically (§6/§9), not for
+   continued staging development, and not on the critical path while
+   deployment is deferred.
+
+**Resolving questions 1 and 2 above answers where production will live and
+what happens to the existing site — it does not, by itself, authorize
+executing the deployment.** Per the DEFERRED status at the top of this
+document, execution still waits on full application acceptance and a new
+preflight against the final revision at that time.
 
 ---
 
-## 17. Sign-off checklist (for the account owner, before execution)
+## 17. Sign-off checklist (for the account owner, before *eventual* execution — not applicable while deployment remains DEFERRED)
 
-- [ ] §3 discovery run, both plain-text questions answered
-- [ ] Production server confirmed (same as staging, or a new host with access details shared)
-- [ ] `biawin.ir` WordPress decision made
+- [x] §3 discovery answered: production server confirmed as `62.204.61.18`
+- [x] `biawin.ir` WordPress decision made: remains untouched, cutover deferred until full application acceptance
+- [ ] Full application acceptance reached (governs when this checklist becomes actionable again)
+- [ ] A new preflight run against the final application revision at that time (not a re-run of this document's `2fc7e69`-based plan as-is)
 - [ ] Real production secrets generated (never copied from staging) and `deploy/production/.env.production` created on the server
 - [ ] Real SMS provider credentialed (blocks Customer cutover only, not Admin/backend deploy)
 - [ ] DB backup tooling in place and tested (§4)
 - [ ] Object storage backup/rotation in place (§5)
-- [ ] This runbook read end-to-end by whoever executes it
+- [ ] This runbook (and its successor preflight) read end-to-end by whoever executes it
