@@ -334,3 +334,130 @@ negative data-integrity case (a real service under a mismatched real
 category's URL correctly renders not-found). This is the run that
 provides the live, authenticated, multi-breakpoint visual confirmation
 §16/§21#1 disclosed as not yet performed.
+
+---
+
+## SERVICES-R3.1 — real staging QA failure, root cause, and fix
+
+`9ada9a6` was deployed and QA'd against real staging. Two independent
+issues surfaced — recorded honestly, not merged into a false "all green":
+
+1. **MinIO storage at its free-space threshold**, rejecting uploads. An
+   infrastructure/server issue, being handled separately at that layer.
+   **Not touched here** — no storage code, no upload-error handling, no
+   test was weakened, skipped, or reclassified to route around it.
+2. **A real, provable R3 application bug**:
+   `Service Detail — Services-origin click navigation renders cardOnly`
+   failed with "expected the real category name 'گردشگری' to render on
+   Service Detail (ServiceDetailCardSummary)," for the real flow
+   `/services` → گردشگری → "رزرو هتل" → Service Detail. The new R3
+   data-integrity check (wrong-category service → not-found) **passed**,
+   confirmed intact and not touched by this fix.
+
+### Root cause (proven from code, not guessed)
+
+`ServiceDetailPage` runs **two independent async operations** with no
+ordering guarantee between them: its own `GET /services/:id` call
+(`service` state), and `useServiceCatalog()`'s separate, heavier,
+paginated fetch of categories + all 108 services (`categories` state,
+which `categoryName` is derived from). The R3 composition rendered as
+soon as `service !== null`, with no dependency on `categories` at all.
+Since the single-service fetch is materially lighter than the full
+paginated catalog fetch, `service` can — and, on real staging, did —
+resolve first. In that window, `ServiceDetailCardSummary` rendered with
+`categoryName === ""` (a real, live content gap for a real user, not
+merely a QA artifact): the QA script's own synchronization point (wait
+for the real disabled-CTA button) is tied to `service`, not
+`categories`, so it doesn't wait long enough for the category name to be
+ready either — which is exactly why the assertion caught a real,
+reachable gap rather than a flaky test.
+
+This is confirmed by reading `page.tsx`'s pre-fix render logic directly:
+`{... service !== null && (<>...<ServiceDetailCardSummary
+categoryName={categoryName} />...)}` had no `categories !== null`
+condition anywhere. Ruled out as the cause: `categories?.find()` failing
+to locate گردشگری at all — it's one of the 19 real, active seeded
+categories, used as the reference "asset-mapped" category throughout
+every prior Services QA round; `useServiceCatalog()`'s `active`-only
+filter would only hide it if it were inactive, which it demonstrably
+isn't. The QA selector/assertion itself was correct as written — it was
+never weakened, because the application was proven to be the real cause,
+not the test.
+
+### Fix
+
+`app/services/[categoryId]/[serviceId]/page.tsx`: the "content ready"
+condition now requires **both** `service !== null` **and**
+`categories !== null` — the loading skeleton stays visible until the
+real category name is genuinely resolvable, and the full composition
+(including `ServiceDetailCardSummary`) only ever renders once it is. No
+UUID fallback, no hardcoded "گردشگری" or any other literal category
+name, no invented placeholder text — `categoryName` is still derived
+exactly as before (`categories.find(c => c.id === params.categoryId)?.name`),
+just no longer read before it can possibly be correct. `notFound`/`error`
+states are unaffected — those depend only on the `service` fetch and
+still resolve immediately, unchanged.
+
+A useful side effect: because the whole composition (including
+`DisabledPurchaseCTA`) now only renders once both fetches have settled,
+the QA script's existing wait-for-the-real-CTA-button synchronization
+point becomes a correct proxy for the category name too — **no browser
+QA change was needed or made**; the same assertion that failed on real
+staging is expected to pass once this fix is live, without having been
+touched.
+
+### Regression coverage
+
+- `belongsToCategory()`/`serviceValidation.test.ts` (SERVICES-R3) —
+  **unchanged, unweakened**, re-verified still passing: a real service
+  under its real category's URL validates true; under a different real
+  category's URL validates false.
+- `ServiceDetailCardSummary.test.tsx` (SERVICES-R3) — **unchanged**,
+  re-verified still passing: real title/subtitle/price, real category
+  name (as passed in), real primary method, the 3-step condition
+  fallback chain, real tags. These already prove the component renders
+  the real category correctly *given* a resolved name — the R3.1 bug was
+  never in this component, it was in when the page decided to pass one
+  in.
+- **No new unit test was added for the async race itself.** Checked
+  first whether this codebase's existing test tooling could express it:
+  every Services/Home test uses `renderToStaticMarkup` (a single,
+  synchronous pass — `useEffect` does not fire during it, so two
+  independently-resolving fetches racing each other cannot be
+  represented), and the one place `jest.mock` appears in this codebase
+  (`ServiceBannerGrid.test.tsx`) only stubs `next/navigation`'s
+  `useRouter`, not an async data hook, for the same reason. Building a
+  real async-race simulation would mean introducing new test
+  infrastructure (React Testing Library, `act()`, fake timers) for a
+  single fix — assessed as disproportionate. The **live browser QA
+  check that originally caught this bug is the correct, proportionate
+  regression test for it**, and it was left completely unmodified so
+  that it keeps meaning exactly what it meant when it failed.
+- Full existing suite re-run and confirmed green: 67/67 web tests
+  (unchanged count — this fix touched no test files), typecheck/lint/
+  build all clean.
+
+### Confirmations
+
+- **cardOnly contract**: unchanged. No full payment-method chooser, no
+  Home-origin flow, no Merchant Detail, no Purchase Flow, no Admin
+  Services content were added — this fix is a single composition-timing
+  condition in one existing file.
+- **Wrong-category protection**: intact and re-verified, not touched by
+  this fix (see above).
+- **No R4/R5/R6 scope pulled forward.**
+
+### Application files changed
+
+`apps/web/src/app/services/[categoryId]/[serviceId]/page.tsx` only —
+zero Admin/backend/Home files, zero QA files, zero new/changed test
+files.
+
+### Status
+
+**Not closing SERVICES-R3.** This fix has not yet been re-verified
+against real staging. The MinIO free-space incident must also be
+resolved before a real closure run can show 0 FAIL/0 NOT_TESTED on both
+API and browser QA — this document will record that real run's actual
+result when it happens, not before.
+§16/§21#1 disclosed as not yet performed.

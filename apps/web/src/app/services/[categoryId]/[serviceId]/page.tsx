@@ -53,6 +53,20 @@ import { belongsToCategory } from "../../../../components/services/serviceValida
  * (`data.categoryId !== params.categoryId` is treated identically to a
  * real 404) — a Service must never appear to belong to a Category it
  * isn't actually in.
+ *
+ * SERVICES-R3.1 fix: `service` (this page's own `GET /services/:id` call)
+ * and `categories` (`useServiceCatalog()`'s own, separate, heavier
+ * paginated fetch) are two INDEPENDENT async operations with no ordering
+ * guarantee — a real staging run proved `service` can resolve first,
+ * which used to be enough on its own to render the full composition,
+ * including `ServiceDetailCardSummary`'s real-category-name fact, while
+ * `categoryName` was still `""` (categories not loaded yet). Not a QA
+ * selector bug — a real content-correctness gap: the page could
+ * genuinely show a blank category fact to a real user for that same
+ * window. Fixed by treating the page as still loading until BOTH
+ * `service` and `categories` are ready, not just `service` — no partial
+ * render, no blank fact, no UUID-as-fallback, only ever the real name
+ * once it's actually known.
  */
 export default function ServiceDetailPage() {
   const params = useParams<{ categoryId: string; serviceId: string }>();
@@ -114,7 +128,7 @@ export default function ServiceDetailPage() {
 
         {!error && notFound && <ServicesErrorState message="این خدمت یافت نشد." />}
 
-        {!error && !notFound && service === null && (
+        {!error && !notFound && !(service !== null && categories !== null) && (
           <div style={{ display: "flex", flexDirection: "column", gap: spacing.md }}>
             <SkeletonBlock height={160} />
             <SkeletonBlock height={100} />
@@ -122,7 +136,7 @@ export default function ServiceDetailPage() {
           </div>
         )}
 
-        {!error && !notFound && service !== null && (
+        {!error && !notFound && service !== null && categories !== null && (
           <>
             <ServiceHero service={service} />
             <ServiceDetailCardSummary service={service} categoryName={categoryName} />
