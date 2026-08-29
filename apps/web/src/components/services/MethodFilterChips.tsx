@@ -1,5 +1,5 @@
 import { spacing } from "@biawin/ui";
-import { Chip } from "./Chip";
+import { Chip, type ChipAccent } from "./Chip";
 import { PURCHASE_METHOD_LABEL } from "./serviceMethod";
 import type { PurchaseMethod } from "../../lib/services-api";
 
@@ -29,10 +29,23 @@ export function MethodFilterChips({
 }: {
   value: MethodFilter;
   onChange: (value: MethodFilter) => void;
-  accent?: string;
+  accent?: ChipAccent;
 }) {
   return (
-    <div style={{ display: "flex", gap: spacing.sm, overflowX: "auto", paddingBottom: spacing.xs }}>
+    // SERVICES-R2: row padding + hidden scrollbar mined from the real
+    // `.category-filter-row` (`padding:12px 0 3px;scrollbar-width:none`
+    // + a WebKit `::-webkit-scrollbar{display:none}` — inline styles
+    // can't express the WebKit pseudo-element, so this keeps the native
+    // (visible) scrollbar there; a real, minor, documented gap).
+    <div
+      style={{
+        display: "flex",
+        gap: spacing.sm,
+        overflowX: "auto",
+        padding: "12px 0 3px",
+        scrollbarWidth: "none",
+      }}
+    >
       {FILTER_ORDER.map((filter) => (
         <Chip key={filter} label={FILTER_LABEL[filter]} active={value === filter} onClick={() => onChange(filter)} accent={accent} />
       ))}

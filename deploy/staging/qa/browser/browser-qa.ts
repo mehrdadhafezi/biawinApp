@@ -613,7 +613,9 @@ async function runCustomerChecks(browser: Browser): Promise<void> {
  * ServiceCard.tsx (`<button><strong>{title}</strong>...</button>` — the only
  * `<strong>` inside `<main>` on any Services page, since GlobalHeader's own
  * `<strong>بیاوین</strong>` logo sits outside `PageContainer`'s `<main>`),
- * ServiceSearchInput.tsx (`placeholder="جستجو در کارت‌های این خدمت..."`),
+ * ServiceSearchInput.tsx (SERVICES-R2: placeholder is dynamic per real
+ * category, `` `جستجو در کارت‌های ${category.name}...` ``, mined from the
+ * prototype's own `openServiceCategory()`),
  * DisabledPurchaseCTA.tsx (`aria-label="خرید — به‌زودی"`, text "خرید این
  * خدمت" + "به‌زودی").
  */
@@ -731,7 +733,7 @@ async function runServicesModuleChecks(page: Page, issues: PageIssues): Promise<
     const html = await page.content();
     assert(html.includes(categoryAsset.name), 'expected the real category name in the Category View hero');
     assert(html.includes(categoryAsset.description), 'expected the real category description in the Category View hero');
-    await page.getByPlaceholder('جستجو در کارت‌های این خدمت...').waitFor({ timeout: 5000 });
+    await page.getByPlaceholder(`جستجو در کارت‌های ${categoryAsset.name}...`).waitFor({ timeout: 5000 });
     for (const label of ['همه', 'اعتباری', 'اقساطی', 'پرداخت کامل', 'رایگان']) {
       assert((await page.getByRole('button', { name: label, exact: true }).count()) >= 1, `expected a "${label}" filter chip`);
     }
@@ -771,14 +773,51 @@ async function runServicesModuleChecks(page: Page, issues: PageIssues): Promise<
     const probe = categoryAssetServices[0];
     const searchTerm = probe.title.slice(0, Math.min(3, probe.title.length));
     await step('Local search filters the category\'s real services', async () => {
-      await page.getByPlaceholder('جستجو در کارت‌های این خدمت...').fill(searchTerm);
+      await page.getByPlaceholder(`جستجو در کارت‌های ${categoryAsset.name}...`).fill(searchTerm);
       await page.waitForTimeout(300);
       const html = await page.content();
       assert(html.includes(probe.title), `expected searching "${searchTerm}" to keep the real service "${probe.title}" visible`);
-      await page.getByPlaceholder('جستجو در کارت‌های این خدمت...').fill('');
+      await page.getByPlaceholder(`جستجو در کارت‌های ${categoryAsset.name}...`).fill('');
       await page.waitForTimeout(300);
     });
   }
+
+  // SERVICES-R2 (§19 "Empty state: render one deterministic test scenario
+  // if safely possible"): the prototype's own `#categoryEmpty` uses ONE
+  // copy for search-empty AND filter-empty alike (mined this stage,
+  // ServiceGrid.tsx's own comment) — "موردی با این عبارت پیدا نشد. عبارت
+  // دیگری جستجو کنید." A real PurchaseMethod that matches ZERO of this
+  // category's real services deterministically reaches it — computed from
+  // the live snapshot rather than hardcoded, so this stays valid
+  // regardless of which real methods this category's seeded data uses.
+  const PROTOTYPE_EMPTY_COPY = 'موردی با این عبارت پیدا نشد. عبارت دیگری جستجو کنید.';
+  const METHOD_LABEL: Record<string, string> = { credit: 'اعتباری', installment: 'اقساطی', cash: 'پرداخت کامل', free: 'رایگان' };
+  const zeroMatchMethod = (['credit', 'installment', 'cash', 'free'] as const).find(
+    (m) => !categoryAssetServices.some((s) => s.availableMethods.includes(m)),
+  );
+  if (zeroMatchMethod) {
+    await step(`SERVICES-R2 empty state — method filter "${METHOD_LABEL[zeroMatchMethod]}" has zero real matches in "${categoryAsset.name}"`, async () => {
+      await page.getByRole('button', { name: METHOD_LABEL[zeroMatchMethod], exact: true }).click();
+      await page.waitForTimeout(300);
+      const html = await page.content();
+      assert(html.includes(PROTOTYPE_EMPTY_COPY), `expected the real prototype #categoryEmpty copy for "${METHOD_LABEL[zeroMatchMethod]}" in "${categoryAsset.name}"`);
+      assert(!html.includes('در حال حاضر خدمتی در این دسته ثبت نشده است.'), 'must not show the "category has no services at all" copy when the category genuinely has services');
+      await page.getByRole('button', { name: 'همه', exact: true }).click();
+      await page.waitForTimeout(300);
+    });
+  } else {
+    skip('SERVICES-R2 empty state — method filter with zero real matches', `"${categoryAsset.name}" has at least one real service for every PurchaseMethod — no zero-match method to test deterministically`);
+  }
+
+  await step('SERVICES-R2 empty state — a search term matching zero real services shows the exact prototype #categoryEmpty copy', async () => {
+    const noMatchTerm = 'عبارت-جستجوی-نامنطبق-QA';
+    await page.getByPlaceholder(`جستجو در کارت‌های ${categoryAsset.name}...`).fill(noMatchTerm);
+    await page.waitForTimeout(300);
+    const html = await page.content();
+    assert(html.includes(PROTOTYPE_EMPTY_COPY), 'expected the real prototype #categoryEmpty copy for a search term matching no real service');
+    await page.getByPlaceholder(`جستجو در کارت‌های ${categoryAsset.name}...`).fill('');
+    await page.waitForTimeout(300);
+  });
 
   // cardOnly Service Detail flow — deliberately immediately after the
   // search test above with NO intervening navigation (see SERVICES-R1.2

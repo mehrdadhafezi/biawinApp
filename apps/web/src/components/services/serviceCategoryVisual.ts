@@ -86,3 +86,13 @@ export const CATEGORY_ACCENT_DEFAULT = { accent: "#0879dc", deep: "#064d91", sof
 export function getCategoryAccent(categoryName: string) {
   return CATEGORY_ACCENT[categoryName] ?? CATEGORY_ACCENT_DEFAULT;
 }
+
+const PERSIAN_DIGITS = ["۰", "۱", "۲", "۳", "۴", "۵", "۶", "۷", "۸", "۹"];
+
+/** Matches the prototype's own `persianNumber()` helper (used for `#categoryItemMeta`'s card count). */
+export function toPersianDigits(n: number): string {
+  return String(n)
+    .split("")
+    .map((d) => PERSIAN_DIGITS[Number(d)] ?? d)
+    .join("");
+}
