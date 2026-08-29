@@ -1,5 +1,6 @@
 import { renderToStaticMarkup } from "react-dom/server";
 import { ServiceHero } from "./ServiceHero";
+import { ServiceDetailCardSummary } from "./ServiceDetailCardSummary";
 import { Pricing } from "./Pricing";
 import { ServiceInfo } from "./ServiceInfo";
 import { DisabledPurchaseCTA } from "./DisabledPurchaseCTA";
@@ -44,6 +45,7 @@ describe("Service Detail composition — cardOnly contract", () => {
     const html = renderToStaticMarkup(
       <>
         <ServiceHero service={service} />
+        <ServiceDetailCardSummary service={service} categoryName="گردشگری" />
         <Pricing service={service} />
         <ServiceInfo service={service} />
         <DisabledPurchaseCTA />

@@ -6,12 +6,15 @@ import { spacing } from "@biawin/ui";
 import { AppShell } from "../../../../components/shell/AppShell";
 import { SkeletonBlock, SkeletonStyles } from "../../../../components/common/SkeletonBlock";
 import { ServiceHero } from "../../../../components/services/ServiceHero";
+import { ServiceDetailCardSummary } from "../../../../components/services/ServiceDetailCardSummary";
 import { ServiceInfo } from "../../../../components/services/ServiceInfo";
 import { Pricing } from "../../../../components/services/Pricing";
 import { DisabledPurchaseCTA } from "../../../../components/services/DisabledPurchaseCTA";
 import { ServicesErrorState } from "../../../../components/services/ServicesStates";
+import { useServiceCatalog } from "../../../../components/services/useServiceCatalog";
 import { servicesApi, type ServiceDto } from "../../../../lib/services-api";
 import { ApiError } from "../../../../lib/api-client";
+import { belongsToCategory } from "../../../../components/services/serviceValidation";
 
 /**
  * Service Detail (docs/services-ui-contract.md §1/§4) — read-only:
@@ -33,11 +36,35 @@ import { ApiError } from "../../../../lib/api-client";
  * wherever that navigation originates), never inferred from browser
  * history/referrer/`document.referrer` — this route must keep resolving
  * identically for a bookmarked/shared/directly-typed URL either way.
+ * SERVICES-R3 re-confirmed this by grepping every `router.push` into a
+ * `/services/**` route across the whole app: the only real caller of this
+ * exact two-segment route is Category View's own product-card click
+ * (`app/services/[categoryId]/page.tsx`) — Home's `ServiceBannerGrid`/
+ * `ServiceMosaic` both navigate only to `/services/${categoryId}`
+ * (Category View), never to a specific service. There is, today, no real
+ * Home-origin entry point into this route to preserve or regression-test
+ * — restated here as a verified fact, not assumed.
+ *
+ * SERVICES-R3 fix: this page used to fetch `GET /services/:id` and render
+ * whatever came back with no check against the URL's own `categoryId` —
+ * `GET /services/:id` has no category-scoping of its own, so
+ * `/services/{anyCategoryId}/{realServiceId}` would silently render a
+ * real service under the wrong category. Now validated client-side
+ * (`data.categoryId !== params.categoryId` is treated identically to a
+ * real 404) — a Service must never appear to belong to a Category it
+ * isn't actually in.
  */
 export default function ServiceDetailPage() {
   const params = useParams<{ categoryId: string; serviceId: string }>();
   const [service, setService] = useState<ServiceDto | null>(null);
+  const [notFound, setNotFound] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  // SERVICES-R3: the real Category name (`ServiceDetailCardSummary`'s
+  // "دسته‌بندی" fact, mapped from the prototype's `#detailCardFactCategory`)
+  // — reuses the same catalog hook Category View already fetches through,
+  // not a second bespoke endpoint call.
+  const { categories } = useServiceCatalog();
+  const categoryName = categories?.find((c) => c.id === params.categoryId)?.name ?? "";
 
   useEffect(() => {
     let cancelled = false;
@@ -45,10 +72,21 @@ export default function ServiceDetailPage() {
     servicesApi
       .getService(params.serviceId)
       .then((data) => {
-        if (!cancelled) setService(data);
+        if (cancelled) return;
+        // A real service that exists but doesn't belong to this URL's
+        // Category is treated exactly like "not found" — never rendered
+        // as if it were correctly categorized.
+        if (!belongsToCategory(data, params.categoryId)) {
+          setNotFound(true);
+          return;
+        }
+        setService(data);
       })
       .catch((err: unknown) => {
-        if (!cancelled) {
+        if (cancelled) return;
+        if (err instanceof ApiError && err.status === 404) {
+          setNotFound(true);
+        } else {
           setError(err instanceof ApiError ? err.message : "خطا در دریافت اطلاعات خدمت.");
         }
       });
@@ -56,15 +94,27 @@ export default function ServiceDetailPage() {
     return () => {
       cancelled = true;
     };
-  }, [params.serviceId]);
+  }, [params.serviceId, params.categoryId]);
 
   return (
     <AppShell activeNavKey="services">
       <SkeletonStyles />
-      <div style={{ display: "flex", flexDirection: "column", gap: spacing.lg }}>
+      {/*
+       * SERVICES-R3: the prototype's real `.page-service-detail` background
+       * is a subtle vertical gradient (`linear-gradient(180deg,#f7fbff 0%,
+       * #ffffff 36%)`), not flat white — mined this stage. `PageContainer`
+       * itself has no horizontal/top padding to work around (confirmed by
+       * reading it: only `paddingBottom` for bottom-nav clearance), so this
+       * applies cleanly to this page's own wrapper with no offset hack —
+       * `AppShell`/`PageContainer` stay unmodified, every other route keeps
+       * its current flat background.
+       */}
+      <div style={{ display: "flex", flexDirection: "column", gap: spacing.lg, background: "linear-gradient(180deg,#f7fbff 0%,#ffffff 36%)" }}>
         {error && <ServicesErrorState message={error} />}
 
-        {!error && service === null && (
+        {!error && notFound && <ServicesErrorState message="این خدمت یافت نشد." />}
+
+        {!error && !notFound && service === null && (
           <div style={{ display: "flex", flexDirection: "column", gap: spacing.md }}>
             <SkeletonBlock height={160} />
             <SkeletonBlock height={100} />
@@ -72,9 +122,10 @@ export default function ServiceDetailPage() {
           </div>
         )}
 
-        {!error && service !== null && (
+        {!error && !notFound && service !== null && (
           <>
             <ServiceHero service={service} />
+            <ServiceDetailCardSummary service={service} categoryName={categoryName} />
             <Pricing service={service} />
             <ServiceInfo service={service} />
             <DisabledPurchaseCTA />

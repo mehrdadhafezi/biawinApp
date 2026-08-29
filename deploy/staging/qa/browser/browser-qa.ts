@@ -837,6 +837,9 @@ async function runServicesModuleChecks(page: Page, issues: PageIssues): Promise<
   const firstCard = page.locator('main button').filter({ has: page.locator('strong') }).first();
   let serviceDetailUrl: string | null = null;
   if ((await firstCard.count()) > 0) {
+    const clickedTitle = (await firstCard.locator('strong').innerText()).trim();
+    const clickedService = categoryAssetServices.find((s) => s.title === clickedTitle);
+
     await step('Service Detail — Services-origin click navigation renders cardOnly (no full payment-method chooser)', async () => {
       issues.markNavigationAttempt();
       await firstCard.click();
@@ -853,6 +856,15 @@ async function runServicesModuleChecks(page: Page, issues: PageIssues): Promise<
       assert(html.includes('به‌زودی'), 'expected the "به‌زودی" caption on the disabled CTA');
       const ctaDisabled = await page.getByRole('button', { name: 'خرید — به‌زودی' }).isDisabled();
       assert(ctaDisabled, 'expected the purchase CTA button to be disabled');
+      // SERVICES-R3: the real service's own title and its real category
+      // name (ServiceDetailCardSummary's "دسته‌بندی" fact) must both
+      // actually render — not just "a" cardOnly page rendering correctly.
+      assert(html.includes(clickedTitle), `expected the real clicked service title "${clickedTitle}" to render on Service Detail`);
+      assert(html.includes(categoryAsset.name), `expected the real category name "${categoryAsset.name}" to render on Service Detail (ServiceDetailCardSummary)`);
+      if (clickedService) {
+        const expectedMethodLabel = METHOD_LABEL[clickedService.availableMethods[0]] ?? clickedService.availableMethods[0];
+        assert(html.includes(expectedMethodLabel), `expected the real primary method label "${expectedMethodLabel}" for "${clickedTitle}" to render on Service Detail`);
+      }
     });
 
     await captureScreenshot(page, 'services-detail-cardonly-desktop', DESKTOP);
@@ -916,6 +928,25 @@ async function runServicesModuleChecks(page: Page, issues: PageIssues): Promise<
       const cardCount = await mainStrongTitles.count();
       assert(cardCount === (byCategory.get(cat.id)?.length ?? 0), `expected ${byCategory.get(cat.id)?.length ?? 0} cards for "${cat.name}", got ${cardCount}`);
     });
+  }
+
+  // SERVICES-R3 (§13/§20 negative data-integrity case): a real Service
+  // fetched by a REAL id, but paired with a DIFFERENT real category's id
+  // in the URL, must render as not-found — never silently show a real
+  // Service under a Category it doesn't actually belong to. Exercises
+  // the fix in app/services/[categoryId]/[serviceId]/page.tsx live.
+  const mismatchedProbe = categoryAssetServices[0];
+  if (mismatchedProbe && categoryFew.id !== categoryAsset.id) {
+    await step(`SERVICES-R3 data integrity — a real service under the WRONG category's URL renders not-found, never the mismatched service`, async () => {
+      issues.markNavigationAttempt();
+      await page.goto(`${CUSTOMER_ORIGIN}/services/${categoryFew.id}/${mismatchedProbe.id}`, { waitUntil: 'networkidle' });
+      await page.waitForTimeout(500);
+      const html = await page.content();
+      assert(html.includes('این خدمت یافت نشد.'), 'expected the not-found state for a real service/category mismatch');
+      assert(!html.includes(mismatchedProbe.title), `must NOT render "${mismatchedProbe.title}" under the wrong category's URL`);
+    });
+  } else {
+    skip('SERVICES-R3 data integrity — wrong-category service URL', 'no two distinct real categories with services were available to construct a mismatched pair');
   }
 
   const fewProbe = (byCategory.get(categoryFew.id) ?? [])[0];
