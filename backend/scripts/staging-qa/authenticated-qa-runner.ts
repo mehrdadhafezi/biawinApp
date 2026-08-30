@@ -46,6 +46,10 @@ const RUN_ID = new Date().toISOString().replace(/[:.]/g, '-');
 
 const QA_TAG = `STAGE522-QA-${Date.now()}-${randomBytes(3).toString('hex')}`;
 
+/** The permanent, intentional STAGING_TEST_AUTH fixture phone — see customerAuthCheck(). */
+const STAGING_TEST_PHONE = '09121111111';
+const STAGING_TEST_OTP = '123456';
+
 const prisma = new PrismaClient();
 
 // ---------------------------------------------------------------------------
@@ -90,7 +94,7 @@ function escapeRegExp(s: string): string {
 /** Runs one check; never throws — records FAIL and returns undefined instead. */
 async function step<T>(
   name: string,
-  fn: () => Promise<T>,
+  fn: () => T | Promise<T>,
 ): Promise<T | undefined> {
   try {
     const value = await fn();
@@ -169,7 +173,8 @@ async function apiCall<T = unknown>(
     // `path` (never a secret — every call site here passes a fixed API
     // route) and `origin` are safe to log; nothing from `init` (which can
     // carry a password/token) is included.
-    const cause = err instanceof Error && 'cause' in err ? err.cause : undefined;
+    const cause =
+      err instanceof Error && 'cause' in err ? err.cause : undefined;
     const causeDetail =
       cause instanceof Error
         ? `${cause.name}: ${cause.message}`
@@ -766,7 +771,7 @@ async function main(): Promise<void> {
     await propagationImageCheck(superAdmin);
 
     // --- Section 8: Customer authenticated QA (STAGING_TEST_AUTH) ----------
-    await customerAuthCheck();
+    const customerToken = await customerAuthCheck();
 
     // --- Section 11: Audit log QA -------------------------------------------
     await auditLogCrudProofCheck(superAdmin);
@@ -796,6 +801,9 @@ async function main(): Promise<void> {
         );
       },
     );
+
+    // --- Section 12: SERVICES-R5.1 Transaction Foundation QA ---------------
+    await servicesR511TransactionFoundationCheck(customerToken);
   } catch (fatal) {
     finish(fatal instanceof Error ? fatal : new Error(String(fatal)));
     return;
@@ -1628,14 +1636,17 @@ async function auditLogCrudProofCheck(admin: AdminSession): Promise<void> {
   );
 }
 
-async function customerAuthCheck(): Promise<void> {
+async function customerAuthCheck(): Promise<string | undefined> {
   const verify = await step('Customer STAGING_TEST_AUTH login', async () => {
     const res = await apiCall<
       | { status: 'authenticated'; accessToken: string; refreshToken: string }
       | { status: 'signup_required'; signupToken: string }
     >(API_ORIGIN, '/api/v1/auth/otp/verify', {
       method: 'POST',
-      body: JSON.stringify({ phone: '09121111111', code: '123456' }),
+      body: JSON.stringify({
+        phone: STAGING_TEST_PHONE,
+        code: STAGING_TEST_OTP,
+      }),
     });
     assert(
       res.ok,
@@ -1648,7 +1659,7 @@ async function customerAuthCheck(): Promise<void> {
       'Customer authenticated Home access',
       'STAGING_TEST_AUTH login did not succeed',
     );
-    return;
+    return undefined;
   }
 
   let customerToken: string | undefined;
@@ -1679,7 +1690,7 @@ async function customerAuthCheck(): Promise<void> {
       'Customer authenticated Home access',
       'no customer access token obtained',
     );
-    return;
+    return undefined;
   }
 
   await step(
@@ -1698,6 +1709,418 @@ async function customerAuthCheck(): Promise<void> {
   console.log(
     '[qa] note: the STAGING_TEST_AUTH fixed test phone (09121111111) is a permanent, intentional fixture — its User row is left in place, not deleted, matching every other run of this script.',
   );
+
+  return customerToken;
+}
+
+// ---------------------------------------------------------------------------
+// SERVICES-R5.1 — Transaction Foundation QA (real deployed HTTP + Postgres)
+// ---------------------------------------------------------------------------
+
+interface QaServiceSummary {
+  id: string;
+  active: boolean;
+  availableMethods: string[];
+  merchantId: string | null;
+  priceFrom: number | null;
+}
+
+const ALL_PURCHASE_METHODS = ['credit', 'installment', 'cash', 'free'] as const;
+
+/**
+ * Finds a real, active, public Service with no authoritative usable price
+ * under the R5.1 pricing rule (`free` never selected, `priceFrom` null or
+ * <=0) — i.e. one that R5.1 MUST safely block from purchase. Per the
+ * R5.1 report, this is expected to match on the very first page today:
+ * 0/108 real services have a usable `priceFrom` and 0/108 support `free`.
+ * Never fabricates a Service — only reads the real public catalog.
+ */
+async function discoverPricingBlockedService(): Promise<
+  QaServiceSummary | undefined
+> {
+  const limit = 100;
+  for (let page = 1; page <= 5; page += 1) {
+    const res = await apiCall<{ items: QaServiceSummary[]; total: number }>(
+      API_ORIGIN,
+      `/api/v1/services?page=${page}&limit=${limit}`,
+    );
+    if (!res.ok || !Array.isArray(res.body.items)) return undefined;
+    const candidate = res.body.items.find(
+      (s) =>
+        s.active &&
+        Array.isArray(s.availableMethods) &&
+        s.availableMethods.length > 0 &&
+        !s.availableMethods.includes('free') &&
+        (s.priceFrom === null || s.priceFrom <= 0),
+    );
+    if (candidate) return candidate;
+    if (res.body.items.length < limit) return undefined;
+  }
+  return undefined;
+}
+
+async function attemptOrder(
+  token: string,
+  payload: Record<string, unknown>,
+): Promise<ApiResponse<{ id?: string }>> {
+  return apiCall<{ id?: string }>(API_ORIGIN, '/api/v1/orders', {
+    method: 'POST',
+    token,
+    body: JSON.stringify(payload),
+  });
+}
+
+interface FinancialSnapshot {
+  orders: number;
+  payments: number;
+  installments: number;
+  wallets: Array<{ id: string; kind: string; balance: number }>;
+}
+
+async function snapshotFinancialState(
+  userId: string,
+): Promise<FinancialSnapshot> {
+  const [orders, payments, installments, wallets] = await Promise.all([
+    prisma.order.count({ where: { userId } }),
+    prisma.payment.count({ where: { order: { userId } } }),
+    prisma.installment.count({ where: { userId } }),
+    prisma.wallet.findMany({
+      where: { userId },
+      select: { id: true, kind: true, balance: true },
+    }),
+  ]);
+  return { orders, payments, installments, wallets };
+}
+
+/**
+ * Exercises the real POST /orders R5.1 transaction boundary against the
+ * real deployed staging backend + Postgres. Never invents pricing, never
+ * fabricates a Merchant, never expects a successful Order — per the R5.1
+ * report, every real Service today is safely blocked by
+ * ServicePricingService, and this QA proves exactly that, not around it.
+ */
+async function servicesR511TransactionFoundationCheck(
+  customerToken: string | undefined,
+): Promise<void> {
+  // --- 1. Authentication — reachable with or without a customer session ---
+  await step(
+    'SERVICES-R5.1 unauthenticated POST /orders rejected',
+    async () => {
+      const res = await apiCall(API_ORIGIN, '/api/v1/orders', {
+        method: 'POST',
+        body: JSON.stringify({
+          serviceId: randomUUID(),
+          method: 'cash',
+          idempotencyKey: `${QA_TAG}-r511-unauth`,
+        }),
+      });
+      assert(
+        res.status === 401,
+        `expected 401 for unauthenticated POST /orders, got ${detail(res)}`,
+      );
+    },
+  );
+
+  if (!customerToken) {
+    skip(
+      'SERVICES-R5.1 transaction foundation checks (authenticated)',
+      'no STAGING_TEST_AUTH customer token available — see Customer STAGING_TEST_AUTH login above',
+    );
+    return;
+  }
+
+  const user = await prisma.user.findUnique({
+    where: { phone: STAGING_TEST_PHONE },
+    select: { id: true },
+  });
+  if (!user) {
+    skip(
+      'SERVICES-R5.1 transaction foundation checks (authenticated)',
+      'STAGING_TEST_AUTH user row not found in the database despite a successful login',
+    );
+    return;
+  }
+  const userId = user.id;
+
+  // --- 2. Real service discovery ------------------------------------------
+  const candidate = await step(
+    'SERVICES-R5.1 real service discovered',
+    async () => {
+      const found = await discoverPricingBlockedService();
+      assert(
+        !!found,
+        'no real active Service without a usable authoritative price could be discovered on the public catalog — cannot safely test the R5.1 pricing-block boundary without either fabricating data (forbidden) or a real catalog change',
+      );
+      return found;
+    },
+  );
+  if (candidate) {
+    record(
+      'SERVICES-R5.1 selected service snapshot',
+      'PASS',
+      `id=${candidate.id} active=${candidate.active} availableMethods=${JSON.stringify(candidate.availableMethods)} merchantId=${candidate.merchantId} priceFrom=${candidate.priceFrom}`,
+    );
+  }
+  await step(
+    'SERVICES-R5.1 selected service has no authoritative usable price today',
+    () => {
+      assert(!!candidate, 'no candidate service was discovered');
+      assert(
+        candidate!.priceFrom === null || candidate!.priceFrom <= 0,
+        `expected no usable priceFrom, got ${candidate!.priceFrom}`,
+      );
+      assert(
+        !candidate!.availableMethods.includes('free'),
+        'expected the selected service not to support the free method (which would be tautologically priced)',
+      );
+    },
+  );
+  if (!candidate) {
+    skip(
+      'SERVICES-R5.1 transaction boundary checks (require a real service)',
+      'no suitable real service was discovered',
+    );
+    return;
+  }
+
+  const before = await snapshotFinancialState(userId);
+  const supportedMethod = candidate.availableMethods[0];
+  const unexpectedOrderIds: string[] = [];
+
+  // --- 3. Authoritative pricing block --------------------------------------
+  await step(
+    'SERVICES-R5.1 authoritative pricing unavailable returns 422',
+    async () => {
+      const res = await attemptOrder(customerToken, {
+        serviceId: candidate.id,
+        method: supportedMethod,
+        idempotencyKey: `${QA_TAG}-r511-pricing-block`,
+      });
+      if (res.ok) {
+        if (res.body.id) unexpectedOrderIds.push(res.body.id);
+        throw new Error(
+          `expected authoritative pricing to block this purchase, but an Order was created (id=${res.body.id}) — this is a genuine R5.1 defect, not a QA artifact`,
+        );
+      }
+      assert(
+        res.status === 422,
+        `expected 422 Unprocessable Entity for unavailable authoritative pricing, got ${detail(res)}`,
+      );
+    },
+  );
+
+  // --- 4. Client amount tampering ------------------------------------------
+  await step(
+    'SERVICES-R5.1 client amount cannot control the transaction',
+    async () => {
+      const res = await attemptOrder(customerToken, {
+        serviceId: candidate.id,
+        method: supportedMethod,
+        idempotencyKey: `${QA_TAG}-r511-tamper`,
+        amount: 1,
+      });
+      if (res.ok) {
+        if (res.body.id) unexpectedOrderIds.push(res.body.id);
+        throw new Error(
+          `expected the client-supplied 'amount' field to be rejected or ignored, but an Order was created (id=${res.body.id})`,
+        );
+      }
+      assert(
+        res.status === 400,
+        `expected the deployed ValidationPipe (whitelist+forbidNonWhitelisted, see backend/src/main.ts) to reject the unknown 'amount' field with 400, got ${detail(res)}`,
+      );
+    },
+  );
+
+  // --- 5. Unsupported purchase method ---------------------------------------
+  await step('SERVICES-R5.1 unsupported purchase method rejected', async () => {
+    const unsupported = ALL_PURCHASE_METHODS.find(
+      (m) => !candidate.availableMethods.includes(m),
+    );
+    assert(
+      !!unsupported,
+      'selected service unexpectedly supports every purchase method — cannot construct an unsupported-method probe against it',
+    );
+    const res = await attemptOrder(customerToken, {
+      serviceId: candidate.id,
+      method: unsupported,
+      idempotencyKey: `${QA_TAG}-r511-method`,
+    });
+    if (res.ok) {
+      if (res.body.id) unexpectedOrderIds.push(res.body.id);
+      throw new Error(
+        `expected an unsupported purchase method to be rejected, but an Order was created (id=${res.body.id})`,
+      );
+    }
+    assert(
+      res.status === 422,
+      `expected a deterministic 422 for an unsupported purchase method, got ${detail(res)}`,
+    );
+  });
+
+  // --- 6. Nonexistent service ------------------------------------------------
+  await step('SERVICES-R5.1 nonexistent service rejected', async () => {
+    const res = await attemptOrder(customerToken, {
+      serviceId: randomUUID(),
+      method: 'cash',
+      idempotencyKey: `${QA_TAG}-r511-nonexistent-service`,
+    });
+    if (res.ok) {
+      if (res.body.id) unexpectedOrderIds.push(res.body.id);
+      throw new Error(
+        `expected a nonexistent Service id to be rejected, but an Order was created (id=${res.body.id})`,
+      );
+    }
+    assert(
+      res.status === 404,
+      `expected 404 Not Found for a nonexistent Service, got ${detail(res)}`,
+    );
+  });
+
+  // --- 7. Merchant mismatch ---------------------------------------------------
+  await step(
+    'SERVICES-R5.1 unrelated/nonexistent merchant rejected',
+    async () => {
+      const res = await attemptOrder(customerToken, {
+        serviceId: candidate.id,
+        method: supportedMethod,
+        merchantId: randomUUID(),
+        idempotencyKey: `${QA_TAG}-r511-merchant-mismatch`,
+      });
+      if (res.ok) {
+        if (res.body.id) unexpectedOrderIds.push(res.body.id);
+        throw new Error(
+          `expected an unrelated/nonexistent merchantId to be rejected (this service's real merchantId=${candidate.merchantId}), but an Order was created (id=${res.body.id})`,
+        );
+      }
+      assert(
+        res.status === 422,
+        `expected 422 for merchant relationship validation failure, got ${detail(res)}`,
+      );
+    },
+  );
+
+  // --- 8. Idempotency of a pricing-blocked request ----------------------------
+  await step(
+    'SERVICES-R5.1 repeated blocked request is deterministic, creates no duplicate',
+    async () => {
+      const payload = {
+        serviceId: candidate.id,
+        method: supportedMethod,
+        idempotencyKey: `${QA_TAG}-r511-repeat-blocked`,
+      };
+      const first = await attemptOrder(customerToken, payload);
+      const second = await attemptOrder(customerToken, payload);
+      if (first.ok || second.ok) {
+        const okRes = first.ok ? first : second;
+        if (okRes.body.id) unexpectedOrderIds.push(okRes.body.id);
+        throw new Error(
+          `expected both attempts to be blocked by unavailable pricing, but got an Order (id=${okRes.body.id})`,
+        );
+      }
+      assert(
+        first.status === 422 && second.status === 422,
+        `expected deterministic repeated 422s, got first=${detail(first)} second=${detail(second)}`,
+      );
+    },
+  );
+  skip(
+    'SERVICES-R5.1 idempotent replay of a SUCCESSFUL Order returns the original (no duplicate)',
+    'NOT_TESTED — BLOCKED BY REAL PRICING DATA: no real Service has an authoritative price today, so a successful Order (and therefore this positive idempotency path) cannot be reached without fabricating pricing, which is forbidden. Covered at the unit-test level instead — see backend/src/modules/orders/orders.service.spec.ts.',
+  );
+
+  // --- 11. Ownership ------------------------------------------------------------
+  await step(
+    'SERVICES-R5.1 client-supplied userId/ownerId cannot influence ownership',
+    async () => {
+      const res = await attemptOrder(customerToken, {
+        serviceId: candidate.id,
+        method: supportedMethod,
+        idempotencyKey: `${QA_TAG}-r511-ownership`,
+        userId: randomUUID(),
+        ownerId: randomUUID(),
+      });
+      if (res.ok) {
+        if (res.body.id) unexpectedOrderIds.push(res.body.id);
+        throw new Error(
+          `expected unknown userId/ownerId fields to be rejected, but an Order was created (id=${res.body.id})`,
+        );
+      }
+      assert(
+        res.status === 400,
+        `expected the deployed ValidationPipe to reject unknown userId/ownerId fields with 400 (same whitelist mechanism as the amount-tampering check), got ${detail(res)}`,
+      );
+    },
+  );
+
+  // --- 9 & 10. Database side-effect proof + gateway non-invocation -----------
+  const after = await snapshotFinancialState(userId);
+  await step('SERVICES-R5.1 Orders delta = 0', () => {
+    assert(
+      after.orders === before.orders,
+      `expected no new Order rows for the test user, before=${before.orders} after=${after.orders}`,
+    );
+  });
+  await step(
+    'SERVICES-R5.1 Payments delta = 0 (also the strongest available proof of no gateway invocation)',
+    () => {
+      assert(
+        after.payments === before.payments,
+        `expected no new Payment rows for the test user, before=${before.payments} after=${after.payments}`,
+      );
+    },
+  );
+  await step('SERVICES-R5.1 Installments delta = 0', () => {
+    assert(
+      after.installments === before.installments,
+      `expected no new Installment rows for the test user, before=${before.installments} after=${after.installments}`,
+    );
+  });
+  await step('SERVICES-R5.1 Wallet state unchanged', () => {
+    if (before.wallets.length === 0) {
+      assert(
+        after.wallets.length === 0,
+        `test user had no Wallet before; expected none to be created as a side effect, found ${after.wallets.length}`,
+      );
+      return;
+    }
+    assert(
+      after.wallets.length === before.wallets.length,
+      `expected the same number of Wallet rows, before=${before.wallets.length} after=${after.wallets.length}`,
+    );
+    for (const w of before.wallets) {
+      const match = after.wallets.find((x) => x.id === w.id);
+      assert(!!match, `wallet ${w.id} (${w.kind}) disappeared`);
+      assert(
+        match!.balance === w.balance,
+        `expected wallet ${w.kind} balance to stay ${w.balance}, got ${match!.balance}`,
+      );
+    }
+  });
+  console.log(
+    "[qa] note: gateway non-invocation is proven here at the database-state level (no Payment row created) plus the R5.1 unit tests' constructor-injection proof that OrdersService has no PaymentsService/gateway dependency at all — no live Zibal/Zarinpal request was made or intercepted, since making one is explicitly out of scope for this stage.",
+  );
+
+  // --- 12. Cleanup ---------------------------------------------------------
+  if (unexpectedOrderIds.length > 0) {
+    record(
+      'SERVICES-R5.1 CRITICAL: an Order was created despite pricing being unavailable',
+      'FAIL',
+      `order ids: ${unexpectedOrderIds.join(', ')} — this is a genuine R5.1 defect and must be investigated before this stage can be considered safe`,
+    );
+    for (const id of unexpectedOrderIds) {
+      registerRestore(
+        `SERVICES-R5.1 cleanup: delete unexpectedly-created Order ${id}`,
+        async () => {
+          await prisma.order.delete({ where: { id } });
+        },
+      );
+    }
+  } else {
+    console.log(
+      '[qa] SERVICES-R5.1: no disposable records to clean up — every purchase attempt was correctly blocked before any Order row was created.',
+    );
+  }
 }
 
 // ---------------------------------------------------------------------------

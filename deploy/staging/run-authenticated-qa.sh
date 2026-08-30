@@ -13,9 +13,14 @@
 #      upload/reject/delete, Home CMS CRUD across all four resources,
 #      the Category-UUID-not-display-name relationship proof, Admin ->
 #      Customer propagation (text/active/reorder/image, each restored and
-#      re-verified), audit log entries, and Customer STAGING_TEST_AUTH
-#      login. Runs inside the real `backend` Docker image (proven runtime
-#      packaging, direct Prisma/DB access for provisioning temporary
+#      re-verified), audit log entries, Customer STAGING_TEST_AUTH login,
+#      and (SERVICES-R5.1.1) the POST /orders transaction boundary: auth
+#      rejection, authoritative-pricing block, client amount-tampering
+#      immunity, method/service/merchant validation, idempotency, and a
+#      real-database proof that zero Order/Payment/Installment/Wallet
+#      records are created by any of the above. Runs inside the real
+#      `backend` Docker image (proven runtime packaging, direct Prisma/DB
+#      access for provisioning temporary
 #      CONTENT_EDITOR/SUPPORT_VIEWER admin accounts — there is no REST
 #      endpoint for that in this codebase, so this is the only mechanism
 #      available; both accounts are deleted again before this script

@@ -49,6 +49,21 @@ display-name relationship proof, four classes of Admin→Customer propagation
 **restored and re-verified**, audit log entries, and a Customer
 `STAGING_TEST_AUTH` login plus the reverse identity-boundary check.
 
+**SERVICES-R5.1.1** (added after the R5.1 transaction foundation shipped):
+exercises the real `POST /orders` boundary against the real deployed
+backend and Postgres, using the `STAGING_TEST_AUTH` customer session —
+unauthenticated rejection, discovery of a real Service the authoritative-
+pricing rule must block, the 422 pricing-block itself, client `amount`
+tampering rejected by the deployed `ValidationPipe` (`whitelist` +
+`forbidNonWhitelisted`), unsupported-method / nonexistent-service /
+merchant-mismatch rejection, idempotent-replay determinism for a blocked
+request, an ownership-hijack attempt via a client-supplied `userId`, and a
+direct Prisma read proving zero `Order`/`Payment`/`Installment` rows and no
+`Wallet` balance change resulted from any of it. See
+`docs/services-r5-1-transaction-domain-foundation.md` for what this proves
+and what it deliberately cannot (a successful-Order idempotency replay,
+blocked by there being no real Service with a usable price today).
+
 ### 2. Browser/visual layer (`deploy/staging/qa/browser/`)
 
 Runs inside the official Playwright Docker image (`mcr.microsoft.com/
