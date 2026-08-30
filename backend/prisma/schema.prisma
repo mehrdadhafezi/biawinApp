@@ -451,6 +451,9 @@ model Merchant {
   active      Boolean @default(true)
 
   services Service[]
+  /// SERVICES-R5.1 — Order.merchantId's reverse relation (a server-derived
+  /// snapshot at purchase time, see Order's own doc comment).
+  orders   Order[]
 
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
@@ -505,9 +508,26 @@ model Order {
   user          User           @relation(fields: [userId], references: [id], onDelete: Restrict)
   serviceId     String
   service       Service        @relation(fields: [serviceId], references: [id], onDelete: Restrict)
+  /// Snapshot of `Service.merchantId` AT ORDER CREATION TIME (server-derived,
+  /// never client-trusted — see OrdersService.create()). Nullable because most
+  /// real services have no merchant (SERVICES-R4 finding: 0/108 do today).
+  /// Kept separate from a live `service.merchant` join so a later merchant
+  /// re-link on the Service never silently rewrites what an existing Order
+  /// actually transacted with (SERVICES-R5.1).
+  merchantId    String?
+  merchant      Merchant?      @relation(fields: [merchantId], references: [id], onDelete: SetNull)
   method        PurchaseMethod
+  /// Rial, integer — ALWAYS resolved server-side by ServicePricingService,
+  /// never accepted from the client (SERVICES-R5.1, closes the R5 contract's
+  /// "amount tampering" gap).
   amount        Int
   status        OrderStatus    @default(pending)
+  /// SERVICES-R5.1 idempotency — see `@@unique([userId, idempotencyKey])`.
+  /// Nullable only so this migration doesn't require backfilling any
+  /// pre-existing Order rows; every new Order created through
+  /// OrdersService.create() always sets a real value (enforced at the
+  /// application boundary, not the database — see the R5.1 report).
+  idempotencyKey String?
 
   installment  Installment?
   creditUsages CreditUsage[]
@@ -516,6 +536,7 @@ model Order {
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
 
+  @@unique([userId, idempotencyKey])
   @@index([userId, status])
   @@map("orders")
 }
