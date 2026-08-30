@@ -29,6 +29,23 @@ export interface ServiceDto {
   active: boolean;
 }
 
+/**
+ * SERVICES-R4 — matches the raw Merchant shape returned by
+ * `GET /merchants/:id` (public). Deliberately minimal: this is the
+ * REAL, complete `Merchant` model (`backend/prisma/schema.prisma`) —
+ * `id`/`name`/`description`/`logoKey`/`active` only. No branch, address,
+ * phone, rating, or discount fields exist anywhere in the real schema;
+ * see docs/services-r4-merchant-detail-report.md for why none of those
+ * prototype-adjacent concepts were invented here.
+ */
+export interface MerchantDto {
+  id: string;
+  name: string;
+  description: string | null;
+  logoKey: string | null;
+  active: boolean;
+}
+
 interface Paginated<T> {
   items: T[];
   page: number;
@@ -67,4 +84,9 @@ export const servicesApi = {
   listCategories: () => apiClient.get<Paginated<CategoryDto>>("/categories?limit=100", { public: true }),
   listAllServices,
   getService: (id: string) => apiClient.get<ServiceDto>(`/services/${id}`, { public: true }),
+};
+
+/** SERVICES-R4 — real, public `GET /merchants/:id`, same "public catalog read" shape as `servicesApi`. */
+export const merchantsApi = {
+  getMerchant: (id: string) => apiClient.get<MerchantDto>(`/merchants/${id}`, { public: true }),
 };

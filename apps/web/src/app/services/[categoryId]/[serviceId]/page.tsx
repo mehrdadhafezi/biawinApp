@@ -1,7 +1,7 @@
 "use client";
 
 import { useEffect, useState } from "react";
-import { useParams } from "next/navigation";
+import { useParams, useRouter } from "next/navigation";
 import { spacing } from "@biawin/ui";
 import { AppShell } from "../../../../components/shell/AppShell";
 import { SkeletonBlock, SkeletonStyles } from "../../../../components/common/SkeletonBlock";
@@ -9,6 +9,7 @@ import { ServiceHero } from "../../../../components/services/ServiceHero";
 import { ServiceDetailCardSummary } from "../../../../components/services/ServiceDetailCardSummary";
 import { ServiceInfo } from "../../../../components/services/ServiceInfo";
 import { Pricing } from "../../../../components/services/Pricing";
+import { MerchantLinkCTA } from "../../../../components/services/MerchantLinkCTA";
 import { DisabledPurchaseCTA } from "../../../../components/services/DisabledPurchaseCTA";
 import { ServicesErrorState } from "../../../../components/services/ServicesStates";
 import { useServiceCatalog } from "../../../../components/services/useServiceCatalog";
@@ -69,6 +70,7 @@ import { belongsToCategory } from "../../../../components/services/serviceValida
  * once it's actually known.
  */
 export default function ServiceDetailPage() {
+  const router = useRouter();
   const params = useParams<{ categoryId: string; serviceId: string }>();
   const [service, setService] = useState<ServiceDto | null>(null);
   const [notFound, setNotFound] = useState(false);
@@ -142,6 +144,17 @@ export default function ServiceDetailPage() {
             <ServiceDetailCardSummary service={service} categoryName={categoryName} />
             <Pricing service={service} />
             <ServiceInfo service={service} />
+            {/*
+             * SERVICES-R4: a REAL, functioning link — only rendered when
+             * this real service's `merchantId` is actually non-null.
+             * Every one of the 108 real services today has `merchantId:
+             * null` (verified live), so this correctly never appears in
+             * practice — not a dead control, an honest reflection of the
+             * real relationship.
+             */}
+            {service.merchantId && (
+              <MerchantLinkCTA onClick={() => router.push(`/services/${service.categoryId}/${service.id}/${service.merchantId}`)} />
+            )}
             <DisabledPurchaseCTA />
           </>
         )}

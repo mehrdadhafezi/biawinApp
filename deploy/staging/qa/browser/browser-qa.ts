@@ -373,6 +373,7 @@ interface ServiceSnapshot {
   categoryId: string;
   title: string;
   availableMethods: string[];
+  merchantId: string | null;
 }
 
 /**
@@ -947,6 +948,67 @@ async function runServicesModuleChecks(page: Page, issues: PageIssues): Promise<
     });
   } else {
     skip('SERVICES-R3 data integrity — wrong-category service URL', 'no two distinct real categories with services were available to construct a mismatched pair');
+  }
+
+  // SERVICES-R4 (Merchant Detail): 0 of the 108 real seeded services have
+  // a non-null merchantId (verified live, docs/services-r4-merchant-detail-report.md)
+  // — computed from the live snapshot, not assumed, so this automatically
+  // starts covering the positive path the moment real merchant data ever
+  // exists, without needing a QA-script change.
+  const serviceWithMerchant = snapshot.services.find((s) => s.merchantId);
+  if (serviceWithMerchant) {
+    await step(`SERVICES-R4 — Merchant link appears for the real service that has a real merchantId, and Merchant Detail renders`, async () => {
+      issues.markNavigationAttempt();
+      await page.goto(`${CUSTOMER_ORIGIN}/services/${serviceWithMerchant.categoryId}/${serviceWithMerchant.id}`, { waitUntil: 'networkidle' });
+      const merchantLink = page.getByRole('button', { name: 'مشاهده اطلاعات فروشنده' });
+      await merchantLink.waitFor({ timeout: 10000 });
+      issues.markNavigationAttempt();
+      await merchantLink.click();
+      await page.waitForURL(/\/services\/[^/]+\/[^/]+\/[^/]+$/, { timeout: 15000 });
+      await page.waitForLoadState('networkidle');
+      const html = await page.content();
+      assert(!html.includes('این فروشنده یافت نشد.'), 'expected a real Merchant Detail render, not not-found, for a genuinely linked merchant');
+    });
+
+    await step('SERVICES-R4 — browser back from Merchant Detail returns to the correct Service Detail', async () => {
+      issues.markNavigationAttempt();
+      await page.goBack({ waitUntil: 'networkidle' });
+      assert(new RegExp(`/services/${serviceWithMerchant.categoryId}/${serviceWithMerchant.id}$`).test(page.url()), `expected to return to the real Service Detail, got ${page.url()}`);
+    });
+  } else {
+    skip(
+      'SERVICES-R4 — Merchant link positive-path render',
+      'no real service currently has a non-null merchantId (0/108 verified live) — the entry point correctly never appears; this is the honest real-data state, not a gap to fake past',
+    );
+
+    // Since no real positive path exists, prove the NEGATIVE of the same
+    // fact directly: the real category-asset service (already visited
+    // above) must NOT show the Merchant link, matching its own real
+    // merchantId: null.
+    if (mismatchedProbe && mismatchedProbe.merchantId === null) {
+      await step('SERVICES-R4 — a real service with no merchant never shows the Merchant link (matches real data, not a dead control)', async () => {
+        issues.markNavigationAttempt();
+        await page.goto(`${CUSTOMER_ORIGIN}/services/${mismatchedProbe.categoryId}/${mismatchedProbe.id}`, { waitUntil: 'networkidle' });
+        await page.getByRole('button', { name: 'خرید — به‌زودی' }).waitFor({ timeout: 10000 });
+        assert((await page.getByRole('button', { name: 'مشاهده اطلاعات فروشنده' }).count()) === 0, 'expected NO Merchant link for a real service with merchantId: null');
+      });
+    }
+  }
+
+  // SERVICES-R4 negative data-integrity case: a real, valid Category +
+  // Service pair (proves the relationship chain up to this point is
+  // real) combined with a syntactically-valid but NON-EXISTENT Merchant
+  // UUID must render not-found — never a blank/broken page, never an
+  // unrelated merchant. Doesn't require any real Merchant to exist.
+  if (mismatchedProbe) {
+    await step('SERVICES-R4 data integrity — a real Service + Category pair with a NON-EXISTENT Merchant UUID renders not-found', async () => {
+      issues.markNavigationAttempt();
+      const fakeMerchantId = '00000000-0000-4000-8000-000000000000';
+      await page.goto(`${CUSTOMER_ORIGIN}/services/${mismatchedProbe.categoryId}/${mismatchedProbe.id}/${fakeMerchantId}`, { waitUntil: 'networkidle' });
+      await page.waitForTimeout(500);
+      const html = await page.content();
+      assert(html.includes('این فروشنده یافت نشد.'), 'expected the Merchant not-found state for a real service + a non-existent merchant id');
+    });
   }
 
   const fewProbe = (byCategory.get(categoryFew.id) ?? [])[0];

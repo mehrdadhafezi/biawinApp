@@ -3,6 +3,7 @@ import { ServiceHero } from "./ServiceHero";
 import { ServiceDetailCardSummary } from "./ServiceDetailCardSummary";
 import { Pricing } from "./Pricing";
 import { ServiceInfo } from "./ServiceInfo";
+import { MerchantLinkCTA } from "./MerchantLinkCTA";
 import { DisabledPurchaseCTA } from "./DisabledPurchaseCTA";
 import type { ServiceDto } from "../../lib/services-api";
 
@@ -64,5 +65,39 @@ describe("Service Detail composition — cardOnly contract", () => {
     expect(html).toContain("disabled");
     expect(html).toContain("خرید این خدمت");
     expect(html).toContain("به‌زودی");
+  });
+
+  it("SERVICES-R4: never renders the Merchant link for the 108 real services with no merchant (merchantId: null) — matches the page's own conditional", () => {
+    // Mirrors app/services/[categoryId]/[serviceId]/page.tsx's own
+    // `{service.merchantId && <MerchantLinkCTA .../>}` conditional exactly.
+    const html = renderToStaticMarkup(
+      <>
+        <ServiceHero service={service} />
+        <ServiceDetailCardSummary service={service} categoryName="گردشگری" />
+        <Pricing service={service} />
+        <ServiceInfo service={service} />
+        {service.merchantId && <MerchantLinkCTA onClick={() => {}} />}
+        <DisabledPurchaseCTA />
+      </>,
+    );
+    expect(html).not.toContain("مشاهده اطلاعات فروشنده");
+  });
+
+  it("SERVICES-R4: renders the real Merchant link when a real service DOES have a merchant, still with no full-mode leak", () => {
+    const serviceWithMerchant: ServiceDto = { ...service, merchantId: "m1" };
+    const html = renderToStaticMarkup(
+      <>
+        <ServiceHero service={serviceWithMerchant} />
+        <ServiceDetailCardSummary service={serviceWithMerchant} categoryName="گردشگری" />
+        <Pricing service={serviceWithMerchant} />
+        <ServiceInfo service={serviceWithMerchant} />
+        {serviceWithMerchant.merchantId && <MerchantLinkCTA onClick={() => {}} />}
+        <DisabledPurchaseCTA />
+      </>,
+    );
+    expect(html).toContain("مشاهده اطلاعات فروشنده");
+    expect(html).not.toContain("خرید اعتباری");
+    expect(html).not.toContain("خرید قسطی");
+    expect(html).not.toContain("رایگان و جایزه");
   });
 });
