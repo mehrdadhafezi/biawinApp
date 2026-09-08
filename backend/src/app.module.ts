@@ -18,6 +18,7 @@ import { AdminAuditLogModule } from './modules/admin-audit-log/admin-audit-log.m
 import { AdminAuthModule } from './modules/admin-auth/admin-auth.module';
 import { AdvisorModule } from './modules/advisor/advisor.module';
 import { AuthModule } from './modules/auth/auth.module';
+import { CardsModule } from './modules/cards/cards.module';
 import { CategoriesModule } from './modules/categories/categories.module';
 import { CreditModule } from './modules/credit/credit.module';
 import { InstallmentsModule } from './modules/installments/installments.module';
@@ -69,6 +70,7 @@ import { WalletModule } from './modules/wallet/wallet.module';
     ServicesModule,
     CategoriesModule,
     MerchantsModule,
+    CardsModule,
     OrbitItemsModule,
     OrdersModule,
     PaymentsModule,

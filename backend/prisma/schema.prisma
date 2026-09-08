@@ -106,6 +106,42 @@ enum PaymentProvider {
   gateway
 }
 
+// SERVICES-R5.16 — Card Catalog enums. Uppercase members match the task's
+// literal naming (matches the precedent already set by `AdminRole`, the
+// one other uppercase enum in this schema).
+enum CardType {
+  CREDIT_CARD
+  DISCOUNT_CARD
+  SUBSCRIPTION
+  VOUCHER
+  INSTALLMENT_CARD
+}
+
+enum JourneyType {
+  PURCHASE
+  CREDIT_REQUEST
+  LEAD
+  EXTERNAL_REDIRECT
+  QUOTE_REQUEST
+  FREE_SERVICE
+}
+
+enum CustomerCardStatus {
+  CREATED
+  PURCHASED
+  ACTIVE
+  PARTIALLY_USED
+  USED
+  EXPIRED
+  CANCELLED
+}
+
+enum UsageSource {
+  API
+  WEBHOOK
+  MANUAL
+}
+
 enum PaymentStatus {
   pending
   succeeded
@@ -187,6 +223,8 @@ model User {
   notifications     Notification[]
   refreshTokens     RefreshToken[]
   phoneVerifications PhoneVerification[]
+  /// SERVICES-R5.16 — cards this user owns (see CustomerCardInstance).
+  cardInstances     CustomerCardInstance[]
 
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
@@ -489,6 +527,9 @@ model Service {
   active                 Boolean  @default(true)
 
   orders       Order[]
+  /// SERVICES-R5.16 — the commercial card products this Service can be
+  /// purchased/actioned through (see CardProduct's own doc comment).
+  cardProducts CardProduct[]
 
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
@@ -532,6 +573,10 @@ model Order {
   installment  Installment?
   creditUsages CreditUsage[]
   payments     Payment[]
+  /// SERVICES-R5.16 — the CustomerCardInstance this Order issues, once a
+  /// real purchase-execution path exists (not built this stage; see
+  /// docs/services-r5-16-services-card-catalog-contract.md).
+  cardInstance CustomerCardInstance?
 
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
@@ -558,6 +603,120 @@ model Payment {
   @@index([orderId])
   @@index([rewardClaimId])
   @@map("payments")
+}
+
+// ---------------------------------------------------------------------------
+// Card Catalog (SERVICES-R5.16)
+//
+// Foundation only — see docs/services-r5-16-services-card-catalog-contract.md.
+// Schema/read APIs only: no admin management surface, no purchase-execution
+// wiring (nothing creates a CustomerCardInstance from a real completed
+// Order yet), no usage-tracking webhook/callback endpoint. The business's
+// own open-questions document (found alongside this stage's task,
+// docs/services-r5-16-audit.md §7) leaves refund/cancellation rules, credit
+// reservation, split payment, SSO, and webhook idempotency genuinely
+// unresolved — none of that is invented here.
+// ---------------------------------------------------------------------------
+
+/// The purchasable commercial object shown to a customer for a Service —
+/// distinct from `Service` itself (a catalog/browsing entry) the same way
+/// `MembershipPlan` is distinct from the membership-card *concept* it
+/// represents. Mirrors `MembershipPlan`'s proven shape deliberately (see the
+/// R5.16 audit §2) rather than inventing a new one.
+model CardProduct {
+  id          String   @id @default(uuid())
+  serviceId   String
+  service     Service  @relation(fields: [serviceId], references: [id], onDelete: Restrict)
+  title       String
+  subtitle    String?
+  description String?
+  imageKey    String?
+  badge       String?
+  cardType    CardType
+  /// The user journey this specific card actions — see JourneyType. Lives
+  /// here (not on Service) because a single Service can offer several
+  /// journeys (e.g. both a PURCHASE card and a QUOTE_REQUEST card), each
+  /// realized as its own CardProduct — see R5.16 audit's journey-type
+  /// analysis.
+  journeyType JourneyType
+  /// Rial, integer, Biawin-set — per SERVICES-R5.2.1's resolved business
+  /// decision (Model A: Biawin owns pricing). Nullable because this stage
+  /// introduces the field without seeding any real value into it (no
+  /// fictional pricing — same discipline as `Service.priceFrom`).
+  priceAmount Int?
+  priceLabel  String?
+  benefits    Json // string[]
+  /// Days from activation until expiry, if this card type expires. Kept
+  /// deliberately simple (a single integer) — the docx open-questions
+  /// document (R5.16 audit §7) leaves partial-use/transferability/complex
+  /// validity rules unresolved; this is the one validity concept the task
+  /// itself asked for, nothing more.
+  validityDays Int?
+  /// Opaque bag for future provider/tracking configuration (e.g. an
+  /// external redemption endpoint) — kept as Json, like `OrbitItem`'s
+  /// config fields, specifically so it can be shaped later without a
+  /// migration once R5.16's open questions are answered.
+  providerConfig Json?
+  active      Boolean  @default(true)
+  sortOrder   Int      @default(0)
+
+  cardInstances CustomerCardInstance[]
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@index([serviceId])
+  @@map("card_products")
+}
+
+/// A specific customer's ownership of a CardProduct — mirrors `Membership`'s
+/// shape (see R5.16 audit §2). Nothing in this stage creates a real row
+/// here: the purchase-execution path (Order → payment → issuance) is
+/// explicitly out of scope until the business's open questions on refunds,
+/// credit reservation, and fulfillment-vs-payment separation are answered.
+model CustomerCardInstance {
+  id            String             @id @default(uuid())
+  userId        String
+  user          User               @relation(fields: [userId], references: [id], onDelete: Cascade)
+  cardProductId String
+  cardProduct   CardProduct        @relation(fields: [cardProductId], references: [id], onDelete: Restrict)
+  /// The Order that produced this instance, once a real issuance path
+  /// exists. Nullable + unique: unique because one Order can never issue
+  /// more than one card instance; nullable because this stage does not
+  /// require every instance to originate from an Order at the schema
+  /// level (an application-boundary rule, not a database one — same
+  /// pattern as `Order.idempotencyKey`, R5.1).
+  orderId       String?            @unique
+  order         Order?             @relation(fields: [orderId], references: [id], onDelete: SetNull)
+  status        CustomerCardStatus @default(CREATED)
+  activatedAt   DateTime?
+  expiresAt     DateTime?
+
+  usageTransactions UsageTransaction[]
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@index([userId, status])
+  @@map("customer_card_instances")
+}
+
+/// An append-only record of a CustomerCardInstance being used (fully or
+/// partially) at the external reference system Biawin issued it for.
+/// `amount` is nullable because not every journey type (e.g. LEAD,
+/// QUOTE_REQUEST) has a monetary usage.
+model UsageTransaction {
+  id                     String                @id @default(uuid())
+  customerCardInstanceId String
+  customerCardInstance   CustomerCardInstance  @relation(fields: [customerCardInstanceId], references: [id], onDelete: Cascade)
+  amount                 Int?
+  description            String
+  source                 UsageSource
+
+  createdAt DateTime @default(now())
+
+  @@index([customerCardInstanceId, createdAt])
+  @@map("usage_transactions")
 }
 
 // ---------------------------------------------------------------------------
