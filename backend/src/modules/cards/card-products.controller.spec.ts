@@ -1,5 +1,6 @@
 import { Test, type TestingModule } from '@nestjs/testing';
 import { PrismaService } from '../../infra/prisma/prisma.service';
+import { AdminAuditLogService } from '../admin-audit-log/admin-audit-log.service';
 import { CardProductsController } from './card-products.controller';
 import { CardProductsService } from './card-products.service';
 
@@ -23,6 +24,10 @@ describe('CardProductsController', () => {
               Promise.all(ops),
             ),
           },
+        },
+        {
+          provide: AdminAuditLogService,
+          useValue: { record: jest.fn().mockResolvedValue(undefined) },
         },
       ],
     }).compile();

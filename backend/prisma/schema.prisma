@@ -142,6 +142,16 @@ enum UsageSource {
   MANUAL
 }
 
+/// SERVICES-R5.17 — CardProduct's own catalog lifecycle (distinct from
+/// CustomerCardStatus, which is a customer's *instance* of a purchased
+/// card). See CardProduct.status's own doc comment.
+enum CardProductStatus {
+  DRAFT
+  ACTIVE
+  INACTIVE
+  EXPIRED
+}
+
 enum PaymentStatus {
   pending
   succeeded
@@ -452,6 +462,14 @@ model Category {
   homeServiceBanners     HomeServiceBanner[]
   homeServiceMosaicTiles HomeServiceMosaicTile[]
 
+  // SERVICES-R5.17 — same ADR §5 createdBy/updatedBy content-ownership
+  // pattern Stage 5.19 established for Home CMS, applied here now that
+  // Category becomes Admin-managed for the first time.
+  createdBy      String?
+  createdByAdmin AdminUser? @relation("CategoryCreatedBy", fields: [createdBy], references: [id], onDelete: SetNull)
+  updatedBy      String?
+  updatedByAdmin AdminUser? @relation("CategoryUpdatedBy", fields: [updatedBy], references: [id], onDelete: SetNull)
+
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
 
@@ -530,6 +548,12 @@ model Service {
   /// SERVICES-R5.16 — the commercial card products this Service can be
   /// purchased/actioned through (see CardProduct's own doc comment).
   cardProducts CardProduct[]
+
+  // SERVICES-R5.17 — same ADR §5 pattern as Category, above.
+  createdBy      String?
+  createdByAdmin AdminUser? @relation("ServiceCreatedBy", fields: [createdBy], references: [id], onDelete: SetNull)
+  updatedBy      String?
+  updatedByAdmin AdminUser? @relation("ServiceUpdatedBy", fields: [updatedBy], references: [id], onDelete: SetNull)
 
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
@@ -657,15 +681,31 @@ model CardProduct {
   /// config fields, specifically so it can be shaped later without a
   /// migration once R5.16's open questions are answered.
   providerConfig Json?
-  active      Boolean  @default(true)
-  sortOrder   Int      @default(0)
+  /// SERVICES-R5.17 — replaces the R5.16 boolean `active` flag now that
+  /// Admin actually manages this catalog: a 4-state lifecycle
+  /// (DRAFT|ACTIVE|INACTIVE|EXPIRED) as the task explicitly specified.
+  /// Safe to replace outright (not add alongside) because `card_products`
+  /// has zero real rows as of this migration (R5.16: "New tables start
+  /// empty"). Only `ACTIVE` is visible to public/customer APIs — see
+  /// `CardProductsService.list()`. Transitions between states are not
+  /// restricted by a state machine (unlike `CustomerCardInstance`'s own
+  /// financial lifecycle) — this is trusted-admin catalog content, the
+  /// same direct-write model Home CMS's `active` toggle already uses.
+  status    CardProductStatus @default(DRAFT)
+  sortOrder Int               @default(0)
 
   cardInstances CustomerCardInstance[]
+
+  createdBy      String?
+  createdByAdmin AdminUser? @relation("CardProductCreatedBy", fields: [createdBy], references: [id], onDelete: SetNull)
+  updatedBy      String?
+  updatedByAdmin AdminUser? @relation("CardProductUpdatedBy", fields: [updatedBy], references: [id], onDelete: SetNull)
 
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
 
   @@index([serviceId])
+  @@index([status])
   @@map("card_products")
 }
 
@@ -843,6 +883,15 @@ model AdminUser {
   updatedHomeServiceMosaicTiles   HomeServiceMosaicTile[]   @relation("HomeServiceMosaicTileUpdatedBy")
   createdHomeNewsArticles         HomeNewsArticle[]         @relation("HomeNewsArticleCreatedBy")
   updatedHomeNewsArticles         HomeNewsArticle[]         @relation("HomeNewsArticleUpdatedBy")
+
+  // SERVICES-R5.17 — same pattern, for the Category/Service/CardProduct
+  // catalog becoming Admin-managed for the first time.
+  createdCategories    Category[]    @relation("CategoryCreatedBy")
+  updatedCategories    Category[]    @relation("CategoryUpdatedBy")
+  createdServices      Service[]     @relation("ServiceCreatedBy")
+  updatedServices      Service[]     @relation("ServiceUpdatedBy")
+  createdCardProducts  CardProduct[] @relation("CardProductCreatedBy")
+  updatedCardProducts  CardProduct[] @relation("CardProductUpdatedBy")
 
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt

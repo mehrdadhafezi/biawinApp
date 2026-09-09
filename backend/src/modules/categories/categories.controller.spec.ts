@@ -1,5 +1,6 @@
 import { Test, type TestingModule } from '@nestjs/testing';
 import { PrismaService } from '../../infra/prisma/prisma.service';
+import { AdminAuditLogService } from '../admin-audit-log/admin-audit-log.service';
 import { CategoriesController } from './categories.controller';
 import { CategoriesService } from './categories.service';
 
@@ -23,6 +24,10 @@ describe('CategoriesController', () => {
               Promise.all(ops),
             ),
           },
+        },
+        {
+          provide: AdminAuditLogService,
+          useValue: { record: jest.fn().mockResolvedValue(undefined) },
         },
       ],
     }).compile();

@@ -32,6 +32,16 @@ const NAV_ITEMS: AdminNavItem[] = [
     ],
   },
   { id: "media", title: "کتابخانه رسانه", href: "/media" },
+  {
+    id: "catalog",
+    title: "کاتالوگ",
+    href: "/catalog",
+    children: [
+      { id: "catalog-categories", title: "دسته‌بندی‌ها", href: "/catalog/categories" },
+      { id: "catalog-services", title: "خدمات", href: "/catalog/services" },
+      { id: "catalog-card-products", title: "کارت‌های محصول", href: "/catalog/card-products" },
+    ],
+  },
 ];
 
 /**

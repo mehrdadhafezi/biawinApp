@@ -24,6 +24,8 @@ function makeService(overrides: Partial<Service> = {}): Service {
     faq: [],
     tags: [],
     active: true,
+    createdBy: null,
+    updatedBy: null,
     createdAt: new Date(),
     updatedAt: new Date(),
     ...overrides,
