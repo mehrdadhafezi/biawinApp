@@ -46,6 +46,38 @@ export interface MerchantDto {
   active: boolean;
 }
 
+export type CardType = "CREDIT_CARD" | "DISCOUNT_CARD" | "SUBSCRIPTION" | "VOUCHER" | "INSTALLMENT_CARD";
+export type JourneyType = "PURCHASE" | "CREDIT_REQUEST" | "LEAD" | "EXTERNAL_REDIRECT" | "QUOTE_REQUEST" | "FREE_SERVICE";
+
+/**
+ * SERVICES-R5.18 — matches the raw CardProduct shape returned by the
+ * public `GET /cards`/`GET /cards/:id` (backend/src/modules/cards/
+ * card-products.controller.ts, SERVICES-R5.16/R5.17) — always
+ * `status: 'ACTIVE'` there, enforced server-side (see
+ * `CardProductsService.list()`/`findOneOrThrow()`), never client-filtered
+ * here. No `usageGuide`/`terms` field exists on the real `CardProduct`
+ * model — only `benefits` — so this stage's UI never renders a "usage
+ * guide"/"terms" section (nothing to show, not an oversight; see
+ * docs/services-r5-18-customer-card-catalog-ui.md).
+ */
+export interface CardProductDto {
+  id: string;
+  serviceId: string;
+  title: string;
+  subtitle: string | null;
+  description: string | null;
+  imageKey: string | null;
+  badge: string | null;
+  cardType: CardType;
+  journeyType: JourneyType;
+  priceAmount: number | null;
+  priceLabel: string | null;
+  benefits: string[];
+  validityDays: number | null;
+  status: "DRAFT" | "ACTIVE" | "INACTIVE" | "EXPIRED";
+  sortOrder: number;
+}
+
 interface Paginated<T> {
   items: T[];
   page: number;
@@ -89,4 +121,17 @@ export const servicesApi = {
 /** SERVICES-R4 — real, public `GET /merchants/:id`, same "public catalog read" shape as `servicesApi`. */
 export const merchantsApi = {
   getMerchant: (id: string) => apiClient.get<MerchantDto>(`/merchants/${id}`, { public: true }),
+};
+
+/**
+ * SERVICES-R5.18 — real, public `GET /cards`/`GET /cards/:id`. Unlike
+ * `GET /services` (no server-side `active` filter, see `listAllServices`'s
+ * own comment), `GET /cards` already filters to `status: 'ACTIVE'`
+ * server-side (SERVICES-R5.16/R5.17), so a single page is fetched here —
+ * no client-side active-filtering workaround is needed or added.
+ */
+export const cardProductsApi = {
+  listByService: (serviceId: string) =>
+    apiClient.get<Paginated<CardProductDto>>(`/cards?serviceId=${serviceId}&limit=100`, { public: true }),
+  getCardProduct: (id: string) => apiClient.get<CardProductDto>(`/cards/${id}`, { public: true }),
 };

@@ -2,7 +2,7 @@
 
 import { useEffect, useState } from "react";
 import { useParams, useRouter } from "next/navigation";
-import { spacing } from "@biawin/ui";
+import { spacing, typography } from "@biawin/ui";
 import { AppShell } from "../../../../components/shell/AppShell";
 import { SkeletonBlock, SkeletonStyles } from "../../../../components/common/SkeletonBlock";
 import { ServiceHero } from "../../../../components/services/ServiceHero";
@@ -11,9 +11,10 @@ import { ServiceInfo } from "../../../../components/services/ServiceInfo";
 import { Pricing } from "../../../../components/services/Pricing";
 import { MerchantLinkCTA } from "../../../../components/services/MerchantLinkCTA";
 import { DisabledPurchaseCTA } from "../../../../components/services/DisabledPurchaseCTA";
+import { CardProductGrid } from "../../../../components/services/CardProductGrid";
 import { ServicesErrorState } from "../../../../components/services/ServicesStates";
 import { useServiceCatalog } from "../../../../components/services/useServiceCatalog";
-import { servicesApi, type ServiceDto } from "../../../../lib/services-api";
+import { servicesApi, cardProductsApi, type ServiceDto, type CardProductDto } from "../../../../lib/services-api";
 import { ApiError } from "../../../../lib/api-client";
 import { belongsToCategory } from "../../../../components/services/serviceValidation";
 
@@ -75,6 +76,15 @@ export default function ServiceDetailPage() {
   const [service, setService] = useState<ServiceDto | null>(null);
   const [notFound, setNotFound] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  // SERVICES-R5.18 — this Service's real, ACTIVE CardProducts (the
+  // purchasable objects — a Service itself is never purchased, see
+  // `CardProductGrid`/`DisabledCardPurchaseCTA`'s own doc comments).
+  // Fetched independently of `service`/`categories` (own loading/error
+  // state, owned by `CardProductGrid` itself), same "each section owns
+  // its own async state" shape SERVICES-R3.1 already established for
+  // this exact page — never gates the rest of the page's render.
+  const [cardProducts, setCardProducts] = useState<CardProductDto[] | null>(null);
+  const [cardProductsError, setCardProductsError] = useState<string | null>(null);
   // SERVICES-R3: the real Category name (`ServiceDetailCardSummary`'s
   // "دسته‌بندی" fact, mapped from the prototype's `#detailCardFactCategory`)
   // — reuses the same catalog hook Category View already fetches through,
@@ -112,6 +122,29 @@ export default function ServiceDetailPage() {
     };
   }, [params.serviceId, params.categoryId]);
 
+  useEffect(() => {
+    let cancelled = false;
+
+    cardProductsApi
+      .listByService(params.serviceId)
+      .then((result) => {
+        if (!cancelled) setCardProducts(result.items);
+      })
+      .catch((err: unknown) => {
+        if (!cancelled) {
+          setCardProductsError(err instanceof ApiError ? err.message : "خطا در دریافت محصولات این خدمت.");
+        }
+      });
+
+    return () => {
+      cancelled = true;
+    };
+  }, [params.serviceId]);
+
+  function handleSelectCardProduct(cardProduct: CardProductDto) {
+    router.push(`/services/${params.categoryId}/${params.serviceId}/cards/${cardProduct.id}`);
+  }
+
   return (
     <AppShell activeNavKey="services">
       <SkeletonStyles />
@@ -144,6 +177,17 @@ export default function ServiceDetailPage() {
             <ServiceDetailCardSummary service={service} categoryName={categoryName} />
             <Pricing service={service} />
             <ServiceInfo service={service} />
+            {/*
+             * SERVICES-R5.18 — the real purchasable objects for this
+             * Service. Only `status: 'ACTIVE'` card products are ever
+             * returned by `GET /cards` (server-side, see
+             * `cardProductsApi.listByService`), so no client-side status
+             * filtering happens here or in `CardProductGrid`.
+             */}
+            <div style={{ display: "flex", flexDirection: "column", gap: spacing.sm }}>
+              <h2 style={{ margin: 0, ...typography.h3 }}>محصولات این خدمت</h2>
+              <CardProductGrid cardProducts={cardProducts} error={cardProductsError} onSelect={handleSelectCardProduct} />
+            </div>
             {/*
              * SERVICES-R4: a REAL, functioning link — only rendered when
              * this real service's `merchantId` is actually non-null.

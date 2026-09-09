@@ -1,4 +1,4 @@
-import type { ServiceDto } from "../../lib/services-api";
+import type { CardProductDto, ServiceDto } from "../../lib/services-api";
 
 /**
  * SERVICES-R3 (§13 "Not Found / Data Integrity") — `GET /services/:id`
@@ -21,4 +21,17 @@ export function belongsToCategory(service: ServiceDto, categoryId: string): bool
  */
 export function serviceReferencesMerchant(service: ServiceDto, merchantId: string): boolean {
   return service.merchantId === merchantId;
+}
+
+/**
+ * SERVICES-R5.18 — the same principle applied to the new
+ * `/services/[categoryId]/[serviceId]/cards/[cardProductId]` route:
+ * `GET /cards/:id` has no service-scoping of its own either, so a real,
+ * active CardProduct fetched by ID alone says nothing about whether it
+ * actually belongs to THIS Service. A CardProduct must never be treated
+ * as valid for a Service it isn't actually linked to via
+ * `CardProduct.serviceId` — even a real, ACTIVE one.
+ */
+export function cardProductBelongsToService(cardProduct: CardProductDto, serviceId: string): boolean {
+  return cardProduct.serviceId === serviceId;
 }
