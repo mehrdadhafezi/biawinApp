@@ -93,6 +93,8 @@ export class CardProductsService {
         journeyType: dto.journeyType,
         priceAmount: dto.priceAmount,
         priceLabel: dto.priceLabel,
+        valueAmount: dto.valueAmount,
+        valueDisplayType: dto.valueDisplayType,
         benefits: dto.benefits ?? [],
         validityDays: dto.validityDays,
         status: dto.status ?? 'DRAFT',

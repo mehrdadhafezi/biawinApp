@@ -25,26 +25,34 @@ export const CARD_TYPE_LABEL: Record<CardType, string> = {
 };
 
 /**
- * Never hardcoded text — always derived from the real `priceAmount`/
- * `priceLabel`/`cardType` fields (SERVICES-R5.17: `priceAmount` is
- * Rial, Admin-set; `priceLabel` is an Admin-set display override).
+ * SERVICES-R5.19 — renders the CardProduct's own displayed commercial
+ * value/credit ceiling. Never hardcoded text — always derived from the
+ * real `valueAmount`/`valueDisplayType`/`priceLabel` fields.
  *
- * - `priceLabel` set → used verbatim (that's its entire purpose, same as
- *   `Service.priceLabel` in `Pricing.tsx`).
- * - `priceLabel` unset, `priceAmount` set, `cardType === 'CREDIT_CARD'` →
- *   "تا سقف <toman> اعتبار" (a credit card's amount is a ceiling, not a
- *   fixed charge — matches `CreditLine.limitAmount`'s own real meaning,
- *   docs/services-r5-2-pricing-and-eligibility-domain.md §10).
- * - `priceLabel` unset, `priceAmount` set, any other `cardType` → the
- *   plain toman amount (a fixed value/voucher/subscription price).
+ * CRITICAL: this must NEVER read `priceAmount`. `priceAmount` is the
+ * amount the customer pays Biawin, a completely separate fact from what a
+ * card is worth (see `CardProductDto`'s own doc comment and
+ * docs/services-r5-19-purchase-order-audit.md §10 for the R5.18 bug this
+ * replaces — that version read `priceAmount` here and presented it as if
+ * it were the card's credit ceiling).
+ *
+ * - `priceLabel` set → used verbatim (an Admin-set display override, same
+ *   purpose as `Service.priceLabel` in `Pricing.tsx` — note this overrides
+ *   the VALUE display, not a payable-price display; no payable-price UI
+ *   exists anywhere in this stage).
+ * - `priceLabel` unset, `valueAmount` set, `valueDisplayType === 'UP_TO'`
+ *   → "تا سقف <toman> اعتبار" (a ceiling, not a guaranteed amount).
+ * - `priceLabel` unset, `valueAmount` set, `valueDisplayType === 'FIXED'`
+ *   (or unset) → the plain toman amount (a fixed value/voucher/
+ *   subscription value).
  * - Neither set → "قیمت اعلام نشده", matching `Pricing.tsx`'s exact
  *   existing fallback for `Service`.
  */
-export function formatCardProductPrice(
-  card: Pick<CardProductDto, "priceAmount" | "priceLabel" | "cardType">,
+export function formatCardProductValue(
+  card: Pick<CardProductDto, "valueAmount" | "valueDisplayType" | "priceLabel">,
 ): string {
   if (card.priceLabel) return card.priceLabel;
-  if (card.priceAmount == null) return "قیمت اعلام نشده";
-  const amount = formatToman(card.priceAmount);
-  return card.cardType === "CREDIT_CARD" ? `تا سقف ${amount} اعتبار` : amount;
+  if (card.valueAmount == null) return "قیمت اعلام نشده";
+  const amount = formatToman(card.valueAmount);
+  return card.valueDisplayType === "UP_TO" ? `تا سقف ${amount} اعتبار` : amount;
 }

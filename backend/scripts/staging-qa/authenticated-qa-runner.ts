@@ -804,6 +804,9 @@ async function main(): Promise<void> {
 
     // --- Section 12: SERVICES-R5.1 Transaction Foundation QA ---------------
     await servicesR511TransactionFoundationCheck(customerToken);
+
+    // --- Section 13: SERVICES-R5.19 CardProduct Purchase Order QA ---------
+    await servicesR519CardProductPurchaseFoundationCheck(customerToken, superAdmin);
   } catch (fatal) {
     finish(fatal instanceof Error ? fatal : new Error(String(fatal)));
     return;
@@ -1770,26 +1773,103 @@ async function attemptOrder(
   });
 }
 
+interface QaCardProductSummary {
+  id: string;
+  serviceId: string;
+  status: string;
+  journeyType: string;
+  priceAmount: number | null;
+}
+
+/**
+ * SERVICES-R5.19 — discovers a real, publicly-listed CardProduct suitable
+ * for exercising the positive purchase path: `status: 'ACTIVE'` (the only
+ * status `GET /cards` ever returns — no client-side filtering needed here
+ * either, same as `discoverPricingBlockedService`'s own discipline),
+ * `journeyType: 'PURCHASE'` (the only journey this stage's eligibility
+ * boundary accepts), and a positive `priceAmount` (otherwise the purchase
+ * is expected to be blocked, not succeed — see
+ * `discoverPricingBlockedService` for that scenario's Service analog).
+ * Never fabricates one — if staging genuinely has none, the positive path
+ * is reported NOT_TESTED, not FAIL (this stage's explicit instruction).
+ */
+async function discoverPurchasableCardProduct(): Promise<
+  QaCardProductSummary | undefined
+> {
+  const limit = 100;
+  for (let page = 0; page < 5; page += 1) {
+    const res = await apiCall<{ items: QaCardProductSummary[]; total: number }>(
+      API_ORIGIN,
+      `/api/v1/cards?skip=${page * limit}&limit=${limit}`,
+    );
+    if (!res.ok || !Array.isArray(res.body.items)) return undefined;
+    const candidate = res.body.items.find(
+      (c) =>
+        c.journeyType === 'PURCHASE' &&
+        typeof c.priceAmount === 'number' &&
+        c.priceAmount > 0,
+    );
+    if (candidate) return candidate;
+    if (res.body.items.length < limit) return undefined;
+  }
+  return undefined;
+}
+
+/**
+ * SERVICES-R5.19 — discovers a real, Admin-visible CardProduct that is NOT
+ * `ACTIVE` (DRAFT/INACTIVE/EXPIRED), to prove the purchase boundary rejects
+ * it. Requires admin access — `GET /cards` (public) never returns a
+ * non-ACTIVE row at all, so this cannot be discovered from the public
+ * catalog the way `discoverPurchasableCardProduct` is.
+ */
+async function discoverNonActiveCardProduct(
+  admin: AdminSession,
+): Promise<QaCardProductSummary | undefined> {
+  const res = await apiCall<{ items: QaCardProductSummary[]; total: number }>(
+    API_ORIGIN,
+    '/api/v1/admin/card-products?limit=100',
+    { token: admin.accessToken },
+  );
+  if (!res.ok || !Array.isArray(res.body.items)) return undefined;
+  return res.body.items.find((c) => c.status !== 'ACTIVE');
+}
+
 interface FinancialSnapshot {
   orders: number;
   payments: number;
   installments: number;
   wallets: Array<{ id: string; kind: string; balance: number }>;
+  /** SERVICES-R5.19 — proves a CardProduct purchase creates no card-issuance side effect. */
+  cardInstances: number;
+  /** SERVICES-R5.19 — proves no usage/redemption side effect (impossible without a cardInstance, but checked directly anyway). */
+  usageTransactions: number;
 }
 
 async function snapshotFinancialState(
   userId: string,
 ): Promise<FinancialSnapshot> {
-  const [orders, payments, installments, wallets] = await Promise.all([
-    prisma.order.count({ where: { userId } }),
-    prisma.payment.count({ where: { order: { userId } } }),
-    prisma.installment.count({ where: { userId } }),
-    prisma.wallet.findMany({
-      where: { userId },
-      select: { id: true, kind: true, balance: true },
-    }),
-  ]);
-  return { orders, payments, installments, wallets };
+  const [orders, payments, installments, wallets, cardInstances, usageTransactions] =
+    await Promise.all([
+      prisma.order.count({ where: { userId } }),
+      prisma.payment.count({ where: { order: { userId } } }),
+      prisma.installment.count({ where: { userId } }),
+      prisma.wallet.findMany({
+        where: { userId },
+        select: { id: true, kind: true, balance: true },
+      }),
+      prisma.customerCardInstance.count({ where: { userId } }),
+      prisma.usageTransaction.count({
+        where: { customerCardInstance: { userId } },
+      }),
+    ]);
+  return {
+    orders,
+    payments,
+    installments,
+    wallets,
+    cardInstances,
+    usageTransactions,
+  };
 }
 
 /**
@@ -2119,6 +2199,368 @@ async function servicesR511TransactionFoundationCheck(
   } else {
     console.log(
       '[qa] SERVICES-R5.1: no disposable records to clean up — every purchase attempt was correctly blocked before any Order row was created.',
+    );
+  }
+}
+
+/**
+ * SERVICES-R5.19 — exercises the CardProduct purchase boundary against the
+ * real deployed staging backend + Postgres. Unlike R5.1's check (which
+ * proves every real Service is safely blocked — none has usable pricing
+ * today), a real CardProduct MAY have a positive `priceAmount` (Admin-set,
+ * R5.17), so this check's positive path is conditional on discovering one
+ * — reported NOT_TESTED, never FAIL, if staging has none (this stage's
+ * explicit instruction: "Do not seed fictional production-like data just
+ * to make QA green").
+ */
+async function servicesR519CardProductPurchaseFoundationCheck(
+  customerToken: string | undefined,
+  superAdmin: AdminSession | undefined,
+): Promise<void> {
+  // --- 1. Authentication — reachable with or without a customer session ---
+  await step(
+    'SERVICES-R5.19 unauthenticated POST /orders (CardProduct shape) rejected',
+    async () => {
+      const res = await apiCall(API_ORIGIN, '/api/v1/orders', {
+        method: 'POST',
+        body: JSON.stringify({
+          cardProductId: randomUUID(),
+          idempotencyKey: `${QA_TAG}-r519-unauth`,
+        }),
+      });
+      assert(
+        res.status === 401,
+        `expected 401 for unauthenticated POST /orders, got ${detail(res)}`,
+      );
+    },
+  );
+
+  if (!customerToken) {
+    skip(
+      'SERVICES-R5.19 CardProduct purchase checks (authenticated)',
+      'no STAGING_TEST_AUTH customer token available — see Customer STAGING_TEST_AUTH login above',
+    );
+    return;
+  }
+
+  const user = await prisma.user.findUnique({
+    where: { phone: STAGING_TEST_PHONE },
+    select: { id: true },
+  });
+  if (!user) {
+    skip(
+      'SERVICES-R5.19 CardProduct purchase checks (authenticated)',
+      'STAGING_TEST_AUTH user row not found in the database despite a successful login',
+    );
+    return;
+  }
+  const userId = user.id;
+  const unexpectedOrderIds: string[] = [];
+
+  // --- 2. Request-shape / injection rejections (need no real CardProduct) ---
+  await step(
+    'SERVICES-R5.19 nonexistent cardProductId rejected',
+    async () => {
+      const res = await attemptOrder(customerToken, {
+        cardProductId: randomUUID(),
+        idempotencyKey: `${QA_TAG}-r519-nonexistent`,
+      });
+      if (res.ok) {
+        if (res.body.id) unexpectedOrderIds.push(res.body.id);
+        throw new Error(
+          `expected a nonexistent CardProduct id to be rejected, but an Order was created (id=${res.body.id})`,
+        );
+      }
+      assert(
+        res.status === 404,
+        `expected 404 Not Found for a nonexistent CardProduct, got ${detail(res)}`,
+      );
+    },
+  );
+
+  await step(
+    'SERVICES-R5.19 client-supplied amount rejected (CardProduct shape)',
+    async () => {
+      const res = await attemptOrder(customerToken, {
+        cardProductId: randomUUID(),
+        idempotencyKey: `${QA_TAG}-r519-amount-tamper`,
+        amount: 1,
+      });
+      if (res.ok) {
+        if (res.body.id) unexpectedOrderIds.push(res.body.id);
+        throw new Error(
+          `expected the client-supplied 'amount' field to be rejected, but an Order was created (id=${res.body.id})`,
+        );
+      }
+      assert(
+        res.status === 400,
+        `expected the deployed ValidationPipe to reject the unknown 'amount' field with 400, got ${detail(res)}`,
+      );
+    },
+  );
+
+  await step(
+    'SERVICES-R5.19 client-supplied merchantId rejected (CardProduct shape forbids it outright)',
+    async () => {
+      const res = await attemptOrder(customerToken, {
+        cardProductId: randomUUID(),
+        merchantId: randomUUID(),
+        idempotencyKey: `${QA_TAG}-r519-merchant-tamper`,
+      });
+      if (res.ok) {
+        if (res.body.id) unexpectedOrderIds.push(res.body.id);
+        throw new Error(
+          `expected a client-supplied merchantId alongside cardProductId to be rejected, but an Order was created (id=${res.body.id})`,
+        );
+      }
+      assert(
+        res.status === 400,
+        `expected 400 for merchantId supplied alongside cardProductId, got ${detail(res)}`,
+      );
+    },
+  );
+
+  await step(
+    'SERVICES-R5.19 client-supplied status rejected (CardProduct shape)',
+    async () => {
+      const res = await attemptOrder(customerToken, {
+        cardProductId: randomUUID(),
+        status: 'paid',
+        idempotencyKey: `${QA_TAG}-r519-status-tamper`,
+      });
+      if (res.ok) {
+        if (res.body.id) unexpectedOrderIds.push(res.body.id);
+        throw new Error(
+          `expected a client-supplied status to be rejected, but an Order was created (id=${res.body.id})`,
+        );
+      }
+      assert(
+        res.status === 400,
+        `expected 400 for an unknown 'status' field, got ${detail(res)}`,
+      );
+    },
+  );
+
+  await step(
+    'SERVICES-R5.19 providing both serviceId and cardProductId rejected',
+    async () => {
+      const res = await attemptOrder(customerToken, {
+        serviceId: randomUUID(),
+        cardProductId: randomUUID(),
+        method: 'cash',
+        idempotencyKey: `${QA_TAG}-r519-both-shapes`,
+      });
+      if (res.ok) {
+        if (res.body.id) unexpectedOrderIds.push(res.body.id);
+        throw new Error(
+          `expected providing both serviceId and cardProductId to be rejected, but an Order was created (id=${res.body.id})`,
+        );
+      }
+      assert(
+        res.status === 400,
+        `expected a deterministic 400 for an ambiguous dual-shape request, got ${detail(res)}`,
+      );
+    },
+  );
+
+  // --- 3. Inactive CardProduct rejection (requires Admin discovery) --------
+  if (superAdmin) {
+    const nonActive = await step(
+      'SERVICES-R5.19 non-ACTIVE CardProduct discovered via Admin (if any exists)',
+      () => discoverNonActiveCardProduct(superAdmin),
+    );
+    if (nonActive) {
+      record(
+        'SERVICES-R5.19 selected non-ACTIVE CardProduct snapshot',
+        'PASS',
+        `id=${nonActive.id} status=${nonActive.status}`,
+      );
+      await step(
+        'SERVICES-R5.19 non-ACTIVE CardProduct purchase rejected with 422',
+        async () => {
+          const res = await attemptOrder(customerToken, {
+            cardProductId: nonActive.id,
+            idempotencyKey: `${QA_TAG}-r519-inactive-card`,
+          });
+          if (res.ok) {
+            if (res.body.id) unexpectedOrderIds.push(res.body.id);
+            throw new Error(
+              `expected a non-ACTIVE CardProduct to be rejected, but an Order was created (id=${res.body.id})`,
+            );
+          }
+          assert(
+            res.status === 422,
+            `expected 422 for a non-ACTIVE CardProduct, got ${detail(res)}`,
+          );
+        },
+      );
+    } else {
+      skip(
+        'SERVICES-R5.19 non-ACTIVE CardProduct purchase rejected with 422',
+        'NOT_TESTED — no DRAFT/INACTIVE/EXPIRED CardProduct exists on staging today to discover; covered at the unit-test level instead (backend/src/modules/orders/orders.service.spec.ts).',
+      );
+    }
+  } else {
+    skip(
+      'SERVICES-R5.19 non-ACTIVE CardProduct purchase rejected with 422',
+      'no SUPER_ADMIN session available to discover a non-ACTIVE CardProduct',
+    );
+  }
+
+  // --- 4. Positive path — conditional on a real purchasable CardProduct ---
+  const candidate = await step(
+    'SERVICES-R5.19 real purchasable CardProduct discovered (if any exists)',
+    () => discoverPurchasableCardProduct(),
+  );
+  if (!candidate) {
+    skip(
+      'SERVICES-R5.19 CardProduct purchase positive-path checks (create/idempotency/side-effects)',
+      'NOT_TESTED — no real ACTIVE, journeyType=PURCHASE, priced CardProduct exists on staging today. This is a real catalog-data gap, not a defect — see backend/src/modules/orders/orders.service.spec.ts for full unit coverage of this path.',
+    );
+  } else {
+    record(
+      'SERVICES-R5.19 selected purchasable CardProduct snapshot',
+      'PASS',
+      `id=${candidate.id} serviceId=${candidate.serviceId} priceAmount=${candidate.priceAmount}`,
+    );
+
+    const before = await snapshotFinancialState(userId);
+    let createdOrderId: string | undefined;
+
+    await step(
+      'SERVICES-R5.19 purchasing a real ACTIVE CardProduct creates a pending Order with the server-resolved price',
+      async () => {
+        const res = await attemptOrder(customerToken, {
+          cardProductId: candidate.id,
+          idempotencyKey: `${QA_TAG}-r519-purchase`,
+        });
+        assert(
+          res.ok,
+          `expected a real, ACTIVE, priced, PURCHASE-journey CardProduct to be purchasable, got ${detail(res)}`,
+        );
+        assert(!!res.body.id, 'expected a created Order to have an id');
+        createdOrderId = res.body.id;
+        unexpectedOrderIds.push(res.body.id!); // tracked for cleanup below regardless of outcome
+      },
+    );
+
+    if (createdOrderId) {
+      await step(
+        'SERVICES-R5.19 exact idempotent retry returns the original Order (no duplicate)',
+        async () => {
+          const res = await attemptOrder(customerToken, {
+            cardProductId: candidate.id,
+            idempotencyKey: `${QA_TAG}-r519-purchase`,
+          });
+          assert(
+            res.ok && res.body.id === createdOrderId,
+            `expected the exact same Order id on retry, got ${detail(res)} id=${res.body.id}`,
+          );
+        },
+      );
+
+      await step(
+        'SERVICES-R5.19 conflicting idempotency reuse (different CardProduct) returns a deterministic conflict',
+        async () => {
+          const res = await attemptOrder(customerToken, {
+            cardProductId: randomUUID(),
+            idempotencyKey: `${QA_TAG}-r519-purchase`,
+          });
+          assert(
+            res.status === 409,
+            `expected 409 Conflict for reusing the same idempotency key against a different CardProduct, got ${detail(res)}`,
+          );
+        },
+      );
+
+      const after = await snapshotFinancialState(userId);
+      await step('SERVICES-R5.19 Orders delta = exactly 1', () => {
+        assert(
+          after.orders === before.orders + 1,
+          `expected exactly one new Order, before=${before.orders} after=${after.orders}`,
+        );
+      });
+      await step('SERVICES-R5.19 Payments delta = 0', () => {
+        assert(
+          after.payments === before.payments,
+          `expected no new Payment rows, before=${before.payments} after=${after.payments}`,
+        );
+      });
+      await step('SERVICES-R5.19 Installments delta = 0', () => {
+        assert(
+          after.installments === before.installments,
+          `expected no new Installment rows, before=${before.installments} after=${after.installments}`,
+        );
+      });
+      await step('SERVICES-R5.19 CustomerCardInstance delta = 0', () => {
+        assert(
+          after.cardInstances === before.cardInstances,
+          `expected no new CustomerCardInstance rows (card issuance is out of scope this stage), before=${before.cardInstances} after=${after.cardInstances}`,
+        );
+      });
+      await step('SERVICES-R5.19 UsageTransaction delta = 0', () => {
+        assert(
+          after.usageTransactions === before.usageTransactions,
+          `expected no new UsageTransaction rows, before=${before.usageTransactions} after=${after.usageTransactions}`,
+        );
+      });
+      await step('SERVICES-R5.19 Wallet state unchanged', () => {
+        assert(
+          after.wallets.length === before.wallets.length,
+          `expected the same number of Wallet rows, before=${before.wallets.length} after=${after.wallets.length}`,
+        );
+        for (const w of before.wallets) {
+          const match = after.wallets.find((x) => x.id === w.id);
+          assert(!!match, `wallet ${w.id} (${w.kind}) disappeared`);
+          assert(
+            match!.balance === w.balance,
+            `expected wallet ${w.kind} balance to stay ${w.balance}, got ${match!.balance}`,
+          );
+        }
+      });
+
+      const order = await prisma.order.findUnique({
+        where: { id: createdOrderId },
+        select: { status: true, amount: true, method: true, cardProductId: true },
+      });
+      await step(
+        'SERVICES-R5.19 created Order is pending, priced from CardProduct.priceAmount, with no method set',
+        () => {
+          assert(!!order, 'expected the created Order to exist in the database');
+          assert(
+            order!.status === 'pending',
+            `expected status='pending', got '${order!.status}'`,
+          );
+          assert(
+            order!.amount === candidate.priceAmount,
+            `expected amount to equal the CardProduct's priceAmount (${candidate.priceAmount}), got ${order!.amount}`,
+          );
+          assert(
+            order!.method === null,
+            `expected method=null for a CardProduct-path Order, got '${order!.method}'`,
+          );
+          assert(
+            order!.cardProductId === candidate.id,
+            `expected cardProductId='${candidate.id}', got '${order!.cardProductId}'`,
+          );
+        },
+      );
+    }
+  }
+
+  // --- 5. Cleanup — disposable QA Orders created by the positive path -----
+  if (unexpectedOrderIds.length > 0) {
+    for (const id of unexpectedOrderIds) {
+      registerRestore(`SERVICES-R5.19 cleanup: delete disposable QA Order ${id}`, async () => {
+        await prisma.order.delete({ where: { id } }).catch(() => {
+          // Already gone or never actually created (a rejected attempt
+          // that we tracked defensively) — never fatal for cleanup.
+        });
+      });
+    }
+  } else {
+    console.log(
+      '[qa] SERVICES-R5.19: no disposable Order rows to clean up.',
     );
   }
 }

@@ -123,6 +123,40 @@ describe('CardProductsService', () => {
       );
     });
 
+    it('SERVICES-R5.19: persists valueAmount/valueDisplayType independently of priceAmount — never one derived from the other', async () => {
+      prisma.service.findUnique.mockResolvedValue({ id: 'service-1' });
+      prisma.cardProduct.create.mockResolvedValue({
+        id: 'card-1',
+        serviceId: 'service-1',
+        title: dto.title,
+        status: 'DRAFT',
+        priceAmount: 1000000,
+        valueAmount: 30000000,
+        valueDisplayType: 'UP_TO',
+      });
+
+      await service.create(
+        {
+          ...dto,
+          priceAmount: 1000000,
+          valueAmount: 30000000,
+          valueDisplayType: 'UP_TO',
+        },
+        'admin-1',
+        meta,
+      );
+
+      expect(prisma.cardProduct.create).toHaveBeenCalledWith(
+        expect.objectContaining({
+          data: expect.objectContaining({
+            priceAmount: 1000000,
+            valueAmount: 30000000,
+            valueDisplayType: 'UP_TO',
+          }),
+        }),
+      );
+    });
+
     it('records a CREATE audit entry with the actor and resource', async () => {
       prisma.service.findUnique.mockResolvedValue({ id: 'service-1' });
       prisma.cardProduct.create.mockResolvedValue({

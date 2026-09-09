@@ -19,6 +19,7 @@ export type JourneyType =
   | "QUOTE_REQUEST"
   | "FREE_SERVICE";
 export type CardProductStatus = "DRAFT" | "ACTIVE" | "INACTIVE" | "EXPIRED";
+export type CardValueDisplayType = "FIXED" | "UP_TO";
 
 export interface Paginated<T> {
   items: T[];
@@ -104,6 +105,9 @@ export interface CardProductAdmin {
   journeyType: JourneyType;
   priceAmount: number | null;
   priceLabel: string | null;
+  /** SERVICES-R5.19 — the card's displayed commercial value, NOT the payable price (see priceAmount). */
+  valueAmount: number | null;
+  valueDisplayType: CardValueDisplayType | null;
   benefits: string[];
   validityDays: number | null;
   status: CardProductStatus;
@@ -125,6 +129,8 @@ export interface CardProductInput {
   journeyType: JourneyType;
   priceAmount?: number | null;
   priceLabel?: string | null;
+  valueAmount?: number | null;
+  valueDisplayType?: CardValueDisplayType | null;
   benefits?: string[];
   validityDays?: number | null;
   status?: CardProductStatus;

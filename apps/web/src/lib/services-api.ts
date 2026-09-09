@@ -48,6 +48,7 @@ export interface MerchantDto {
 
 export type CardType = "CREDIT_CARD" | "DISCOUNT_CARD" | "SUBSCRIPTION" | "VOUCHER" | "INSTALLMENT_CARD";
 export type JourneyType = "PURCHASE" | "CREDIT_REQUEST" | "LEAD" | "EXTERNAL_REDIRECT" | "QUOTE_REQUEST" | "FREE_SERVICE";
+export type CardValueDisplayType = "FIXED" | "UP_TO";
 
 /**
  * SERVICES-R5.18 — matches the raw CardProduct shape returned by the
@@ -59,6 +60,13 @@ export type JourneyType = "PURCHASE" | "CREDIT_REQUEST" | "LEAD" | "EXTERNAL_RED
  * model — only `benefits` — so this stage's UI never renders a "usage
  * guide"/"terms" section (nothing to show, not an oversight; see
  * docs/services-r5-18-customer-card-catalog-ui.md).
+ *
+ * SERVICES-R5.19 CRITICAL: `priceAmount`/`priceLabel` are what the
+ * customer PAYS BIAWIN — never rendered to the customer as the card's
+ * value (an R5.18 bug this stage fixes; see
+ * docs/services-r5-19-purchase-order-audit.md §10). `valueAmount`/
+ * `valueDisplayType` are the card's own displayed commercial value/credit
+ * ceiling — the ONLY fields `formatCardProductValue()` may read.
  */
 export interface CardProductDto {
   id: string;
@@ -72,6 +80,8 @@ export interface CardProductDto {
   journeyType: JourneyType;
   priceAmount: number | null;
   priceLabel: string | null;
+  valueAmount: number | null;
+  valueDisplayType: CardValueDisplayType | null;
   benefits: string[];
   validityDays: number | null;
   status: "DRAFT" | "ACTIVE" | "INACTIVE" | "EXPIRED";

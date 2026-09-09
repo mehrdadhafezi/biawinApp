@@ -15,6 +15,8 @@ function cardProduct(overrides: Partial<CardProductDto> = {}): CardProductDto {
     journeyType: "PURCHASE",
     priceAmount: 500000,
     priceLabel: null,
+    valueAmount: 500000,
+    valueDisplayType: "FIXED",
     benefits: [],
     validityDays: null,
     status: "ACTIVE",
@@ -25,7 +27,7 @@ function cardProduct(overrides: Partial<CardProductDto> = {}): CardProductDto {
 
 /** Covers the task's explicit "Display: image, title, description, price, CTA" requirement for the reusable list tile. */
 describe("CardProductCard rendering", () => {
-  it("renders title, description/subtitle, a derived price, and a CTA affordance — no image URL is fabricated", () => {
+  it("renders title, description/subtitle, a derived value, and a CTA affordance — no image URL is fabricated", () => {
     const html = renderToStaticMarkup(<CardProductCard cardProduct={cardProduct()} onSelect={() => {}} />);
 
     expect(html).toContain("ووچر تخفیف خرید");
@@ -42,12 +44,26 @@ describe("CardProductCard rendering", () => {
     expect(html).toContain("توضیح کامل‌تر");
   });
 
-  it("renders the 'up to X credit' price phrasing for a CREDIT_CARD, never the fixed-amount phrasing", () => {
+  it("renders the 'up to X credit' value phrasing for valueDisplayType UP_TO, never the fixed-amount phrasing", () => {
     const html = renderToStaticMarkup(
-      <CardProductCard cardProduct={cardProduct({ cardType: "CREDIT_CARD", priceAmount: 300000000 })} onSelect={() => {}} />,
+      <CardProductCard
+        cardProduct={cardProduct({ cardType: "CREDIT_CARD", valueAmount: 300000000, valueDisplayType: "UP_TO" })}
+        onSelect={() => {}}
+      />,
     );
     expect(html).toContain("تا سقف");
     expect(html).toContain("اعتبار");
+  });
+
+  it("NEVER derives the displayed value from priceAmount — a huge priceAmount with no valueAmount shows the fallback, not the price", () => {
+    const html = renderToStaticMarkup(
+      <CardProductCard
+        cardProduct={cardProduct({ priceAmount: 999999999, valueAmount: null, valueDisplayType: null })}
+        onSelect={() => {}}
+      />,
+    );
+    expect(html).toContain("قیمت اعلام نشده");
+    expect(html).not.toContain("999,999,999");
   });
 
   it("falls back to the cardType label as the badge when no admin-set badge exists", () => {

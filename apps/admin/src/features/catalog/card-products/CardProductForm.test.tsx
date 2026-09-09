@@ -25,6 +25,8 @@ const baseCardProduct = {
   journeyType: "PURCHASE" as const,
   priceAmount: 5000000,
   priceLabel: null,
+  valueAmount: 30000000,
+  valueDisplayType: "UP_TO" as const,
   benefits: ["مزیت یک", "مزیت دو"],
   validityDays: 30,
   status: "DRAFT" as const,
@@ -59,6 +61,15 @@ describe("CardProductForm rendering", () => {
     expect(html).toContain('value="5000000"');
     expect(html).toContain("مزیت یک، مزیت دو");
     expect(html).toContain('value="30"');
+  });
+
+  it("edit mode pre-fills the card's displayed value/ceiling separately from priceAmount (SERVICES-R5.19)", () => {
+    const html = renderToStaticMarkup(
+      <CardProductForm mode="edit" initial={baseCardProduct} backHref="/catalog/card-products" onSaved={jest.fn()} />,
+    );
+
+    expect(html).toContain('value="30000000"');
+    expect(html).toContain("ارزش/سقف کارت");
   });
 
   it("readOnly mode disables the fieldset and hides the submit control", () => {

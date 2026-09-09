@@ -152,6 +152,19 @@ enum CardProductStatus {
   EXPIRED
 }
 
+/// SERVICES-R5.19 — how `CardProduct.valueAmount` should be presented to a
+/// customer. Deliberately separate from `priceAmount` (what the customer
+/// pays Biawin) — see `CardProduct.valueAmount`'s own doc comment and
+/// docs/services-r5-19-purchase-order-audit.md §10 for the pre-existing
+/// R5.18 bug this distinction fixes.
+enum CardValueDisplayType {
+  /// The card is worth exactly `valueAmount` (e.g. a fixed-amount voucher).
+  FIXED
+  /// `valueAmount` is a ceiling, not a guaranteed amount (e.g. a credit
+  /// card's credit limit — "تا سقف X تومان اعتبار").
+  UP_TO
+}
+
 enum PaymentStatus {
   pending
   succeeded
@@ -581,11 +594,31 @@ model Order {
   /// actually transacted with (SERVICES-R5.1).
   merchantId    String?
   merchant      Merchant?      @relation(fields: [merchantId], references: [id], onDelete: SetNull)
-  method        PurchaseMethod
-  /// Rial, integer — ALWAYS resolved server-side by ServicePricingService,
-  /// never accepted from the client (SERVICES-R5.1, closes the R5 contract's
-  /// "amount tampering" gap).
+  /// SERVICES-R5.19 — nullable because the new CardProduct purchase path
+  /// (see `cardProductId` below) has no `PurchaseMethod`-shaped concept yet
+  /// (a CardProduct has no `availableMethods` field, unlike `Service`) —
+  /// left `null` rather than inventing a fake value. Every Order created
+  /// through the pre-existing Service path still always sets a real one
+  /// (enforced at the application boundary, unchanged from R5.1).
+  method        PurchaseMethod?
+  /// Rial, integer — ALWAYS resolved server-side (by ServicePricingService
+  /// for the Service path, by CardProductPricingService for the CardProduct
+  /// path — SERVICES-R5.19), never accepted from the client (SERVICES-R5.1,
+  /// closes the R5 contract's "amount tampering" gap). This is the amount
+  /// the customer pays Biawin — NEVER the CardProduct's displayed
+  /// commercial value (`CardProduct.valueAmount`); see
+  /// docs/services-r5-19-card-product-purchase-order-foundation.md §6.
   amount        Int
+  /// SERVICES-R5.19 — the CardProduct this Order purchases, if this Order
+  /// was created through the new CardProduct path. Nullable for backward
+  /// compatibility with every pre-existing Order (all Service-path,
+  /// R5.1–R5.18) — no historical Order is backfilled with an invented
+  /// CardProduct. `serviceId` above is ALWAYS populated regardless of
+  /// which path created the Order (derived from `CardProduct.serviceId`
+  /// for this path), so nothing that already assumes `Order.serviceId` is
+  /// always present needs to change.
+  cardProductId String?
+  cardProduct   CardProduct?   @relation(fields: [cardProductId], references: [id], onDelete: Restrict)
   status        OrderStatus    @default(pending)
   /// SERVICES-R5.1 idempotency — see `@@unique([userId, idempotencyKey])`.
   /// Nullable only so this migration doesn't require backfilling any
@@ -607,6 +640,7 @@ model Order {
 
   @@unique([userId, idempotencyKey])
   @@index([userId, status])
+  @@index([cardProductId])
   @@map("orders")
 }
 
@@ -667,8 +701,32 @@ model CardProduct {
   /// decision (Model A: Biawin owns pricing). Nullable because this stage
   /// introduces the field without seeding any real value into it (no
   /// fictional pricing — same discipline as `Service.priceFrom`).
+  ///
+  /// SERVICES-R5.19 CRITICAL: this is THE AMOUNT THE CUSTOMER PAYS BIAWIN
+  /// FOR THIS CARD PRODUCT — resolved server-side by
+  /// `CardProductPricingService` into `Order.amount` at purchase time.
+  /// It is NEVER the card's displayed commercial value/credit ceiling —
+  /// that is `valueAmount`/`valueDisplayType` below. A R5.18 customer-UI
+  /// bug conflated the two (see docs/services-r5-19-purchase-order-audit.md
+  /// §10); this field's meaning was always this, unchanged since R5.17.
   priceAmount Int?
+  /// SERVICES-R5.17 — a display override for the PAYABLE price above
+  /// (`priceAmount`), not for the card's commercial value. Used verbatim
+  /// when present, same as `Service.priceLabel`.
   priceLabel  String?
+  /// SERVICES-R5.19 — the card's own displayed commercial value (its face
+  /// value, or its credit ceiling) — e.g. "۳۰ میلیون تومان" or "تا سقف ۳۰
+  /// میلیون تومان اعتبار". Deliberately independent of `priceAmount`: what
+  /// a card is *worth* and what a customer *pays Biawin for it* are two
+  /// separate facts that must never be inferred from one another (see the
+  /// audit doc §10 and docs/services-r5-19-card-product-purchase-order-
+  /// foundation.md §6). Nullable — this stage introduces the field without
+  /// seeding any real value (same discipline as `priceAmount`).
+  valueAmount Int?
+  /// How to present `valueAmount` — FIXED ("exactly this much") or UP_TO
+  /// ("a ceiling, not a guarantee"). Nullable alongside `valueAmount`
+  /// (meaningless without it).
+  valueDisplayType CardValueDisplayType?
   benefits    Json // string[]
   /// Days from activation until expiry, if this card type expires. Kept
   /// deliberately simple (a single integer) — the docx open-questions
@@ -695,6 +753,9 @@ model CardProduct {
   sortOrder Int               @default(0)
 
   cardInstances CustomerCardInstance[]
+  /// SERVICES-R5.19 — Orders purchasing this CardProduct (see
+  /// `Order.cardProductId`'s own doc comment).
+  orders        Order[]
 
   createdBy      String?
   createdByAdmin AdminUser? @relation("CardProductCreatedBy", fields: [createdBy], references: [id], onDelete: SetNull)

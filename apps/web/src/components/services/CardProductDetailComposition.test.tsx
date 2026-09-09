@@ -17,6 +17,8 @@ function cardProduct(overrides: Partial<CardProductDto> = {}): CardProductDto {
     journeyType: "PURCHASE",
     priceAmount: 300000000,
     priceLabel: null,
+    valueAmount: 300000000,
+    valueDisplayType: "UP_TO",
     benefits: ["تخفیف ویژه اعضا", "فعال‌سازی آنی"],
     validityDays: 365,
     status: "ACTIVE",
@@ -50,6 +52,14 @@ describe("Card Product Detail composition", () => {
     expect(html).toContain("disabled");
     expect(html).toContain("خرید کارت");
     expect(html).toContain("به‌زودی");
+  });
+
+  it("renders the value from valueAmount/valueDisplayType, never from priceAmount (SERVICES-R5.19)", () => {
+    const html = renderToStaticMarkup(
+      <CardProductHero cardProduct={cardProduct({ priceAmount: 999999999, valueAmount: 300000000, valueDisplayType: "UP_TO" })} />,
+    );
+    expect(html).toContain("تا سقف 30,000,000 تومان اعتبار");
+    expect(html).not.toContain("999,999,999");
   });
 
   it("never renders a 'usage guide' or 'terms' section — no such field exists on the real CardProduct model", () => {

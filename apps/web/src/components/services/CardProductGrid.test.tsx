@@ -15,6 +15,8 @@ function cardProduct(overrides: Partial<CardProductDto> = {}): CardProductDto {
     journeyType: "PURCHASE",
     priceAmount: 300000000,
     priceLabel: null,
+    valueAmount: 300000000,
+    valueDisplayType: "UP_TO",
     benefits: [],
     validityDays: null,
     status: "ACTIVE",

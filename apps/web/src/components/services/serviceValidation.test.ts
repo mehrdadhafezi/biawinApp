@@ -63,6 +63,8 @@ function cardProduct(serviceId: string): CardProductDto {
     journeyType: "PURCHASE",
     priceAmount: null,
     priceLabel: null,
+    valueAmount: null,
+    valueDisplayType: null,
     benefits: [],
     validityDays: null,
     status: "ACTIVE",

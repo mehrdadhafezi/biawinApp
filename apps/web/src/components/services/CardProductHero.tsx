@@ -1,6 +1,6 @@
 import { Badge, color, spacing, typography } from "@biawin/ui";
 import type { CardProductDto } from "../../lib/services-api";
-import { CARD_TYPE_ICON, CARD_TYPE_LABEL, formatCardProductPrice } from "./cardProductPresentation";
+import { CARD_TYPE_ICON, CARD_TYPE_LABEL, formatCardProductValue } from "./cardProductPresentation";
 
 export interface CardProductHeroProps {
   cardProduct: CardProductDto;
@@ -27,7 +27,7 @@ export function CardProductHero({ cardProduct }: CardProductHeroProps) {
       )}
       <div style={{ display: "flex", gap: spacing.xs, flexWrap: "wrap", alignItems: "center" }}>
         <Badge tone="neutral">{cardProduct.badge || CARD_TYPE_LABEL[cardProduct.cardType]}</Badge>
-        <strong style={{ ...typography.h3, color: color.primary }}>{formatCardProductPrice(cardProduct)}</strong>
+        <strong style={{ ...typography.h3, color: color.primary }}>{formatCardProductValue(cardProduct)}</strong>
       </div>
     </div>
   );

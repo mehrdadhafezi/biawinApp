@@ -1,5 +1,10 @@
 import { ApiProperty, ApiPropertyOptional } from '@nestjs/swagger';
-import { CardProductStatus, CardType, JourneyType } from '@prisma/client';
+import {
+  CardProductStatus,
+  CardType,
+  CardValueDisplayType,
+  JourneyType,
+} from '@prisma/client';
 import {
   IsArray,
   IsEnum,
@@ -65,6 +70,20 @@ export class CreateCardProductDto {
   @IsOptional()
   @IsString()
   priceLabel?: string;
+
+  @ApiPropertyOptional({
+    description:
+      "SERVICES-R5.19. Rial, integer. The card's own displayed commercial value/credit ceiling — NOT the payable price (see priceAmount above and CardProduct.valueAmount's own schema doc comment).",
+  })
+  @IsOptional()
+  @IsInt()
+  @IsPositive()
+  valueAmount?: number;
+
+  @ApiPropertyOptional({ enum: CardValueDisplayType })
+  @IsOptional()
+  @IsEnum(CardValueDisplayType)
+  valueDisplayType?: CardValueDisplayType;
 
   @ApiPropertyOptional({ type: [String], default: [] })
   @IsOptional()

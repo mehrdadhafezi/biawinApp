@@ -7,7 +7,19 @@ import { FormField } from "../../home/components/FormField";
 import { HomeFormShell } from "../../home/components/HomeFormShell";
 import { ServiceSelect } from "../components/ServiceSelect";
 import { plainFieldStyles } from "../../home/components/formStyles";
-import type { CardProductAdmin, CardProductInput, CardProductStatus, CardType, JourneyType } from "../types";
+import type {
+  CardProductAdmin,
+  CardProductInput,
+  CardProductStatus,
+  CardType,
+  CardValueDisplayType,
+  JourneyType,
+} from "../types";
+
+const VALUE_DISPLAY_TYPE_LABEL: Record<CardValueDisplayType, string> = {
+  FIXED: "مقدار ثابت",
+  UP_TO: "سقف اعتبار (تا سقف)",
+};
 
 const CARD_TYPE_LABEL: Record<CardType, string> = {
   CREDIT_CARD: "کارت اعتباری",
@@ -45,6 +57,11 @@ export interface CardProductFormProps {
  * `priceAmount` is stored and managed by Admin directly here — no payment/
  * gateway/wallet/installment/discount logic exists or is implied by this
  * form (SERVICES-R5.17 scope; see docs/services-r5-17-admin-catalog-cms.md).
+ *
+ * SERVICES-R5.19 adds `valueAmount`/`valueDisplayType` — the card's
+ * displayed commercial value/credit ceiling, deliberately separate from
+ * `priceAmount` (what the customer pays Biawin). See
+ * docs/services-r5-19-card-product-purchase-order-foundation.md §6.
  */
 export function CardProductForm({ mode, initial, readOnly, backHref, onSaved }: CardProductFormProps) {
   const [serviceId, setServiceId] = useState(initial?.serviceId ?? "");
@@ -57,6 +74,10 @@ export function CardProductForm({ mode, initial, readOnly, backHref, onSaved }: 
   const [journeyType, setJourneyType] = useState<JourneyType>(initial?.journeyType ?? "PURCHASE");
   const [priceAmount, setPriceAmount] = useState(initial?.priceAmount?.toString() ?? "");
   const [priceLabel, setPriceLabel] = useState(initial?.priceLabel ?? "");
+  const [valueAmount, setValueAmount] = useState(initial?.valueAmount?.toString() ?? "");
+  const [valueDisplayType, setValueDisplayType] = useState<CardValueDisplayType | "">(
+    initial?.valueDisplayType ?? "",
+  );
   const [validityDays, setValidityDays] = useState(initial?.validityDays?.toString() ?? "");
   const [status, setStatus] = useState<CardProductStatus>(initial?.status ?? "DRAFT");
   const [benefits, setBenefits] = useState((initial?.benefits ?? []).join("، "));
@@ -84,6 +105,8 @@ export function CardProductForm({ mode, initial, readOnly, backHref, onSaved }: 
       journeyType,
       priceAmount: priceAmount ? Number(priceAmount) : null,
       priceLabel: priceLabel || null,
+      valueAmount: valueAmount ? Number(valueAmount) : null,
+      valueDisplayType: valueDisplayType || null,
       validityDays: validityDays ? Number(validityDays) : null,
       status,
       benefits: benefits
@@ -176,6 +199,30 @@ export function CardProductForm({ mode, initial, readOnly, backHref, onSaved }: 
 
       <FormField label="برچسب قیمت (نمایشی)">
         <input value={priceLabel} onChange={(e) => setPriceLabel(e.target.value)} className="biawin-plain-input" />
+      </FormField>
+
+      <FormField label="ارزش/سقف کارت (ریال)" hint="ارزش نمایشی کارت برای مشتری — با «مبلغ» بالا (که مشتری به بیاوین پرداخت می‌کند) اشتباه گرفته نشود.">
+        <input
+          type="number"
+          value={valueAmount}
+          onChange={(e) => setValueAmount(e.target.value)}
+          className="biawin-plain-input"
+        />
+      </FormField>
+
+      <FormField label="نوع نمایش ارزش کارت">
+        <select
+          value={valueDisplayType}
+          onChange={(e) => setValueDisplayType(e.target.value as CardValueDisplayType | "")}
+          className="biawin-plain-select"
+        >
+          <option value="">—</option>
+          {(Object.keys(VALUE_DISPLAY_TYPE_LABEL) as CardValueDisplayType[]).map((key) => (
+            <option key={key} value={key}>
+              {VALUE_DISPLAY_TYPE_LABEL[key]}
+            </option>
+          ))}
+        </select>
       </FormField>
 
       <FormField label="مدت اعتبار (روز)">
