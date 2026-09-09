@@ -736,3 +736,53 @@ single remaining catalog-fetch abort's classification under the corrected
 correlation window — real evidence from the next run will settle it either
 way. SERVICES-R1 does not close until a real staging run produces 0
 FAIL/0 NOT_TESTED end to end.
+
+---
+
+## QA hardening — hardcoded catalog-count assertion removed (2026-09-10)
+
+A real staging run failed at "Fetch real Category/Service snapshot via
+public API (cross-check baseline)":
+
+```
+expected 19 real categories, got 20
+```
+
+**Root cause**: `browser-qa.ts`'s snapshot-fetch step hardcoded
+`s.categories.length === 19` (and `s.services.length === 108`) from the
+count real when QA Run #1 first wrote this check (see Deployment #1's
+verification table above — `total:19`). The catalog is Admin-managed
+(SERVICES-R5.17) and genuinely dynamic; a 20th category was legitimately
+added since. **Not a product defect** — a QA assertion that baked in a
+point-in-time count as if it were a permanent invariant.
+
+**Fix** (`deploy/staging/qa/browser/browser-qa.ts` only — no application
+code touched): replaced the exact-count assertions with count-agnostic
+business rules that hold regardless of how many rows the real catalog
+has:
+- `categories.length > 0` and `services.length > 0` (the catalog loaded at
+  all);
+- at least one real category has at least one real service loadable under
+  it (there is something real for the rest of this file to exercise);
+- the specific categories this flow's own logic depends on discovering by
+  name (`categoryMany`, `categoryFew`, the asset-mapped category) each
+  resolved to a real row with a usable `id`/`name` — added as its own
+  explicit step, "Required categories this flow depends on are
+  discoverable in the real catalog (count-agnostic)".
+
+Every downstream check in `runServicesModuleChecks` already computed its
+expectations from the live snapshot dynamically (`Math.min(11,
+snapshot.categories.length)`, `byCategory.get(...).length`, etc.) — the
+two hardcoded totals at the top were the only brittle assertions in the
+file. The existing back-navigation isolation check
+(`runBackNavigationIsolationCheck`) and the Services-origin/direct-URL
+service-navigation checks were not touched.
+
+Re-run locally against a local dev stack (Chromium via Playwright) after
+the fix — the snapshot-fetch step and the new "required categories
+discoverable" step both pass regardless of the real category count, and
+every other Services-module check (category grid, method filters, search,
+empty states, Service Detail cardOnly rendering, Merchant Detail,
+data-integrity mismatches) is unaffected. No application code changed;
+typecheck/lint/tests for `apps/web`/`apps/admin`/`backend` are all
+unaffected by this QA-tooling-only change.

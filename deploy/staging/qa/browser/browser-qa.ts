@@ -623,8 +623,21 @@ async function runCustomerChecks(browser: Browser): Promise<void> {
 async function runServicesModuleChecks(page: Page, issues: PageIssues): Promise<void> {
   const snapshot = await step('Fetch real Category/Service snapshot via public API (cross-check baseline)', async () => {
     const s = await fetchServiceCatalogSnapshot();
-    assert(s.categories.length === 19, `expected 19 real categories, got ${s.categories.length}`);
-    assert(s.services.length === 108, `expected 108 real services, got ${s.services.length}`);
+    // The catalog is dynamic — Admin can add/remove Categories/Services at
+    // any time (SERVICES-R5.17 Admin CMS), so a specific count (previously
+    // hardcoded as 19/108) is not a stable invariant and WILL drift out of
+    // sync with reality on its own, with no application defect involved
+    // (confirmed live: a real run failed "expected 19 real categories, got
+    // 20" purely because a 20th category was legitimately added). This
+    // check instead validates the catalog is genuinely USABLE, via
+    // business rules that hold regardless of how many rows exist:
+    assert(s.categories.length > 0, 'expected at least one real category from the public catalog — got none');
+    assert(s.services.length > 0, 'expected at least one real service from the public catalog — got none');
+    // At least one real category must have at least one real service
+    // loadable under it — otherwise every downstream category-flow check
+    // in this file has nothing real to exercise.
+    const categoryWithServices = s.categories.find((c) => s.services.some((sv) => sv.categoryId === c.id));
+    assert(!!categoryWithServices, 'expected at least one real category to have at least one loadable real service, found none');
     return s;
   });
   if (!snapshot) {
@@ -645,6 +658,19 @@ async function runServicesModuleChecks(page: Page, issues: PageIssues): Promise<
   const categoryFew = [...byCount].reverse().find((c) => (byCategory.get(c.id)?.length ?? 0) > 0) ?? byCount[byCount.length - 1];
   const categoryAsset = snapshot.categories.find((c) => c.name === 'گردشگری') ?? categoryMany;
   const categoryAssetServices = byCategory.get(categoryAsset.id) ?? [];
+
+  await step('Required categories this flow depends on are discoverable in the real catalog (count-agnostic)', async () => {
+    // Not "exactly N categories exist" (brittle, drifts with real Admin
+    // edits — see the snapshot-fetch step above) — instead, that every
+    // category the rest of this file actually navigates to by name
+    // (`categoryMany`/`categoryFew`, and the asset-mapped one with its
+    // 'گردشگری' fallback) resolved to a REAL row with a usable id/name, so
+    // the UI's own name-based selectors (`getByRole('button', {name:
+    // category.name})`) have something real to find.
+    for (const [label, cat] of [['categoryMany', categoryMany], ['categoryFew', categoryFew], ['categoryAsset', categoryAsset]] as const) {
+      assert(!!cat && !!cat.id && !!cat.name, `expected ${label} to resolve to a real category with a usable id/name, got ${JSON.stringify(cat)}`);
+    }
+  });
 
   const mainStrongTitles = page.locator('main strong');
   const tileIcons = page.locator('main button img[alt=""]');
