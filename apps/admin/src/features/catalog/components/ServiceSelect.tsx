@@ -10,6 +10,16 @@ export interface ServiceSelectProps {
   onChange: (serviceId: string) => void;
   disabled?: boolean;
   required?: boolean;
+  /**
+   * SERVICES-R5.21 — when set, options are restricted to Services under
+   * this Category only (`servicesAdminApi.list` already supports this
+   * filter server-side). Used by CategoryCardForm so a discovery card's
+   * target Service can never be picked from outside its own Category —
+   * the real ownership rule is still enforced server-side regardless
+   * (CategoryCardsService.assertOwnership), this is only the UI-level
+   * convenience of not offering an invalid choice in the first place.
+   */
+  categoryId?: string;
 }
 
 /**
@@ -18,16 +28,22 @@ export interface ServiceSelectProps {
  * (not the public one) so a not-yet-activated Service can still be picked
  * for a CardProduct while it's being set up.
  */
-export function ServiceSelect({ value, onChange, disabled, required }: ServiceSelectProps) {
-  const [options, setOptions] = useState<{ id: string; title: string }[] | null>(null);
+export function ServiceSelect({ value, onChange, disabled, required, categoryId }: ServiceSelectProps) {
+  // Keyed by the categoryId it was fetched for — so switching categoryId
+  // never shows a stale (wrong-category) options list even for the one
+  // render before the new fetch resolves; derived at render time instead
+  // of an extra synchronous setState(null) inside the effect (which
+  // triggers React's "no setState synchronously in an effect body" rule).
+  const [fetched, setFetched] = useState<{ categoryId: string | undefined; options: { id: string; title: string }[] } | null>(null);
   const [errorMessage, setErrorMessage] = useState<string | null>(null);
+  const options = fetched !== null && fetched.categoryId === categoryId ? fetched.options : null;
 
   useEffect(() => {
     let cancelled = false;
     servicesAdminApi
-      .list(undefined, 100)
+      .list(categoryId, 100)
       .then((result) => {
-        if (!cancelled) setOptions(result.items.map((s) => ({ id: s.id, title: s.title })));
+        if (!cancelled) setFetched({ categoryId, options: result.items.map((s) => ({ id: s.id, title: s.title })) });
       })
       .catch((error: unknown) => {
         if (!cancelled) {
@@ -37,7 +53,7 @@ export function ServiceSelect({ value, onChange, disabled, required }: ServiceSe
     return () => {
       cancelled = true;
     };
-  }, []);
+  }, [categoryId]);
 
   return (
     <div className="biawin-service-select">

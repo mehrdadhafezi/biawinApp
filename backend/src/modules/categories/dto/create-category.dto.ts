@@ -23,6 +23,14 @@ export class CreateCategoryDto {
   @IsString()
   imageKey?: string;
 
+  @ApiPropertyOptional({
+    description:
+      'SERVICES-R5.21 — public URL identifier for the Category Landing route (/categories/[slug]). Unset means no Landing route exists for this Category yet.',
+  })
+  @IsOptional()
+  @IsString()
+  slug?: string;
+
   @ApiPropertyOptional({ type: [String], default: [] })
   @IsOptional()
   @IsArray()

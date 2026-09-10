@@ -2,6 +2,7 @@ import { AdminRole } from '@prisma/client';
 import { ADMIN_ROLES_KEY } from '../../common/decorators/admin-roles.decorator';
 import { AdminRolesGuard } from '../../common/guards/admin-roles.guard';
 import { CardProductsAdminController } from '../cards/card-products-admin.controller';
+import { CategoryCardsAdminController } from '../category-cards/category-cards-admin.controller';
 import { ServicesAdminController } from '../services/services-admin.controller';
 import { CategoriesAdminController } from './categories-admin.controller';
 
@@ -50,6 +51,12 @@ describe('Catalog admin controllers — role restrictions', () => {
       name: 'CardProductsAdminController',
       Controller: CardProductsAdminController,
       mutations: ['create', 'update'],
+      reads: ['list', 'findOne'],
+    },
+    {
+      name: 'CategoryCardsAdminController',
+      Controller: CategoryCardsAdminController,
+      mutations: ['create', 'update', 'reorder'],
       reads: ['list', 'findOne'],
     },
   ];

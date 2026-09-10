@@ -1,4 +1,9 @@
-import { belongsToCategory, cardProductBelongsToService, serviceReferencesMerchant } from "./serviceValidation";
+import {
+  belongsToCategory,
+  cardProductBelongsToService,
+  categoryCardServiceDetailHref,
+  serviceReferencesMerchant,
+} from "./serviceValidation";
 import type { CardProductDto, ServiceDto } from "../../lib/services-api";
 
 function service(categoryId: string, merchantId: string | null = null): ServiceDto {
@@ -79,5 +84,19 @@ describe("cardProductBelongsToService (SERVICES-R5.18)", () => {
 
   it("returns false when a real, ACTIVE card product belongs to a DIFFERENT real service", () => {
     expect(cardProductBelongsToService(cardProduct("service-a"), "service-b")).toBe(false);
+  });
+});
+
+describe("categoryCardServiceDetailHref (SERVICES-R5.21 — navigation)", () => {
+  it("builds the real, existing Service Detail route from the card's own categoryId/targetServiceId", () => {
+    expect(
+      categoryCardServiceDetailHref({ categoryId: "cat-1", targetServiceId: "svc-1" }),
+    ).toBe("/services/cat-1/svc-1");
+  });
+
+  it("never navigates to a CardProduct or purchase route — CategoryCard is a discovery card, not a purchasable product", () => {
+    const href = categoryCardServiceDetailHref({ categoryId: "cat-1", targetServiceId: "svc-1" });
+    expect(href).not.toContain("/cards/");
+    expect(href.split("/")).toHaveLength(4); // /services/{categoryId}/{serviceId} only, no further segment
   });
 });

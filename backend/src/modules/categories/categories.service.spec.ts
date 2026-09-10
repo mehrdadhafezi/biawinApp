@@ -62,6 +62,30 @@ describe('CategoriesService', () => {
     });
   });
 
+  describe('findBySlugOrThrow (SERVICES-R5.21 — Category Landing route)', () => {
+    it('resolves a real Category by its real slug', async () => {
+      prisma.category.findFirst.mockResolvedValue({
+        id: 'cat-1',
+        name: 'گردشگری',
+        slug: 'gardeshgari',
+      });
+
+      const result = await service.findBySlugOrThrow('gardeshgari');
+
+      expect(prisma.category.findFirst).toHaveBeenCalledWith({
+        where: { slug: 'gardeshgari' },
+      });
+      expect(result.id).toBe('cat-1');
+    });
+
+    it('throws NotFoundException for a slug that resolves to no real Category (e.g. one never set by Admin)', async () => {
+      prisma.category.findFirst.mockResolvedValue(null);
+      await expect(
+        service.findBySlugOrThrow('unknown-slug'),
+      ).rejects.toBeInstanceOf(NotFoundException);
+    });
+  });
+
   describe('admin create()', () => {
     it('creates a category with the admin as createdBy/updatedBy', async () => {
       prisma.category.create.mockResolvedValue({

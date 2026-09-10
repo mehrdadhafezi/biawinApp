@@ -7,6 +7,7 @@ import { ApiError } from "../../../lib/api-client";
 import { categoriesAdminApi } from "../api/categories-admin-api";
 import { servicesAdminApi } from "../api/services-admin-api";
 import { cardProductsAdminApi } from "../api/card-products-admin-api";
+import { categoryCardsAdminApi } from "../api/category-cards-admin-api";
 
 interface ResourceSummary {
   label: string;
@@ -24,14 +25,16 @@ export function CatalogOverview() {
 
     async function load() {
       try {
-        const [categories, services, cardProducts] = await Promise.all([
+        const [categories, services, cardProducts, categoryCards] = await Promise.all([
           categoriesAdminApi.list(),
           servicesAdminApi.list(),
           cardProductsAdminApi.list(),
+          categoryCardsAdminApi.list(),
         ]);
         if (cancelled) return;
         setSummaries([
           { label: "دسته‌بندی‌ها", href: "/catalog/categories", total: categories.total },
+          { label: "کارت‌های دسته‌بندی", href: "/catalog/category-cards", total: categoryCards.total },
           { label: "خدمات", href: "/catalog/services", total: services.total },
           { label: "کارت‌های محصول", href: "/catalog/card-products", total: cardProducts.total },
         ]);

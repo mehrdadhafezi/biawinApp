@@ -8,6 +8,7 @@ function category(overrides: Partial<CategoryDto>): CategoryDto {
     name: "گردشگری",
     description: "تجربه سفر با پرداخت مرحله‌ای",
     imageKey: null,
+    slug: null,
     keywords: [],
     sortOrder: 0,
     active: true,

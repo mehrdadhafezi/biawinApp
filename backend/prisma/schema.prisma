@@ -463,10 +463,20 @@ model Category {
   keywords    Json // string[]
   sortOrder   Int      @default(0)
   active      Boolean  @default(true)
+  /// SERVICES-R5.21 — public URL identifier for the Category Landing route
+  /// (`/categories/[slug]`). Nullable + unique: no fabricated slug is
+  /// backfilled onto existing rows (same "no fictional data" discipline as
+  /// `priceFrom`/`priceAmount` elsewhere) — Admin sets it per-Category. A
+  /// Category with no slug set simply has no Landing route yet; its
+  /// existing `/services/[categoryId]` page is unaffected either way.
+  slug        String?  @unique
 
   services   Service[]
   plans      MembershipPlan[] @relation("PlanCategories")
   orbitItems OrbitItem[]
+  /// SERVICES-R5.21 — discovery/marketing cards for the Category Landing
+  /// route. See CategoryCard's own doc comment.
+  categoryCards CategoryCard[]
 
   // Stage 5.19 — real FKs replacing docs/home-admin-contract.md §4.3/§4.4's
   // originally-speculated `categoryName === category.name` string matching
@@ -561,6 +571,12 @@ model Service {
   /// SERVICES-R5.16 — the commercial card products this Service can be
   /// purchased/actioned through (see CardProduct's own doc comment).
   cardProducts CardProduct[]
+  /// SERVICES-R5.21 — CategoryCards that point at this Service as their
+  /// discovery-card target. A Service may be the target of CategoryCards
+  /// from its OWN Category only (enforced at the application boundary by
+  /// CategoryCardsService, not the database — see that service's ownership
+  /// validation).
+  categoryCardTargets CategoryCard[] @relation("CategoryCardTargetService")
 
   // SERVICES-R5.17 — same ADR §5 pattern as Category, above.
   createdBy      String?
@@ -573,6 +589,57 @@ model Service {
 
   @@index([categoryId])
   @@map("services")
+}
+
+// ---------------------------------------------------------------------------
+// Category Landing / Discovery Cards (SERVICES-R5.21)
+//
+// See docs/services-r5-21-category-landing-discovery-card-contract.md.
+// CategoryCard is a discovery/marketing card — NOT a purchasable product,
+// and it must NEVER reference CardProduct directly. The business chain is
+// Category -> CategoryCard -> Service -> CardProduct: a CategoryCard only
+// ever points at a Service (which is where the real, already-built
+// CardProduct purchase flow lives); it carries no price and no purchase
+// state of its own.
+// ---------------------------------------------------------------------------
+
+/// A discovery/marketing card shown on a Category's Landing page
+/// (`/categories/[slug]`), pointing at one Service within the SAME
+/// Category (ownership enforced by `CategoryCardsService`, not the
+/// database — mirrors `CardProduct.serviceId`'s own "never trust a bare
+/// relationship" discipline). Deliberately mirrors `HomeServiceBanner`'s
+/// shape (`mediaAssetId` FK, `sortOrder`, `active`, `createdBy`/
+/// `updatedBy`) rather than inventing a new content-model shape.
+model CategoryCard {
+  id              String      @id @default(uuid())
+  categoryId      String
+  category        Category    @relation(fields: [categoryId], references: [id], onDelete: Restrict)
+  targetServiceId String
+  targetService   Service     @relation("CategoryCardTargetService", fields: [targetServiceId], references: [id], onDelete: Restrict)
+  title           String
+  subtitle        String?
+  badge           String?
+  mediaAssetId    String?
+  mediaAsset      MediaAsset? @relation(fields: [mediaAssetId], references: [id], onDelete: SetNull)
+  /// Short marketing bullets (R5.20 finding: real reference cards use
+  /// exactly 2, hand-written, never templated) — Json string[], capped at
+  /// 2 by the Admin form, not the database, matching `Service.benefits`'s
+  /// own precedent for flexible short-copy fields.
+  highlights      Json        @default("[]")
+  sortOrder       Int         @default(0)
+  active          Boolean     @default(true)
+
+  createdBy      String?
+  createdByAdmin AdminUser? @relation("CategoryCardCreatedBy", fields: [createdBy], references: [id], onDelete: SetNull)
+  updatedBy      String?
+  updatedByAdmin AdminUser? @relation("CategoryCardUpdatedBy", fields: [updatedBy], references: [id], onDelete: SetNull)
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@index([categoryId, active, sortOrder])
+  @@index([targetServiceId])
+  @@map("category_cards")
 }
 
 // ---------------------------------------------------------------------------
@@ -953,6 +1020,8 @@ model AdminUser {
   updatedServices      Service[]     @relation("ServiceUpdatedBy")
   createdCardProducts  CardProduct[] @relation("CardProductCreatedBy")
   updatedCardProducts  CardProduct[] @relation("CardProductUpdatedBy")
+  createdCategoryCards CategoryCard[] @relation("CategoryCardCreatedBy")
+  updatedCategoryCards CategoryCard[] @relation("CategoryCardUpdatedBy")
 
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
@@ -1048,6 +1117,8 @@ model MediaAsset {
   homeServiceBanners     HomeServiceBanner[]
   homeServiceMosaicTiles HomeServiceMosaicTile[]
   homeNewsArticles       HomeNewsArticle[]
+  // SERVICES-R5.21 — the second real consumer of this table, same pattern.
+  categoryCards          CategoryCard[]
 
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt

@@ -20,6 +20,7 @@ import { AdvisorModule } from './modules/advisor/advisor.module';
 import { AuthModule } from './modules/auth/auth.module';
 import { CardsModule } from './modules/cards/cards.module';
 import { CategoriesModule } from './modules/categories/categories.module';
+import { CategoryCardsModule } from './modules/category-cards/category-cards.module';
 import { CreditModule } from './modules/credit/credit.module';
 import { InstallmentsModule } from './modules/installments/installments.module';
 import { MembershipModule } from './modules/membership/membership.module';
@@ -71,6 +72,11 @@ import { WalletModule } from './modules/wallet/wallet.module';
     CategoriesModule,
     MerchantsModule,
     CardsModule,
+    // Depends on AdminAuditLogModule + MediaModule (declared below) for
+    // audit logging and mediaAssetId->URL resolution — Nest resolves the
+    // whole module graph regardless of array order, so this placement is
+    // purely for grouping with the rest of the catalog domain.
+    CategoryCardsModule,
     OrbitItemsModule,
     OrdersModule,
     PaymentsModule,

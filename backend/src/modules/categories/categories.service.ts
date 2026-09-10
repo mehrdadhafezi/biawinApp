@@ -47,6 +47,18 @@ export class CategoriesService {
     return item;
   }
 
+  /**
+   * SERVICES-R5.21 — resolves a Category for the Category Landing route
+   * (`/categories/[slug]`). A Category with `slug: null` (no fabricated
+   * backfill — see the schema's own doc comment) correctly 404s here, same
+   * not-found discipline as `findOneOrThrow`.
+   */
+  async findBySlugOrThrow(slug: string) {
+    const item = await this.prisma.category.findFirst({ where: { slug } });
+    if (!item) throw new NotFoundException('دسته‌بندی یافت نشد.');
+    return item;
+  }
+
   async listAdmin(skip: number, take: number) {
     const [items, total] = await this.prisma.$transaction([
       this.prisma.category.findMany({

@@ -6,6 +6,7 @@ const baseCategory = {
   name: "خودرو",
   description: "توضیحات دسته خودرو",
   imageKey: "categories/auto.webp",
+  slug: "khodro",
   keywords: ["خودرو", "ماشین"],
   sortOrder: 0,
   active: true,
@@ -36,6 +37,14 @@ describe("CategoryForm rendering", () => {
 
     expect(html).toContain("خودرو، ماشین");
     expect(html).toContain("categories/auto.webp");
+    expect(html).toContain("khodro");
+  });
+
+  it("renders the slug field (SERVICES-R5.21 Category Landing route)", () => {
+    const html = renderToStaticMarkup(
+      <CategoryForm mode="create" backHref="/catalog/categories" onSaved={jest.fn()} />,
+    );
+    expect(html).toContain("شناسه آدرس");
   });
 
   it("readOnly mode disables the fieldset and hides the submit control", () => {

@@ -38,6 +38,8 @@ export interface CategoryAdmin {
   name: string;
   description: string;
   imageKey: string | null;
+  /** SERVICES-R5.21 — public URL identifier for /categories/[slug]. Null means no Landing route yet. */
+  slug: string | null;
   keywords: string[];
   sortOrder: number;
   active: boolean;
@@ -51,6 +53,7 @@ export interface CategoryInput {
   name: string;
   description: string;
   imageKey?: string | null;
+  slug?: string | null;
   keywords?: string[];
   sortOrder?: number;
   active?: boolean;
@@ -135,4 +138,41 @@ export interface CardProductInput {
   validityDays?: number | null;
   status?: CardProductStatus;
   sortOrder?: number;
+}
+
+/**
+ * SERVICES-R5.21 — discovery/marketing card for the Category Landing route.
+ * Deliberately contains no pricing/CardProduct-shaped field — see the
+ * backend DTOs' own doc comments for the RBAC boundary this mirrors.
+ */
+export interface CategoryCardAdmin {
+  id: string;
+  categoryId: string;
+  category?: { id: string; name: string } | null;
+  targetServiceId: string;
+  targetService?: { id: string; title: string } | null;
+  title: string;
+  subtitle: string | null;
+  badge: string | null;
+  mediaAssetId: string | null;
+  image: string | null;
+  highlights: string[];
+  sortOrder: number;
+  active: boolean;
+  createdBy: string | null;
+  updatedBy: string | null;
+  createdAt: string;
+  updatedAt: string;
+}
+
+export interface CategoryCardInput {
+  categoryId: string;
+  targetServiceId: string;
+  title: string;
+  subtitle?: string | null;
+  badge?: string | null;
+  mediaAssetId?: string | null;
+  highlights?: string[];
+  sortOrder?: number;
+  active?: boolean;
 }

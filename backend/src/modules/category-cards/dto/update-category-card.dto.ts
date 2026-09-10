@@ -7,35 +7,43 @@ import {
   IsString,
 } from 'class-validator';
 
-export class UpdateCategoryDto {
+/** Same field set as CreateCategoryCardDto, all optional — see that DTO's own doc comment for the RBAC boundary this shape enforces. */
+export class UpdateCategoryCardDto {
   @ApiPropertyOptional()
   @IsOptional()
   @IsString()
-  name?: string;
+  categoryId?: string;
 
   @ApiPropertyOptional()
   @IsOptional()
   @IsString()
-  description?: string;
+  targetServiceId?: string;
 
   @ApiPropertyOptional()
   @IsOptional()
   @IsString()
-  imageKey?: string;
+  title?: string;
 
-  @ApiPropertyOptional({
-    description:
-      'SERVICES-R5.21 — public URL identifier for the Category Landing route (/categories/[slug]).',
-  })
+  @ApiPropertyOptional()
   @IsOptional()
   @IsString()
-  slug?: string;
+  subtitle?: string;
+
+  @ApiPropertyOptional()
+  @IsOptional()
+  @IsString()
+  badge?: string;
+
+  @ApiPropertyOptional()
+  @IsOptional()
+  @IsString()
+  mediaAssetId?: string;
 
   @ApiPropertyOptional({ type: [String] })
   @IsOptional()
   @IsArray()
   @IsString({ each: true })
-  keywords?: string[];
+  highlights?: string[];
 
   @ApiPropertyOptional()
   @IsOptional()

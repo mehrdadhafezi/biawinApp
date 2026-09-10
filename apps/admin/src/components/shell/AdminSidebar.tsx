@@ -38,6 +38,7 @@ const NAV_ITEMS: AdminNavItem[] = [
     href: "/catalog",
     children: [
       { id: "catalog-categories", title: "دسته‌بندی‌ها", href: "/catalog/categories" },
+      { id: "catalog-category-cards", title: "کارت‌های دسته‌بندی", href: "/catalog/category-cards" },
       { id: "catalog-services", title: "خدمات", href: "/catalog/services" },
       { id: "catalog-card-products", title: "کارت‌های محصول", href: "/catalog/card-products" },
     ],

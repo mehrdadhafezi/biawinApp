@@ -20,6 +20,7 @@ export function CategoryForm({ mode, initial, readOnly, backHref, onSaved }: Cat
   const [name, setName] = useState(initial?.name ?? "");
   const [description, setDescription] = useState(initial?.description ?? "");
   const [imageKey, setImageKey] = useState(initial?.imageKey ?? "");
+  const [slug, setSlug] = useState(initial?.slug ?? "");
   const [keywords, setKeywords] = useState((initial?.keywords ?? []).join("، "));
   const [active, setActive] = useState(initial?.active ?? true);
 
@@ -35,6 +36,7 @@ export function CategoryForm({ mode, initial, readOnly, backHref, onSaved }: Cat
       name,
       description,
       imageKey: imageKey || null,
+      slug: slug || null,
       keywords: keywords
         .split(/[،,]/)
         .map((k) => k.trim())
@@ -78,6 +80,13 @@ export function CategoryForm({ mode, initial, readOnly, backHref, onSaved }: Cat
 
       <FormField label="کلید تصویر (Storage)" hint="کلید فایل آپلودشده در کتابخانه رسانه، در صورت وجود.">
         <input value={imageKey} onChange={(e) => setImageKey(e.target.value)} className="biawin-plain-input" />
+      </FormField>
+
+      <FormField
+        label="شناسه آدرس (slug)"
+        hint="شناسه صفحه فرود دسته‌بندی — /categories/[slug]. در صورت خالی بودن، این دسته‌بندی صفحه فرود ندارد."
+      >
+        <input value={slug} onChange={(e) => setSlug(e.target.value)} className="biawin-plain-input" dir="ltr" />
       </FormField>
 
       <FormField label="کلیدواژه‌ها" hint="با ویرگول جدا کنید.">

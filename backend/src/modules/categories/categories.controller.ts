@@ -20,4 +20,15 @@ export class CategoriesController {
   findOne(@Param('id') id: string) {
     return this.categoriesService.findOneOrThrow(id);
   }
+
+  /**
+   * SERVICES-R5.21 — a dedicated path segment (not `:id`) so a slug value
+   * can never collide with a real Category UUID in the route matcher; the
+   * existing `GET /categories/:id` above is completely untouched.
+   */
+  @Public()
+  @Get('slug/:slug')
+  findBySlug(@Param('slug') slug: string) {
+    return this.categoriesService.findBySlugOrThrow(slug);
+  }
 }

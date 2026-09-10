@@ -126,6 +126,13 @@ export const servicesApi = {
   listCategories: () => apiClient.get<Paginated<CategoryDto>>("/categories?limit=100", { public: true }),
   listAllServices,
   getService: (id: string) => apiClient.get<ServiceDto>(`/services/${id}`, { public: true }),
+  /**
+   * SERVICES-R5.21 — the Category Landing route's (`/categories/[slug]`)
+   * data source. A dedicated backend path (`GET /categories/slug/:slug`,
+   * never `:id`), so this 404s for any Category with no slug ever set by
+   * Admin — no fabricated slug exists for any real Category yet.
+   */
+  getCategoryBySlug: (slug: string) => apiClient.get<CategoryDto>(`/categories/slug/${slug}`, { public: true }),
 };
 
 /** SERVICES-R4 — real, public `GET /merchants/:id`, same "public catalog read" shape as `servicesApi`. */
@@ -144,4 +151,35 @@ export const cardProductsApi = {
   listByService: (serviceId: string) =>
     apiClient.get<Paginated<CardProductDto>>(`/cards?serviceId=${serviceId}&limit=100`, { public: true }),
   getCardProduct: (id: string) => apiClient.get<CardProductDto>(`/cards/${id}`, { public: true }),
+};
+
+/**
+ * SERVICES-R5.21 — CategoryCard is a discovery/marketing card for the
+ * Category Landing route, NOT a purchasable product — it has no price and
+ * no relationship to CardProduct at all. It only ever points at a Service
+ * (`targetServiceId`); clicking one navigates to that Service's own
+ * Detail page, where the real CardProduct purchase flow (R5.16–R5.19)
+ * lives. `image` is already a resolved, real URL (or null) — never a raw
+ * Storage key needing client-side resolution.
+ */
+export interface CategoryCardDto {
+  id: string;
+  categoryId: string;
+  targetServiceId: string;
+  title: string;
+  subtitle: string | null;
+  badge: string | null;
+  image: string | null;
+  highlights: string[];
+  sortOrder: number;
+}
+
+/**
+ * SERVICES-R5.21 — real, public `GET /category-cards?categoryId=X`,
+ * already filtered to `active: true` server-side (mirrors
+ * `cardProductsApi`'s own "no client-side re-filter needed" discipline).
+ */
+export const categoryCardsApi = {
+  listByCategory: (categoryId: string) =>
+    apiClient.get<Paginated<CategoryCardDto>>(`/category-cards?categoryId=${categoryId}&limit=100`, { public: true }),
 };
