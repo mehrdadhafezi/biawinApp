@@ -55,12 +55,19 @@ describe("Card Product Detail composition", () => {
     expect(html).toContain("به‌زودی");
   });
 
-  it("renders the value from valueAmount/valueDisplayType, never from priceAmount (SERVICES-R5.19)", () => {
+  it("renders the value from valueAmount/valueDisplayType and the price from priceAmount — two genuinely independent facts, never conflated (SERVICES-R5.19, corrected SERVICES-R5.25)", () => {
     const html = renderToStaticMarkup(
-      <CardProductHero cardProduct={cardProduct({ priceAmount: 999999999, valueAmount: 300000000, valueDisplayType: "UP_TO" })} />,
+      <CardProductHero cardProduct={cardProduct({ priceAmount: 30000000, valueAmount: 300000000, valueDisplayType: "UP_TO" })} />,
     );
+    // The value (credit ceiling) — derived only from valueAmount/valueDisplayType.
     expect(html).toContain("تا سقف 30,000,000 تومان اعتبار");
-    expect(html).not.toContain("999,999,999");
+    // The payable price — derived only from priceAmount, a genuinely different
+    // real number (30,000,000 Rial = 3,000,000 Toman) shown separately, under
+    // its own "پرداخت به بیاوین" label — never merged with or substituted for
+    // the value above.
+    expect(html).toContain("پرداخت به بیاوین");
+    expect(html).toContain("3,000,000 تومان");
+    expect(html).toContain("ارزش اعتبار کارت");
   });
 
   it("never renders a 'usage guide' or 'terms' section — no such field exists on the real CardProduct model", () => {

@@ -1,6 +1,6 @@
-import { Badge, color, spacing, typography } from "@biawin/ui";
+import { Badge, Card, color, spacing, typography } from "@biawin/ui";
 import type { CardProductDto } from "../../lib/services-api";
-import { CARD_TYPE_ICON, CARD_TYPE_LABEL, formatCardProductValue } from "./cardProductPresentation";
+import { CARD_TYPE_ICON, CARD_TYPE_LABEL, formatCardProductPrice, formatCardProductValue } from "./cardProductPresentation";
 
 export interface CardProductHeroProps {
   cardProduct: CardProductDto;
@@ -12,6 +12,12 @@ export interface CardProductHeroProps {
  * `cardProduct.image` when set, falling back to the same `cardType`-based
  * icon as the list tile for every card that has no image set (never a
  * fabricated one).
+ *
+ * SERVICES-R5.25 — renders BOTH the payable price and the card's value,
+ * each clearly labeled, matching the CardProduct catalog grid tile's own
+ * fix (`CardProductCard.tsx`) and this stage's prototype example. Before
+ * this fix, the payable price (`priceAmount`) was never shown anywhere in
+ * the customer UI — only the card's value.
  */
 export function CardProductHero({ cardProduct }: CardProductHeroProps) {
   return (
@@ -33,10 +39,19 @@ export function CardProductHero({ cardProduct }: CardProductHeroProps) {
           {cardProduct.description || cardProduct.subtitle}
         </p>
       )}
-      <div style={{ display: "flex", gap: spacing.xs, flexWrap: "wrap", alignItems: "center" }}>
-        <Badge tone="neutral">{cardProduct.badge || CARD_TYPE_LABEL[cardProduct.cardType]}</Badge>
-        <strong style={{ ...typography.h3, color: color.primary }}>{formatCardProductValue(cardProduct)}</strong>
-      </div>
+      <Badge tone="neutral" style={{ alignSelf: "flex-start" }}>
+        {cardProduct.badge || CARD_TYPE_LABEL[cardProduct.cardType]}
+      </Badge>
+      <Card style={{ display: "flex", gap: spacing.md, flexWrap: "wrap" }}>
+        <div style={{ display: "flex", flexDirection: "column", gap: 4 }}>
+          <span style={{ ...typography.caption, color: color.muted }}>پرداخت به بیاوین</span>
+          <strong style={{ ...typography.h2, color: color.deep }}>{formatCardProductPrice(cardProduct)}</strong>
+        </div>
+        <div style={{ display: "flex", flexDirection: "column", gap: 4 }}>
+          <span style={{ ...typography.caption, color: color.muted }}>ارزش اعتبار کارت</span>
+          <strong style={{ ...typography.h3, color: color.primary }}>{formatCardProductValue(cardProduct)}</strong>
+        </div>
+      </Card>
     </div>
   );
 }
