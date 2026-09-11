@@ -120,8 +120,8 @@ Full workspace, run locally, all clean:
 
 ## 15. Git
 
-Commit: `<filled in after commit — see below>`
-Branch: `main`, pushed after review.
+Commit: `58f30fc9fa9edbe4ac7cd447c73df72f569a0eeb` — "SERVICES-R5.26 implement card product purchase flow", 13 files changed, 817 insertions(+), 35 deletions(-).
+Branch: `main`.
 
 ## 16. Remaining Limitations
 
