@@ -38,6 +38,9 @@ export interface CategoryAdmin {
   name: string;
   description: string;
   imageKey: string | null;
+  /** SERVICES-R5.22 — the real Media Library relation; `image` is the backend-resolved public URL, never a raw key. */
+  mediaAssetId: string | null;
+  image: string | null;
   /** SERVICES-R5.21 — public URL identifier for /categories/[slug]. Null means no Landing route yet. */
   slug: string | null;
   keywords: string[];
@@ -53,10 +56,16 @@ export interface CategoryInput {
   name: string;
   description: string;
   imageKey?: string | null;
+  mediaAssetId?: string | null;
   slug?: string | null;
   keywords?: string[];
   sortOrder?: number;
   active?: boolean;
+}
+
+export interface ServiceFaqItem {
+  question: string;
+  answer: string;
 }
 
 export interface ServiceAdmin {
@@ -70,9 +79,21 @@ export interface ServiceAdmin {
   badge: string;
   icon: string | null;
   imageKey: string | null;
+  /** SERVICES-R5.22 — the real Media Library relation; `image`/`gallery` are backend-resolved public URLs. */
+  mediaAssetId: string | null;
+  image: string | null;
+  galleryMediaAssetIds: string[];
+  gallery: string[];
+  /** SERVICES-R5.22 — full-length content, separate from `subtitle` (the existing short description). */
+  description: string | null;
   priceFrom: number | null;
   priceLabel: string | null;
   availableMethods: PurchaseMethod[];
+  benefits: string[];
+  tags: string[];
+  usageGuide: string[];
+  terms: string[];
+  faq: ServiceFaqItem[];
   active: boolean;
   createdBy: string | null;
   updatedBy: string | null;
@@ -89,9 +110,17 @@ export interface ServiceInput {
   badge: string;
   icon?: string | null;
   imageKey?: string | null;
+  mediaAssetId?: string | null;
+  galleryMediaAssetIds?: string[];
+  description?: string | null;
   priceFrom?: number | null;
   priceLabel?: string | null;
   availableMethods?: PurchaseMethod[];
+  benefits?: string[];
+  tags?: string[];
+  usageGuide?: string[];
+  terms?: string[];
+  faq?: ServiceFaqItem[];
   active?: boolean;
 }
 
@@ -103,6 +132,9 @@ export interface CardProductAdmin {
   subtitle: string | null;
   description: string | null;
   imageKey: string | null;
+  /** SERVICES-R5.22 — the real Media Library relation; `image` is the backend-resolved public URL. */
+  mediaAssetId: string | null;
+  image: string | null;
   badge: string | null;
   cardType: CardType;
   journeyType: JourneyType;
@@ -127,6 +159,7 @@ export interface CardProductInput {
   subtitle?: string | null;
   description?: string | null;
   imageKey?: string | null;
+  mediaAssetId?: string | null;
   badge?: string | null;
   cardType: CardType;
   journeyType: JourneyType;

@@ -1,5 +1,6 @@
 import { ApiPropertyOptional } from '@nestjs/swagger';
 import type { PurchaseMethod } from '@prisma/client';
+import { Type } from 'class-transformer';
 import {
   IsArray,
   IsBoolean,
@@ -8,7 +9,9 @@ import {
   IsOptional,
   IsPositive,
   IsString,
+  ValidateNested,
 } from 'class-validator';
+import { ServiceFaqItemDto } from './service-faq-item.dto';
 
 const PURCHASE_METHODS: PurchaseMethod[] = [
   'credit',
@@ -57,6 +60,26 @@ export class UpdateServiceDto {
   @IsOptional()
   @IsString()
   imageKey?: string;
+
+  @ApiPropertyOptional({
+    description: 'SERVICES-R5.22 — MediaAsset id for the main image.',
+  })
+  @IsOptional()
+  @IsString()
+  mediaAssetId?: string;
+
+  @ApiPropertyOptional({ type: [String] })
+  @IsOptional()
+  @IsArray()
+  @IsString({ each: true })
+  galleryMediaAssetIds?: string[];
+
+  @ApiPropertyOptional({
+    description: 'SERVICES-R5.22 — long-form description.',
+  })
+  @IsOptional()
+  @IsString()
+  description?: string;
 
   @ApiPropertyOptional()
   @IsOptional()
@@ -107,6 +130,25 @@ export class UpdateServiceDto {
   @IsArray()
   @IsString({ each: true })
   tags?: string[];
+
+  @ApiPropertyOptional({ type: [ServiceFaqItemDto] })
+  @IsOptional()
+  @IsArray()
+  @ValidateNested({ each: true })
+  @Type(() => ServiceFaqItemDto)
+  faq?: ServiceFaqItemDto[];
+
+  @ApiPropertyOptional({ type: [String] })
+  @IsOptional()
+  @IsArray()
+  @IsString({ each: true })
+  usageGuide?: string[];
+
+  @ApiPropertyOptional({ type: [String] })
+  @IsOptional()
+  @IsArray()
+  @IsString({ each: true })
+  terms?: string[];
 
   @ApiPropertyOptional()
   @IsOptional()

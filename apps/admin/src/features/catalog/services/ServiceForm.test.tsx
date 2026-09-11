@@ -1,6 +1,6 @@
 import { renderToStaticMarkup } from "react-dom/server";
 import { ServiceForm } from "./ServiceForm";
-import type { PurchaseMethod } from "../types";
+import type { PurchaseMethod, ServiceFaqItem } from "../types";
 
 jest.mock("../../home/api/categories-api", () => ({
   categoriesApi: {
@@ -22,9 +22,19 @@ const baseService = {
   badge: "پرفروش",
   icon: "🚗",
   imageKey: null,
+  mediaAssetId: "media-1",
+  image: "https://cdn.test/services/service-1.jpg",
+  galleryMediaAssetIds: ["media-2"],
+  gallery: ["https://cdn.test/services/gallery-1.jpg"],
+  description: "توضیحات کامل بیمه شخص ثالث",
   priceFrom: 5000000,
   priceLabel: "از ۵ میلیون تومان",
   availableMethods: ["cash", "credit"] as PurchaseMethod[],
+  benefits: ["خرید از برندهای معتبر", "بدون سود"],
+  tags: ["بیمه", "خودرو"],
+  usageGuide: ["خرید کارت", "ورود به سایت مقصد"],
+  terms: ["شرط یک", "شرط دو"],
+  faq: [{ question: "چگونه خرید کنم؟", answer: "از دکمه خرید استفاده کنید." }] as ServiceFaqItem[],
   active: true,
   createdBy: null,
   updatedBy: null,
@@ -63,6 +73,19 @@ describe("ServiceForm rendering", () => {
 
     expect(html).toContain("بیمه شخص ثالث");
     expect(html).toContain("value=\"5000000\"");
+  });
+
+  it("edit mode pre-fills the media picker preview, description, comma-joined content lists, and FAQ rows (SERVICES-R5.22)", () => {
+    const html = renderToStaticMarkup(
+      <ServiceForm mode="edit" initial={baseService} backHref="/catalog/services" onSaved={jest.fn()} />,
+    );
+
+    expect(html).toContain("https://cdn.test/services/service-1.jpg");
+    expect(html).toContain("https://cdn.test/services/gallery-1.jpg");
+    expect(html).toContain("توضیحات کامل بیمه شخص ثالث");
+    expect(html).toContain("خرید از برندهای معتبر، بدون سود");
+    expect(html).toContain("چگونه خرید کنم؟");
+    expect(html).toContain("از دکمه خرید استفاده کنید.");
   });
 
   it("readOnly mode disables the fieldset and hides the submit control", () => {

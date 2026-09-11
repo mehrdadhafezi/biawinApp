@@ -1,6 +1,8 @@
+import { useEffect } from "react";
 import { spacing } from "@biawin/ui";
 import { SkeletonBlock } from "../common/SkeletonBlock";
 import type { CardProductDto } from "../../lib/services-api";
+import { trackEvent } from "../../lib/analytics";
 import { ServicesEmptyState, ServicesErrorState } from "./ServicesStates";
 import { CardProductCard } from "./CardProductCard";
 
@@ -18,8 +20,25 @@ export interface CardProductGridProps {
  * `cardProducts` is already server-filtered to `status: 'ACTIVE'` by
  * `GET /cards` (see `cardProductsApi.listByService`'s own doc comment) —
  * this component trusts that contract rather than re-filtering.
+ *
+ * SERVICES-R5.22 — fires `CardProductViewed` once per card whenever a
+ * real, populated set of cards first renders, mirroring
+ * `CategoryCardGrid`'s `CategoryCardViewed` pattern exactly (same mount-
+ * time "rendered to the DOM", not true viewport-intersection, caveat).
  */
 export function CardProductGrid({ cardProducts, error, onSelect }: CardProductGridProps) {
+  useEffect(() => {
+    if (!cardProducts || cardProducts.length === 0) return;
+    cardProducts.forEach((cardProduct, position) => {
+      trackEvent({
+        name: "CardProductViewed",
+        serviceId: cardProduct.serviceId,
+        cardProductId: cardProduct.id,
+        position,
+      });
+    });
+  }, [cardProducts]);
+
   if (error) {
     return <ServicesErrorState message={error} />;
   }

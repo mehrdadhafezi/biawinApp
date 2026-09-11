@@ -27,6 +27,20 @@ export interface ServiceDto {
   faq: { question: string; answer: string }[];
   tags: string[];
   active: boolean;
+  /**
+   * SERVICES-R5.22 — real, backend-resolved public URLs (never a raw
+   * Storage key needing client-side resolution, same discipline as
+   * `CategoryCardDto.image`). `image` is null when no `mediaAssetId` is
+   * set — `ServiceHero` falls back to `icon` in that case, never a
+   * fabricated placeholder. `gallery` is an ordered URL array, empty when
+   * no gallery images were selected in Admin.
+   */
+  image: string | null;
+  gallery: string[];
+  /** SERVICES-R5.22 — full-length content, separate from `subtitle` (the existing short description). */
+  description: string | null;
+  usageGuide: string[];
+  terms: string[];
 }
 
 /**
@@ -75,6 +89,8 @@ export interface CardProductDto {
   subtitle: string | null;
   description: string | null;
   imageKey: string | null;
+  /** SERVICES-R5.22 — real, backend-resolved public URL, same discipline as `ServiceDto.image`. */
+  image: string | null;
   badge: string | null;
   cardType: CardType;
   journeyType: JourneyType;

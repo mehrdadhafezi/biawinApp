@@ -10,6 +10,7 @@ function cardProduct(overrides: Partial<CardProductDto> = {}): CardProductDto {
     subtitle: "پوشش کامل",
     description: null,
     imageKey: null,
+    image: null,
     badge: null,
     cardType: "CREDIT_CARD",
     journeyType: "PURCHASE",

@@ -6,6 +6,7 @@ import { performSave } from "../../home/logic";
 import { FormField } from "../../home/components/FormField";
 import { HomeFormShell } from "../../home/components/HomeFormShell";
 import { ServiceSelect } from "../components/ServiceSelect";
+import { MediaPickerField } from "../../home/components/MediaPickerField";
 import { plainFieldStyles } from "../../home/components/formStyles";
 import type {
   CardProductAdmin,
@@ -69,7 +70,11 @@ export function CardProductForm({ mode, initial, readOnly, backHref, onSaved }: 
   const [subtitle, setSubtitle] = useState(initial?.subtitle ?? "");
   const [description, setDescription] = useState(initial?.description ?? "");
   const [badge, setBadge] = useState(initial?.badge ?? "");
-  const [imageKey, setImageKey] = useState(initial?.imageKey ?? "");
+  // Deprecated in place — no longer editable (SERVICES-R5.22, all image
+  // management now goes through mediaAssetId below); preserved unchanged.
+  const imageKey = initial?.imageKey ?? null;
+  const [mediaAssetId, setMediaAssetId] = useState<string | null>(initial?.mediaAssetId ?? null);
+  const [previewUrl, setPreviewUrl] = useState<string | null>(initial?.image ?? null);
   const [cardType, setCardType] = useState<CardType>(initial?.cardType ?? "CREDIT_CARD");
   const [journeyType, setJourneyType] = useState<JourneyType>(initial?.journeyType ?? "PURCHASE");
   const [priceAmount, setPriceAmount] = useState(initial?.priceAmount?.toString() ?? "");
@@ -100,7 +105,8 @@ export function CardProductForm({ mode, initial, readOnly, backHref, onSaved }: 
       subtitle: subtitle || null,
       description: description || null,
       badge: badge || null,
-      imageKey: imageKey || null,
+      imageKey,
+      mediaAssetId,
       cardType,
       journeyType,
       priceAmount: priceAmount ? Number(priceAmount) : null,
@@ -160,9 +166,16 @@ export function CardProductForm({ mode, initial, readOnly, backHref, onSaved }: 
         <input value={badge} onChange={(e) => setBadge(e.target.value)} className="biawin-plain-input" />
       </FormField>
 
-      <FormField label="کلید تصویر (Storage)">
-        <input value={imageKey} onChange={(e) => setImageKey(e.target.value)} className="biawin-plain-input" />
-      </FormField>
+      <MediaPickerField
+        label="تصویر کارت محصول"
+        value={mediaAssetId}
+        previewUrl={previewUrl}
+        disabled={readOnly}
+        onChange={(id, url) => {
+          setMediaAssetId(id);
+          setPreviewUrl(url);
+        }}
+      />
 
       <FormField label="نوع کارت" required>
         <select value={cardType} onChange={(e) => setCardType(e.target.value as CardType)} className="biawin-plain-select">

@@ -8,6 +8,7 @@ function category(overrides: Partial<CategoryDto>): CategoryDto {
     name: "گردشگری",
     description: "تجربه سفر با پرداخت مرحله‌ای",
     imageKey: null,
+    image: null,
     slug: null,
     keywords: [],
     sortOrder: 0,
@@ -47,5 +48,17 @@ describe("CategoryHero", () => {
   it("renders the prototype's verbatim label badge text", () => {
     const html = renderToStaticMarkup(<CategoryHero category={category({})} serviceCount={0} />);
     expect(html).toContain("کارت‌های خدمات بیاوین");
+  });
+
+  it("renders a real full-bleed photo when the Category has one set (SERVICES-R5.22)", () => {
+    const html = renderToStaticMarkup(
+      <CategoryHero category={category({ image: "https://cdn.test/categories/gardeshgari.jpg" })} serviceCount={0} />,
+    );
+    expect(html).toContain("https://cdn.test/categories/gardeshgari.jpg");
+  });
+
+  it("keeps the existing icon-only treatment when no image is set (never a fabricated photo)", () => {
+    const html = renderToStaticMarkup(<CategoryHero category={category({ image: null })} serviceCount={0} />);
+    expect(html).toContain("/services/icon-gardeshgari.webp");
   });
 });

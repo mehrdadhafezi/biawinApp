@@ -12,6 +12,7 @@ function cardProduct(overrides: Partial<CardProductDto> = {}): CardProductDto {
     subtitle: "پوشش کامل خودرو",
     description: "توضیحات کامل این کارت اعتباری برای بیمه شخص ثالث.",
     imageKey: null,
+    image: null,
     badge: "پرفروش",
     cardType: "CREDIT_CARD",
     journeyType: "PURCHASE",

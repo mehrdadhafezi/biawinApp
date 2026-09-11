@@ -3,9 +3,10 @@ import {
   NotFoundException,
   UnprocessableEntityException,
 } from '@nestjs/common';
-import type { CardProduct } from '@prisma/client';
+import type { CardProduct, MediaAsset } from '@prisma/client';
 import { PrismaService } from '../../infra/prisma/prisma.service';
 import { AdminAuditLogService } from '../admin-audit-log/admin-audit-log.service';
+import { MediaStorageService } from '../media/media-storage.service';
 import type { CreateCardProductDto } from './dto/create-card-product.dto';
 import type { UpdateCardProductDto } from './dto/update-card-product.dto';
 
@@ -13,6 +14,8 @@ interface SessionMeta {
   ip?: string;
   userAgent?: string;
 }
+
+type CardProductWithMedia = CardProduct & { mediaAsset: MediaAsset | null };
 
 /**
  * SERVICES-R5.16 foundation, SERVICES-R5.17 adds Admin management.
@@ -22,11 +25,16 @@ interface SessionMeta {
  * customer APIs" rule. `status` replaced R5.16's boolean `active` field
  * outright (see the migration/schema comment) — `card_products` had zero
  * real rows, so this was a safe, non-breaking rename-with-richer-values.
+ *
+ * SERVICES-R5.22 — every read now resolves a real `image` URL from
+ * `mediaAssetId` (same mechanism as `CategoriesService`/`ServicesService`)
+ * additively — every field this module already returned is unchanged.
  */
 @Injectable()
 export class CardProductsService {
   constructor(
     private readonly prisma: PrismaService,
+    private readonly mediaStorage: MediaStorageService,
     private readonly auditLog: AdminAuditLogService,
   ) {}
 
@@ -41,18 +49,25 @@ export class CardProductsService {
         skip,
         take,
         orderBy: [{ sortOrder: 'asc' }, { createdAt: 'desc' }],
+        include: { mediaAsset: true },
       }),
       this.prisma.cardProduct.count({ where }),
     ]);
-    return { items, total, skip, take };
+    return {
+      items: items.map((item) => this.withImage(item)),
+      total,
+      skip,
+      take,
+    };
   }
 
   async findOneOrThrow(id: string) {
     const item = await this.prisma.cardProduct.findFirst({
       where: { id, status: 'ACTIVE' },
+      include: { mediaAsset: true },
     });
     if (!item) throw new NotFoundException('Card product not found');
-    return item;
+    return this.withImage(item);
   }
 
   async listAdmin(skip: number, take: number, serviceId?: string) {
@@ -63,15 +78,20 @@ export class CardProductsService {
         skip,
         take,
         orderBy: [{ sortOrder: 'asc' }, { createdAt: 'desc' }],
-        include: { service: true },
+        include: { service: true, mediaAsset: true },
       }),
       this.prisma.cardProduct.count({ where }),
     ]);
-    return { items, total, skip, take };
+    return {
+      items: items.map((item) => this.withImage(item)),
+      total,
+      skip,
+      take,
+    };
   }
 
-  async findOneAdmin(id: string): Promise<CardProduct> {
-    return this.findOrThrow(id);
+  async findOneAdmin(id: string) {
+    return this.withImage(await this.findOrThrow(id));
   }
 
   async create(
@@ -88,6 +108,7 @@ export class CardProductsService {
         subtitle: dto.subtitle,
         description: dto.description,
         imageKey: dto.imageKey,
+        mediaAssetId: dto.mediaAssetId,
         badge: dto.badge,
         cardType: dto.cardType,
         journeyType: dto.journeyType,
@@ -163,11 +184,22 @@ export class CardProductsService {
     }
   }
 
-  private async findOrThrow(id: string): Promise<CardProduct> {
+  private async findOrThrow(id: string): Promise<CardProductWithMedia> {
     const cardProduct = await this.prisma.cardProduct.findUnique({
       where: { id },
+      include: { mediaAsset: true },
     });
     if (!cardProduct) throw new NotFoundException('محصول کارتی یافت نشد.');
     return cardProduct;
+  }
+
+  private withImage(cardProduct: CardProductWithMedia) {
+    const { mediaAsset, ...rest } = cardProduct;
+    return {
+      ...rest,
+      image: mediaAsset
+        ? this.mediaStorage.resolvePublicUrl(mediaAsset.key)
+        : null,
+    };
   }
 }

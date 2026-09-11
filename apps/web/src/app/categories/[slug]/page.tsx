@@ -62,6 +62,13 @@ export default function CategoryLandingPage() {
     };
   }, [params.slug]);
 
+  // SERVICES-R5.22 — fires once the real Category resolves (mirrors
+  // `ServiceViewed`'s "only once real, validated data is known" rule).
+  useEffect(() => {
+    if (!category) return;
+    trackEvent({ name: "CategoryViewed", categoryId: category.id });
+  }, [category]);
+
   useEffect(() => {
     if (!category) return;
     let cancelled = false;

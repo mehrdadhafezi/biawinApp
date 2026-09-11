@@ -18,6 +18,25 @@
  * view") tracking. Real impression tracking (IntersectionObserver) is a
  * legitimate future enhancement, not built here — this file says so
  * rather than quietly pretending mount-time firing is impression-accurate.
+ *
+ * SERVICES-R5.22 extends the union (not the mechanism) for the rest of
+ * the Category → Service → CardProduct discovery funnel: `CategoryViewed`
+ * (Category Landing mount), `ServiceViewed` (Service Detail mount),
+ * `CardProductViewed` (`CardProductGrid` mount per card, mirroring
+ * `CategoryCardGrid`'s exact pattern above).
+ *
+ * `PurchaseCTAClicked` is declared here for a future real purchase button,
+ * but has **no call site today** — the only purchase-adjacent controls in
+ * this app (`DisabledPurchaseCTA`/`DisabledCardPurchaseCTA`) are real,
+ * native `disabled` buttons, and a disabled HTML button never fires
+ * `onClick` (the browser suppresses the event outright, it doesn't even
+ * bubble to a wrapping element). Firing this event from anywhere else —
+ * the caption text, a wrapping div, the card selection tap that merely
+ * navigates to Detail — would misrepresent what the user actually
+ * clicked. Wiring it honestly requires a real, enabled purchase button,
+ * which doesn't exist yet (purchase execution is still out of scope, see
+ * `DisabledPurchaseCTA`'s own doc comment); this type exists so the first
+ * stage that adds one doesn't also have to design its analytics shape.
  */
 export type AnalyticsEvent =
   | {
@@ -33,6 +52,26 @@ export type AnalyticsEvent =
       categoryCardId: string;
       targetServiceId: string;
       position: number;
+    }
+  | {
+      name: "CategoryViewed";
+      categoryId: string;
+    }
+  | {
+      name: "ServiceViewed";
+      categoryId: string;
+      serviceId: string;
+    }
+  | {
+      name: "CardProductViewed";
+      serviceId: string;
+      cardProductId: string;
+      position: number;
+    }
+  | {
+      name: "PurchaseCTAClicked";
+      context: "service" | "cardProduct";
+      id: string;
     };
 
 export function trackEvent(event: AnalyticsEvent): void {

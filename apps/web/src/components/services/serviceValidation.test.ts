@@ -27,6 +27,11 @@ function service(categoryId: string, merchantId: string | null = null): ServiceD
     galleryKeys: [],
     faq: [],
     tags: [],
+    image: null,
+    gallery: [],
+    description: null,
+    usageGuide: [],
+    terms: [],
     active: true,
   };
 }
@@ -63,6 +68,7 @@ function cardProduct(serviceId: string): CardProductDto {
     subtitle: null,
     description: null,
     imageKey: null,
+    image: null,
     badge: null,
     cardType: "VOUCHER",
     journeyType: "PURCHASE",

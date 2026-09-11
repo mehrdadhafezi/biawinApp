@@ -45,6 +45,13 @@ export class CreateCardProductDto {
   @IsString()
   imageKey?: string;
 
+  @ApiPropertyOptional({
+    description: 'SERVICES-R5.22 — MediaAsset id for the product/card image.',
+  })
+  @IsOptional()
+  @IsString()
+  mediaAssetId?: string;
+
   @ApiPropertyOptional()
   @IsOptional()
   @IsString()

@@ -16,17 +16,20 @@ import { getCategoryAccent, toPersianDigits, CATEGORY_ICON, CATEGORY_ICON_FALLBA
  * `openServiceCategory()`'s `style.setProperty()` calls, and the
  * per-category dynamic item count.
  *
- * IMPLEMENTATION DECISION, deliberately NOT reproduced: the prototype's
- * real hero is a full-bleed photo (`#categoryHeroImage`, `object-fit:
- * cover`) under a dark gradient scrim with white text. The real backend
- * has no per-category hero photo — `Category.imageKey` is null for all 19
- * real rows, and the only real, migrated per-category assets are the 220×
- * 220px round icon thumbnails (apps/web/public/services/icon-*.webp,
- * SERVICES-R1). Stretching a 220px icon to a ~760px-wide full-bleed hero
- * would visibly blur/pixelate it — reusing it as a real icon, at its own
- * native scale, integrates the actual migrated asset without degrading
- * it. If real per-category photography is ever sourced, the dark-photo-
- * hero treatment should be revisited then, not faked now.
+ * IMPLEMENTATION DECISION, deliberately NOT reproduced for a Category
+ * with no real image: the prototype's real hero is a full-bleed photo
+ * (`#categoryHeroImage`, `object-fit: cover`) under a dark gradient scrim
+ * with white text. Historically the real backend had no per-category hero
+ * photo at all (`Category.imageKey` null for all 19 real rows), so the
+ * only real, migrated per-category assets were the 220×220px round icon
+ * thumbnails (apps/web/public/services/icon-*.webp, SERVICES-R1) —
+ * stretching one of those to a ~760px-wide full-bleed hero would visibly
+ * blur/pixelate it. SERVICES-R5.22 finally answers this deferred
+ * decision: once Admin sets a real `mediaAssetId` through the Media
+ * Picker, `category.image` renders as a real full-bleed photo (matching
+ * the prototype). Every Category still without one keeps the exact icon
+ * treatment below, unchanged — never a fabricated stretch of the small
+ * icon asset.
  *
  * No back button here — `GlobalHeader`/`AppShell` provide the shared,
  * fixed shell chrome (no per-page header slot exists, unlike the
@@ -43,6 +46,11 @@ import { getCategoryAccent, toPersianDigits, CATEGORY_ICON, CATEGORY_ICON_FALLBA
 export function CategoryHero({ category, serviceCount }: { category: CategoryDto; serviceCount: number }) {
   const theme = getCategoryAccent(category.name);
   const iconSrc = CATEGORY_ICON[category.name] ?? CATEGORY_ICON_FALLBACK;
+  const hasPhoto = !!category.image;
+  // A full-bleed photo needs white text over a dark scrim; the icon-only
+  // treatment keeps its existing theme-colored text on a soft background.
+  const titleColor = hasPhoto ? color.white : theme.deep;
+  const bodyColor = hasPhoto ? "rgba(255,255,255,.88)" : color.muted;
 
   return (
     <div
@@ -50,7 +58,7 @@ export function CategoryHero({ category, serviceCount }: { category: CategoryDto
         position: "relative",
         borderRadius: 28,
         overflow: "hidden",
-        background: theme.soft,
+        background: hasPhoto ? undefined : theme.soft,
         border: `1px solid ${theme.accent}33`,
         boxShadow: "0 20px 44px rgba(5,72,135,.10)",
         padding: spacing.lg,
@@ -59,69 +67,96 @@ export function CategoryHero({ category, serviceCount }: { category: CategoryDto
         gap: spacing.sm,
       }}
     >
-      <div style={{ display: "flex", alignItems: "flex-start", justifyContent: "space-between", gap: spacing.sm }}>
-        <div style={{ display: "flex", flexDirection: "column", gap: spacing.xs, minWidth: 0 }}>
-          {/* Prototype's `.category-hero-label` — verbatim text, every category. */}
-          <span
+      {hasPhoto && (
+        <>
+          <img
+            src={category.image ?? undefined}
+            alt=""
+            aria-hidden="true"
             style={{
-              alignSelf: "flex-start",
-              ...typography.caption,
-              color: theme.deep,
-              background: `${theme.accent}22`,
-              border: `1px solid ${theme.accent}38`,
-              borderRadius: 999,
-              padding: "7px 11px",
+              position: "absolute",
+              inset: 0,
+              width: "100%",
+              height: "100%",
+              objectFit: "cover",
+              zIndex: 0,
             }}
-          >
-            کارت‌های خدمات بیاوین
-          </span>
-          <h1 style={{ margin: 0, fontSize: 25, fontWeight: 900, lineHeight: 1.35, color: theme.deep }}>{category.name}</h1>
-        </div>
-        {/* Real, migrated icon asset — native 220×220 scale, not stretched. */}
-        <span
-          style={{
-            width: 56,
-            height: 56,
-            borderRadius: "50%",
-            overflow: "hidden",
-            border: `3px solid ${color.white}`,
-            boxShadow: "0 8px 20px rgba(8,121,220,.13)",
-            background: color.white,
-            flexShrink: 0,
-          }}
-        >
-          {/* Plain <img>, matching every other Services image today (no imageUrl resolver exists) — see CategoryGrid.tsx's own comment. */}
-          <img src={iconSrc} alt="" aria-hidden="true" style={{ width: "100%", height: "100%", objectFit: "cover" }} />
-        </span>
-      </div>
-
-      <p style={{ margin: 0, ...typography.body, color: color.muted, maxWidth: "92%" }}>{category.description}</p>
-
-      {/*
-       * Prototype's `.category-hero-meta` row — 1 real (item count), 2
-       * static (identical for every category in the prototype too). The
-       * prototype's own middle phrase is "اقساطی، اعتباری و تخفیفی"
-       * ("...and discounted") — "تخفیفی" has no real PurchaseMethod
-       * backing (the same mismatch already resolved for the filter chips,
-       * SERVICES-R1), so this lists the real 4 PurchaseMethod values
-       * instead of the prototype's literal, partly-fictional phrase.
-       */}
-      <div style={{ display: "flex", gap: spacing.xs, flexWrap: "wrap", marginTop: spacing.xs }}>
-        {[`${toPersianDigits(serviceCount)} خدمت قابل انتخاب`, "اقساطی، اعتباری، نقدی و رایگان", "ویژه اعضای بیاوین"].map((label) => (
-          <span
-            key={label}
+          />
+          <div
             style={{
-              padding: "7px 10px",
-              borderRadius: 12,
+              position: "absolute",
+              inset: 0,
+              background: "linear-gradient(180deg, rgba(5,20,40,.35) 0%, rgba(5,20,40,.78) 100%)",
+              zIndex: 1,
+            }}
+          />
+        </>
+      )}
+      <div style={{ position: "relative", zIndex: 2, display: "flex", flexDirection: "column", gap: spacing.sm }}>
+        <div style={{ display: "flex", alignItems: "flex-start", justifyContent: "space-between", gap: spacing.sm }}>
+          <div style={{ display: "flex", flexDirection: "column", gap: spacing.xs, minWidth: 0 }}>
+            {/* Prototype's `.category-hero-label` — verbatim text, every category. */}
+            <span
+              style={{
+                alignSelf: "flex-start",
+                ...typography.caption,
+                color: hasPhoto ? color.white : theme.deep,
+                background: hasPhoto ? "rgba(255,255,255,.16)" : `${theme.accent}22`,
+                border: `1px solid ${hasPhoto ? "rgba(255,255,255,.32)" : `${theme.accent}38`}`,
+                borderRadius: 999,
+                padding: "7px 11px",
+              }}
+            >
+              کارت‌های خدمات بیاوین
+            </span>
+            <h1 style={{ margin: 0, fontSize: 25, fontWeight: 900, lineHeight: 1.35, color: titleColor }}>{category.name}</h1>
+          </div>
+          {/* Real, migrated icon asset — native 220×220 scale, not stretched. */}
+          <span
+            style={{
+              width: 56,
+              height: 56,
+              borderRadius: "50%",
+              overflow: "hidden",
+              border: `3px solid ${color.white}`,
+              boxShadow: "0 8px 20px rgba(8,121,220,.13)",
               background: color.white,
-              border: `1px solid ${theme.accent}2a`,
-              ...typography.micro,
-              color: theme.deep,
+              flexShrink: 0,
             }}
           >
-            {label}
+            {/* Plain <img>, matching every other Services image today (no imageUrl resolver exists) — see CategoryGrid.tsx's own comment. */}
+            <img src={iconSrc} alt="" aria-hidden="true" style={{ width: "100%", height: "100%", objectFit: "cover" }} />
           </span>
-        ))}
+        </div>
+
+        <p style={{ margin: 0, ...typography.body, color: bodyColor, maxWidth: "92%" }}>{category.description}</p>
+
+        {/*
+         * Prototype's `.category-hero-meta` row — 1 real (item count), 2
+         * static (identical for every category in the prototype too). The
+         * prototype's own middle phrase is "اقساطی، اعتباری و تخفیفی"
+         * ("...and discounted") — "تخفیفی" has no real PurchaseMethod
+         * backing (the same mismatch already resolved for the filter chips,
+         * SERVICES-R1), so this lists the real 4 PurchaseMethod values
+         * instead of the prototype's literal, partly-fictional phrase.
+         */}
+        <div style={{ display: "flex", gap: spacing.xs, flexWrap: "wrap", marginTop: spacing.xs }}>
+          {[`${toPersianDigits(serviceCount)} خدمت قابل انتخاب`, "اقساطی، اعتباری، نقدی و رایگان", "ویژه اعضای بیاوین"].map((label) => (
+            <span
+              key={label}
+              style={{
+                padding: "7px 10px",
+                borderRadius: 12,
+                background: hasPhoto ? "rgba(255,255,255,.14)" : color.white,
+                border: `1px solid ${hasPhoto ? "rgba(255,255,255,.3)" : `${theme.accent}2a`}`,
+                ...typography.micro,
+                color: hasPhoto ? color.white : theme.deep,
+              }}
+            >
+              {label}
+            </span>
+          ))}
+        </div>
       </div>
     </div>
   );

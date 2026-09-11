@@ -10,6 +10,7 @@ function cardProduct(overrides: Partial<CardProductDto> = {}): CardProductDto {
     subtitle: "قابل استفاده در فروشگاه‌های منتخب",
     description: null,
     imageKey: null,
+    image: null,
     badge: null,
     cardType: "VOUCHER",
     journeyType: "PURCHASE",

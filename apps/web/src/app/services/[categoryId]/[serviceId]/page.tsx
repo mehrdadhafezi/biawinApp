@@ -8,6 +8,9 @@ import { SkeletonBlock, SkeletonStyles } from "../../../../components/common/Ske
 import { ServiceHero } from "../../../../components/services/ServiceHero";
 import { ServiceDetailCardSummary } from "../../../../components/services/ServiceDetailCardSummary";
 import { ServiceInfo } from "../../../../components/services/ServiceInfo";
+import { ServiceDescription } from "../../../../components/services/ServiceDescription";
+import { ServiceUsageGuide } from "../../../../components/services/ServiceUsageGuide";
+import { ServiceTerms } from "../../../../components/services/ServiceTerms";
 import { Pricing } from "../../../../components/services/Pricing";
 import { MerchantLinkCTA } from "../../../../components/services/MerchantLinkCTA";
 import { DisabledPurchaseCTA } from "../../../../components/services/DisabledPurchaseCTA";
@@ -17,6 +20,7 @@ import { useServiceCatalog } from "../../../../components/services/useServiceCat
 import { servicesApi, cardProductsApi, type ServiceDto, type CardProductDto } from "../../../../lib/services-api";
 import { ApiError } from "../../../../lib/api-client";
 import { belongsToCategory } from "../../../../components/services/serviceValidation";
+import { trackEvent } from "../../../../lib/analytics";
 
 /**
  * Service Detail (docs/services-ui-contract.md §1/§4) — read-only:
@@ -122,6 +126,15 @@ export default function ServiceDetailPage() {
     };
   }, [params.serviceId, params.categoryId]);
 
+  // SERVICES-R5.22 — fires once the real, validated Service resolves (not
+  // on every render) — `service` only ever becomes non-null after the
+  // `belongsToCategory` check above passes, so this never fires for a
+  // Service that doesn't actually belong to this URL's Category.
+  useEffect(() => {
+    if (!service) return;
+    trackEvent({ name: "ServiceViewed", categoryId: service.categoryId, serviceId: service.id });
+  }, [service]);
+
   useEffect(() => {
     let cancelled = false;
 
@@ -177,6 +190,16 @@ export default function ServiceDetailPage() {
             <ServiceDetailCardSummary service={service} categoryName={categoryName} />
             <Pricing service={service} />
             <ServiceInfo service={service} />
+            {/*
+             * SERVICES-R5.22 — full description, usage guide, and terms.
+             * Each renders `null` when its field is empty (same "no
+             * content, no section" discipline `ServiceInfo` already
+             * follows) — inserted between `ServiceInfo` and
+             * `DisabledPurchaseCTA` per this stage's contract §4.4.
+             */}
+            <ServiceDescription service={service} />
+            <ServiceUsageGuide service={service} />
+            <ServiceTerms service={service} />
             {/*
              * SERVICES-R5.18 — the real purchasable objects for this
              * Service. Only `status: 'ACTIVE'` card products are ever

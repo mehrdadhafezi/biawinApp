@@ -2,6 +2,7 @@ import { NotFoundException } from '@nestjs/common';
 import { Test, type TestingModule } from '@nestjs/testing';
 import { PrismaService } from '../../infra/prisma/prisma.service';
 import { AdminAuditLogService } from '../admin-audit-log/admin-audit-log.service';
+import { MediaStorageService } from '../media/media-storage.service';
 import { CategoriesService } from './categories.service';
 
 /* eslint-disable @typescript-eslint/no-unsafe-assignment -- `expect.objectContaining(...)` is typed `any` in @types/jest. */
@@ -34,6 +35,14 @@ describe('CategoriesService', () => {
       providers: [
         CategoriesService,
         { provide: PrismaService, useValue: prisma },
+        {
+          provide: MediaStorageService,
+          useValue: {
+            resolvePublicUrl: jest.fn(
+              (key: string) => `https://media.test/${key}`,
+            ),
+          },
+        },
         { provide: AdminAuditLogService, useValue: auditLog },
       ],
     }).compile();
@@ -62,6 +71,36 @@ describe('CategoriesService', () => {
     });
   });
 
+  describe('media resolution (SERVICES-R5.22)', () => {
+    it('resolves image to a public URL when a mediaAsset is attached', async () => {
+      prisma.category.findFirst.mockResolvedValue({
+        id: 'cat-1',
+        name: 'خودرو',
+        mediaAssetId: 'media-1',
+        mediaAsset: { id: 'media-1', key: 'categories/cat-1.jpg' },
+      });
+
+      const result = await service.findOneOrThrow('cat-1');
+
+      expect(result.image).toBe('https://media.test/categories/cat-1.jpg');
+
+      expect((result as { mediaAsset?: unknown }).mediaAsset).toBeUndefined();
+    });
+
+    it('resolves image to null when no mediaAsset is attached (never a fabricated URL)', async () => {
+      prisma.category.findFirst.mockResolvedValue({
+        id: 'cat-1',
+        name: 'خودرو',
+        mediaAssetId: null,
+        mediaAsset: null,
+      });
+
+      const result = await service.findOneOrThrow('cat-1');
+
+      expect(result.image).toBeNull();
+    });
+  });
+
   describe('findBySlugOrThrow (SERVICES-R5.21 — Category Landing route)', () => {
     it('resolves a real Category by its real slug', async () => {
       prisma.category.findFirst.mockResolvedValue({
@@ -72,9 +111,9 @@ describe('CategoriesService', () => {
 
       const result = await service.findBySlugOrThrow('gardeshgari');
 
-      expect(prisma.category.findFirst).toHaveBeenCalledWith({
-        where: { slug: 'gardeshgari' },
-      });
+      expect(prisma.category.findFirst).toHaveBeenCalledWith(
+        expect.objectContaining({ where: { slug: 'gardeshgari' } }),
+      );
       expect(result.id).toBe('cat-1');
     });
 

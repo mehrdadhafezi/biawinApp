@@ -22,6 +22,11 @@ function service(overrides: Partial<ServiceDto>): ServiceDto {
     galleryKeys: [],
     faq: [],
     tags: [],
+    image: null,
+    gallery: [],
+    description: null,
+    usageGuide: [],
+    terms: [],
     active: true,
     ...overrides,
   };

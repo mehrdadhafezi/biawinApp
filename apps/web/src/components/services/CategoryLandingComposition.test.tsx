@@ -14,6 +14,7 @@ const category: CategoryDto = {
   name: "پوشاک",
   description: "خرید از برندهای منتخب",
   imageKey: null,
+  image: null,
   slug: "poushak",
   keywords: [],
   sortOrder: 0,

@@ -40,6 +40,28 @@ describe("trackEvent", () => {
     ).not.toThrow();
   });
 
+  it("accepts a CategoryViewed event without throwing (SERVICES-R5.22)", () => {
+    expect(() => trackEvent({ name: "CategoryViewed", categoryId: "cat-1" })).not.toThrow();
+  });
+
+  it("accepts a ServiceViewed event without throwing (SERVICES-R5.22)", () => {
+    expect(() =>
+      trackEvent({ name: "ServiceViewed", categoryId: "cat-1", serviceId: "svc-1" }),
+    ).not.toThrow();
+  });
+
+  it("accepts a CardProductViewed event without throwing (SERVICES-R5.22)", () => {
+    expect(() =>
+      trackEvent({ name: "CardProductViewed", serviceId: "svc-1", cardProductId: "card-1", position: 0 }),
+    ).not.toThrow();
+  });
+
+  it("accepts a PurchaseCTAClicked event without throwing (SERVICES-R5.22 — declared for a future real purchase button, no call site today)", () => {
+    expect(() =>
+      trackEvent({ name: "PurchaseCTAClicked", context: "service", id: "svc-1" }),
+    ).not.toThrow();
+  });
+
   it("logs to the console in non-production (the deliberate placeholder sink — see analytics.ts's own doc comment)", () => {
     (process.env as { NODE_ENV: string }).NODE_ENV = "development";
     const spy = jest.spyOn(console, "info").mockImplementation(() => {});

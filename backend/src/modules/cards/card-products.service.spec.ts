@@ -5,6 +5,7 @@ import {
 import { Test, type TestingModule } from '@nestjs/testing';
 import { PrismaService } from '../../infra/prisma/prisma.service';
 import { AdminAuditLogService } from '../admin-audit-log/admin-audit-log.service';
+import { MediaStorageService } from '../media/media-storage.service';
 import { CardProductsService } from './card-products.service';
 
 /* eslint-disable @typescript-eslint/no-unsafe-assignment -- `expect.objectContaining(...)` is typed `any` in @types/jest. */
@@ -39,6 +40,14 @@ describe('CardProductsService', () => {
       providers: [
         CardProductsService,
         { provide: PrismaService, useValue: prisma },
+        {
+          provide: MediaStorageService,
+          useValue: {
+            resolvePublicUrl: jest.fn(
+              (key: string) => `https://media.test/${key}`,
+            ),
+          },
+        },
         { provide: AdminAuditLogService, useValue: auditLog },
       ],
     }).compile();
@@ -68,9 +77,11 @@ describe('CardProductsService', () => {
       await expect(service.findOneOrThrow('missing')).rejects.toBeInstanceOf(
         NotFoundException,
       );
-      expect(prisma.cardProduct.findFirst).toHaveBeenCalledWith({
-        where: { id: 'missing', status: 'ACTIVE' },
-      });
+      expect(prisma.cardProduct.findFirst).toHaveBeenCalledWith(
+        expect.objectContaining({
+          where: { id: 'missing', status: 'ACTIVE' },
+        }),
+      );
     });
 
     it('DRAFT/INACTIVE/EXPIRED card products are never returned by the public findOneOrThrow query', async () => {
@@ -80,6 +91,34 @@ describe('CardProductsService', () => {
       await expect(service.findOneOrThrow('draft-card')).rejects.toBeInstanceOf(
         NotFoundException,
       );
+    });
+  });
+
+  describe('media resolution (SERVICES-R5.22)', () => {
+    it('resolves image to a public URL when a mediaAsset is attached', async () => {
+      prisma.cardProduct.findFirst.mockResolvedValue({
+        id: 'card-1',
+        status: 'ACTIVE',
+        mediaAssetId: 'media-1',
+        mediaAsset: { id: 'media-1', key: 'card-products/card-1.jpg' },
+      });
+
+      const result = await service.findOneOrThrow('card-1');
+
+      expect(result.image).toBe('https://media.test/card-products/card-1.jpg');
+    });
+
+    it('resolves image to null when no mediaAsset is attached', async () => {
+      prisma.cardProduct.findFirst.mockResolvedValue({
+        id: 'card-1',
+        status: 'ACTIVE',
+        mediaAssetId: null,
+        mediaAsset: null,
+      });
+
+      const result = await service.findOneOrThrow('card-1');
+
+      expect(result.image).toBeNull();
     });
   });
 

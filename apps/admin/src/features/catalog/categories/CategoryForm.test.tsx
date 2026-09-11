@@ -6,6 +6,8 @@ const baseCategory = {
   name: "خودرو",
   description: "توضیحات دسته خودرو",
   imageKey: "categories/auto.webp",
+  mediaAssetId: "media-1",
+  image: "https://cdn.test/categories/auto.webp",
   slug: "khodro",
   keywords: ["خودرو", "ماشین"],
   sortOrder: 0,
@@ -22,7 +24,7 @@ describe("CategoryForm rendering", () => {
 
     expect(html).toContain("نام");
     expect(html).toContain("توضیحات");
-    expect(html).toContain("کلید تصویر");
+    expect(html).toContain("تصویر دسته‌بندی");
     expect(html).toContain("کلیدواژه‌ها");
     expect(html).toContain("فعال");
     // The two required fields (name, description) render with the required attribute.
@@ -36,8 +38,10 @@ describe("CategoryForm rendering", () => {
     );
 
     expect(html).toContain("خودرو، ماشین");
-    expect(html).toContain("categories/auto.webp");
     expect(html).toContain("khodro");
+    // The imageKey text field is gone — image management now goes through
+    // the Media Picker only (SERVICES-R5.22); the resolved preview renders instead.
+    expect(html).toContain("https://cdn.test/categories/auto.webp");
   });
 
   it("renders the slug field (SERVICES-R5.21 Category Landing route)", () => {

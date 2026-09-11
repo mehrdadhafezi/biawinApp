@@ -6,19 +6,30 @@ export interface ServiceHeroProps {
 }
 
 /**
- * Title block for Service Detail. No `imageUrl` resolution exists for
- * `Service.imageKey` yet (docs/services-ui-contract.md §6 Gap #3), so
- * this shows the `icon` emoji as a large fallback, same choice
- * `ServiceCard` and Home's `FeaturedServiceBanner` already made — no
- * image gallery is rendered for the same reason (this stage's component
- * tree doesn't include one either).
+ * Title block for Service Detail. SERVICES-R5.22 — renders the real,
+ * backend-resolved `service.image` when set (Admin's Media Picker), never
+ * a fabricated one; falls back to the `icon` emoji exactly as before for
+ * every Service that has no image set. Gallery (`service.gallery`) is
+ * intentionally not rendered here — a lightbox/carousel primitive doesn't
+ * exist yet in `packages/ui`, and no real Service has more than one
+ * gallery image today, so building one now would be speculative UI with
+ * nothing real to show; the gallery images remain available on the DTO
+ * for a future stage.
  */
 export function ServiceHero({ service }: ServiceHeroProps) {
   return (
     <div style={{ display: "flex", flexDirection: "column", gap: spacing.sm }}>
-      <span style={{ fontSize: 48 }} aria-hidden="true">
-        {service.icon ?? "🛍️"}
-      </span>
+      {service.image ? (
+        <img
+          src={service.image}
+          alt=""
+          style={{ width: "100%", maxHeight: 220, objectFit: "cover", borderRadius: 20 }}
+        />
+      ) : (
+        <span style={{ fontSize: 48 }} aria-hidden="true">
+          {service.icon ?? "🛍️"}
+        </span>
+      )}
       <h1 style={{ margin: 0, ...typography.h1, color: color.deep }}>{service.title}</h1>
       <p style={{ margin: 0, ...typography.body, color: color.muted }}>{service.subtitle}</p>
       <div style={{ display: "flex", gap: spacing.xs, flexWrap: "wrap" }}>

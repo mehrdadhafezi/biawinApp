@@ -38,6 +38,11 @@ const service: ServiceDto = {
   galleryKeys: [],
   faq: [],
   tags: ["برچسب"],
+  image: null,
+  gallery: [],
+  description: null,
+  usageGuide: [],
+  terms: [],
   active: true,
 };
 

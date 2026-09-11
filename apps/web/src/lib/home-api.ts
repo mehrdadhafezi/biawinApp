@@ -54,6 +54,8 @@ export interface CategoryDto {
   name: string;
   description: string;
   imageKey: string | null;
+  /** SERVICES-R5.22 — real, backend-resolved public URL; null when no `mediaAssetId` is set (see `CategoryHero`'s own fallback). */
+  image: string | null;
   /** SERVICES-R5.21 — public URL identifier for /categories/[slug]. Null means no Landing route exists for this Category yet. */
   slug: string | null;
   keywords: unknown;

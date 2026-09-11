@@ -1,6 +1,7 @@
 import { Test, type TestingModule } from '@nestjs/testing';
 import { PrismaService } from '../../infra/prisma/prisma.service';
 import { AdminAuditLogService } from '../admin-audit-log/admin-audit-log.service';
+import { MediaStorageService } from '../media/media-storage.service';
 import { ServicesController } from './services.controller';
 import { ServicesService } from './services.service';
 
@@ -22,6 +23,14 @@ describe('ServicesController', () => {
             },
             $transaction: jest.fn((ops: Promise<unknown>[]) =>
               Promise.all(ops),
+            ),
+          },
+        },
+        {
+          provide: MediaStorageService,
+          useValue: {
+            resolvePublicUrl: jest.fn(
+              (key: string) => `https://media.test/${key}`,
             ),
           },
         },

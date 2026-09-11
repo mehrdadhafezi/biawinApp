@@ -470,6 +470,13 @@ model Category {
   /// Category with no slug set simply has no Landing route yet; its
   /// existing `/services/[categoryId]` page is unaffected either way.
   slug        String?  @unique
+  /// SERVICES-R5.22 — real hero image, resolved server-side via
+  /// `MediaStorageService` (same pattern as `CategoryCard.mediaAssetId`,
+  /// R5.21). `imageKey` above stays, deprecated in place — the existing
+  /// static `CATEGORY_ICON` fallback in the customer app still reads it,
+  /// so it is never removed, only superseded when a real image is set.
+  mediaAssetId String?
+  mediaAsset   MediaAsset? @relation(fields: [mediaAssetId], references: [id], onDelete: SetNull)
 
   services   Service[]
   plans      MembershipPlan[] @relation("PlanCategories")
@@ -555,6 +562,11 @@ model Service {
   /// is a Storage object key for an actual uploaded image.
   icon                   String?
   imageKey               String?
+  /// SERVICES-R5.22 — main image, resolved server-side via
+  /// `MediaStorageService` (same pattern as `Category.mediaAssetId`
+  /// above). `imageKey` stays, deprecated in place.
+  mediaAssetId           String?
+  mediaAsset             MediaAsset? @relation(fields: [mediaAssetId], references: [id], onDelete: SetNull)
   priceFrom              Int?
   priceLabel             String?
   availableMethods       Json // PurchaseMethod[]
@@ -562,9 +574,28 @@ model Service {
   installmentMaxMonths   Int?
   creditMultiplierLabel  String?
   benefits               Json // string[]
-  galleryKeys            Json // string[]
-  faq                    Json // {question, answer}[]
+  galleryKeys            Json // string[] — legacy raw-key gallery, never rendered (see galleryMediaAssetIds below); kept, deprecated in place
+  /// SERVICES-R5.22 — real optional gallery: an array of real `MediaAsset`
+  /// ids (not a raw key array like `galleryKeys` above), resolved
+  /// server-side into real URLs. A plain Json string[] rather than a new
+  /// join table — mirrors `benefits`/`tags`/`CategoryCard.highlights`'s
+  /// own "flexible short list as JSON" precedent; nothing about this
+  /// domain has evidenced a need for per-image ordering/captions yet.
+  galleryMediaAssetIds   Json     @default("[]") // string[] of MediaAsset ids
+  faq                    Json // {question, answer}[] — already existed; SERVICES-R5.22 adds the missing Admin write path (see ServicesAdminController)
   tags                   Json // string[]
+  /// SERVICES-R5.22 — long-form description. `subtitle` above remains the
+  /// short description (unrenamed — already labeled as such in the Admin
+  /// form, zero blast radius to its many existing callers).
+  description            String?
+  /// SERVICES-R5.22 — repeatable "how to use" steps, e.g. ["۱. خرید کارت",
+  /// "۲. ورود به سایت مقصد", ...]. Plain ordered string array — the
+  /// numbering is a display concern, not stored data.
+  usageGuide             Json     @default("[]") // string[]
+  /// SERVICES-R5.22 — repeatable terms/conditions. Same shape as the
+  /// existing `MembershipPlan.terms` field on a different model — reused
+  /// precedent, not a new convention.
+  terms                  Json     @default("[]") // string[]
   active                 Boolean  @default(true)
 
   orders       Order[]
@@ -756,6 +787,11 @@ model CardProduct {
   subtitle    String?
   description String?
   imageKey    String?
+  /// SERVICES-R5.22 — product/card image, resolved server-side via
+  /// `MediaStorageService` (same pattern as `Category`/`Service` above).
+  /// `imageKey` stays, deprecated in place.
+  mediaAssetId String?
+  mediaAsset   MediaAsset? @relation(fields: [mediaAssetId], references: [id], onDelete: SetNull)
   badge       String?
   cardType    CardType
   /// The user journey this specific card actions — see JourneyType. Lives
@@ -1119,6 +1155,10 @@ model MediaAsset {
   homeNewsArticles       HomeNewsArticle[]
   // SERVICES-R5.21 — the second real consumer of this table, same pattern.
   categoryCards          CategoryCard[]
+  // SERVICES-R5.22 — Category/Service/CardProduct join the pattern too.
+  categories             Category[]
+  services               Service[]
+  cardProducts           CardProduct[]
 
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt

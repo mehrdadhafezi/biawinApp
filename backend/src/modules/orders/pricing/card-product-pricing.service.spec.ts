@@ -10,6 +10,7 @@ function makeCardProduct(overrides: Partial<CardProduct> = {}): CardProduct {
     subtitle: null,
     description: null,
     imageKey: null,
+    mediaAssetId: null,
     badge: null,
     cardType: 'CREDIT_CARD',
     journeyType: 'PURCHASE',

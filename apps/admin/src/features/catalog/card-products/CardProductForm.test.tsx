@@ -20,6 +20,8 @@ const baseCardProduct = {
   subtitle: null,
   description: null,
   imageKey: null,
+  mediaAssetId: null,
+  image: null,
   badge: null,
   cardType: "CREDIT_CARD" as const,
   journeyType: "PURCHASE" as const,

@@ -5,6 +5,7 @@ import { categoriesAdminApi } from "../api/categories-admin-api";
 import { performSave } from "../../home/logic";
 import { FormField } from "../../home/components/FormField";
 import { HomeFormShell } from "../../home/components/HomeFormShell";
+import { MediaPickerField } from "../../home/components/MediaPickerField";
 import { plainFieldStyles } from "../../home/components/formStyles";
 import type { CategoryAdmin, CategoryInput } from "../types";
 
@@ -19,7 +20,11 @@ export interface CategoryFormProps {
 export function CategoryForm({ mode, initial, readOnly, backHref, onSaved }: CategoryFormProps) {
   const [name, setName] = useState(initial?.name ?? "");
   const [description, setDescription] = useState(initial?.description ?? "");
-  const [imageKey, setImageKey] = useState(initial?.imageKey ?? "");
+  // Deprecated in place — no longer editable (SERVICES-R5.22, all image
+  // management now goes through mediaAssetId below); preserved unchanged.
+  const imageKey = initial?.imageKey ?? null;
+  const [mediaAssetId, setMediaAssetId] = useState<string | null>(initial?.mediaAssetId ?? null);
+  const [previewUrl, setPreviewUrl] = useState<string | null>(initial?.image ?? null);
   const [slug, setSlug] = useState(initial?.slug ?? "");
   const [keywords, setKeywords] = useState((initial?.keywords ?? []).join("، "));
   const [active, setActive] = useState(initial?.active ?? true);
@@ -35,7 +40,8 @@ export function CategoryForm({ mode, initial, readOnly, backHref, onSaved }: Cat
     const input: CategoryInput = {
       name,
       description,
-      imageKey: imageKey || null,
+      imageKey,
+      mediaAssetId,
       slug: slug || null,
       keywords: keywords
         .split(/[،,]/)
@@ -78,9 +84,16 @@ export function CategoryForm({ mode, initial, readOnly, backHref, onSaved }: Cat
         />
       </FormField>
 
-      <FormField label="کلید تصویر (Storage)" hint="کلید فایل آپلودشده در کتابخانه رسانه، در صورت وجود.">
-        <input value={imageKey} onChange={(e) => setImageKey(e.target.value)} className="biawin-plain-input" />
-      </FormField>
+      <MediaPickerField
+        label="تصویر دسته‌بندی"
+        value={mediaAssetId}
+        previewUrl={previewUrl}
+        disabled={readOnly}
+        onChange={(id, url) => {
+          setMediaAssetId(id);
+          setPreviewUrl(url);
+        }}
+      />
 
       <FormField
         label="شناسه آدرس (slug)"

@@ -8,6 +8,7 @@ function category(overrides: Partial<CategoryDto>): CategoryDto {
     name: "نام",
     description: "توضیح",
     imageKey: null,
+    image: null,
     slug: null,
     keywords: [],
     sortOrder: 0,

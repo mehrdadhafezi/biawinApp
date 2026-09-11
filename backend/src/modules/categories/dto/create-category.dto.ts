@@ -31,6 +31,13 @@ export class CreateCategoryDto {
   @IsString()
   slug?: string;
 
+  @ApiPropertyOptional({
+    description: 'SERVICES-R5.22 — MediaAsset id for the hero image.',
+  })
+  @IsOptional()
+  @IsString()
+  mediaAssetId?: string;
+
   @ApiPropertyOptional({ type: [String], default: [] })
   @IsOptional()
   @IsArray()

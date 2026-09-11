@@ -8,17 +8,25 @@ export interface CardProductHeroProps {
 
 /**
  * Title block for Card Product Detail — the `CardProduct` analog of
- * `ServiceHero`. No `imageKey`→`imageUrl` resolution exists for this
- * field (same gap `ServiceHero` already documents for `Service.imageKey`
- * — see `CardProductCard`'s own comment), so this shows the same
- * `cardType`-based icon fallback as the list tile, not a fabricated image.
+ * `ServiceHero`. SERVICES-R5.22 — renders the real, backend-resolved
+ * `cardProduct.image` when set, falling back to the same `cardType`-based
+ * icon as the list tile for every card that has no image set (never a
+ * fabricated one).
  */
 export function CardProductHero({ cardProduct }: CardProductHeroProps) {
   return (
     <div style={{ display: "flex", flexDirection: "column", gap: spacing.sm }}>
-      <span style={{ fontSize: 48 }} aria-hidden="true">
-        {CARD_TYPE_ICON[cardProduct.cardType]}
-      </span>
+      {cardProduct.image ? (
+        <img
+          src={cardProduct.image}
+          alt=""
+          style={{ width: "100%", maxHeight: 220, objectFit: "cover", borderRadius: 20 }}
+        />
+      ) : (
+        <span style={{ fontSize: 48 }} aria-hidden="true">
+          {CARD_TYPE_ICON[cardProduct.cardType]}
+        </span>
+      )}
       <h1 style={{ margin: 0, ...typography.h1, color: color.deep }}>{cardProduct.title}</h1>
       {(cardProduct.description || cardProduct.subtitle) && (
         <p style={{ margin: 0, ...typography.body, color: color.muted }}>

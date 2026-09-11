@@ -1,7 +1,8 @@
 import { Injectable, NotFoundException } from '@nestjs/common';
-import type { Category } from '@prisma/client';
+import type { Category, MediaAsset } from '@prisma/client';
 import { PrismaService } from '../../infra/prisma/prisma.service';
 import { AdminAuditLogService } from '../admin-audit-log/admin-audit-log.service';
+import { MediaStorageService } from '../media/media-storage.service';
 import type { CreateCategoryDto } from './dto/create-category.dto';
 import type { ReorderCategoriesDto } from './dto/reorder-categories.dto';
 import type { UpdateCategoryDto } from './dto/update-category.dto';
@@ -11,6 +12,8 @@ interface SessionMeta {
   userAgent?: string;
 }
 
+type CategoryWithMedia = Category & { mediaAsset: MediaAsset | null };
+
 /**
  * SERVICES-R5.17 — Category becomes Admin-managed for the first time
  * (previously seed-only, per docs/services-r5-16-audit.md §5). `list()`/
@@ -19,11 +22,20 @@ interface SessionMeta {
  * behavior; the new `listAdmin()`/`create()`/`update()`/`reorder()` methods
  * are purely additive, following the exact Home CMS CRUD+RBAC+audit-log
  * pattern (HomeHeroCardsService).
+ *
+ * SERVICES-R5.22 — every read now resolves a real `image` URL from
+ * `mediaAssetId` (via `MediaStorageService`, same mechanism as
+ * `CategoryCardsService`) additively: every field this module already
+ * returned is still returned unchanged, `image` is purely new. The raw
+ * joined `mediaAsset` row (which would leak the Storage key) is stripped
+ * before the response leaves this service — only the resolved URL ever
+ * does.
  */
 @Injectable()
 export class CategoriesService {
   constructor(
     private readonly prisma: PrismaService,
+    private readonly mediaStorage: MediaStorageService,
     private readonly auditLog: AdminAuditLogService,
   ) {}
 
@@ -33,18 +45,25 @@ export class CategoriesService {
         skip,
         take,
         orderBy: { createdAt: 'desc' },
+        include: { mediaAsset: true },
       }),
       this.prisma.category.count(),
     ]);
-    return { items, total, skip, take };
+    return {
+      items: items.map((item) => this.withImage(item)),
+      total,
+      skip,
+      take,
+    };
   }
 
   async findOneOrThrow(id: string) {
     const item = await this.prisma.category.findFirst({
       where: { id },
+      include: { mediaAsset: true },
     });
     if (!item) throw new NotFoundException('Categories not found');
-    return item;
+    return this.withImage(item);
   }
 
   /**
@@ -54,9 +73,12 @@ export class CategoriesService {
    * not-found discipline as `findOneOrThrow`.
    */
   async findBySlugOrThrow(slug: string) {
-    const item = await this.prisma.category.findFirst({ where: { slug } });
+    const item = await this.prisma.category.findFirst({
+      where: { slug },
+      include: { mediaAsset: true },
+    });
     if (!item) throw new NotFoundException('دسته‌بندی یافت نشد.');
-    return item;
+    return this.withImage(item);
   }
 
   async listAdmin(skip: number, take: number) {
@@ -65,14 +87,20 @@ export class CategoriesService {
         skip,
         take,
         orderBy: [{ sortOrder: 'asc' }, { createdAt: 'desc' }],
+        include: { mediaAsset: true },
       }),
       this.prisma.category.count(),
     ]);
-    return { items, total, skip, take };
+    return {
+      items: items.map((item) => this.withImage(item)),
+      total,
+      skip,
+      take,
+    };
   }
 
-  async findOneAdmin(id: string): Promise<Category> {
-    return this.findOrThrow(id);
+  async findOneAdmin(id: string) {
+    return this.withImage(await this.findOrThrow(id));
   }
 
   async create(
@@ -85,6 +113,8 @@ export class CategoriesService {
         name: dto.name,
         description: dto.description,
         imageKey: dto.imageKey,
+        mediaAssetId: dto.mediaAssetId,
+        slug: dto.slug,
         keywords: dto.keywords ?? [],
         sortOrder: dto.sortOrder ?? 0,
         active: dto.active ?? true,
@@ -152,9 +182,22 @@ export class CategoriesService {
     return this.listAdmin(0, 100);
   }
 
-  private async findOrThrow(id: string): Promise<Category> {
-    const category = await this.prisma.category.findUnique({ where: { id } });
+  private async findOrThrow(id: string): Promise<CategoryWithMedia> {
+    const category = await this.prisma.category.findUnique({
+      where: { id },
+      include: { mediaAsset: true },
+    });
     if (!category) throw new NotFoundException('دسته‌بندی یافت نشد.');
     return category;
+  }
+
+  private withImage(category: CategoryWithMedia) {
+    const { mediaAsset, ...rest } = category;
+    return {
+      ...rest,
+      image: mediaAsset
+        ? this.mediaStorage.resolvePublicUrl(mediaAsset.key)
+        : null,
+    };
   }
 }
