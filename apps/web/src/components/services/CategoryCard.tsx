@@ -21,6 +21,22 @@ export interface CategoryCardProps {
  * it carries no price, no CardProduct reference, no purchase CTA. Its
  * only action is navigation to the target Service's own Detail page,
  * where the real CardProduct purchase flow lives.
+ *
+ * SERVICES-R5.23 — visual fidelity pass against the product-owner-
+ * provided reference card mockups (`categories/` — reference-only, never
+ * read by this component or any other application code, see
+ * docs/services-r5-23-services-prototype-fidelity-audit.md §2/§7). The
+ * reference cards are dominated by a tall, ~2:3 portrait product photo;
+ * this card's image now uses `aspect-ratio: 3/4` (previously a flat fixed
+ * `height: 140`) to read as photo-forward the same way, while staying
+ * responsive to the grid's own column width instead of a hardcoded pixel
+ * height. Deliberately NOT reproduced: the reference cards' own "خدمات"
+ * pill (redundant chrome — a Category Landing page's cards are
+ * self-evidently service cards from page context alone) and their
+ * bottom-right icon circle (`CATEGORY_ICON`, the only real icon set in
+ * this app, is a reused/mismatched 6-icon set across 19 categories —
+ * see the audit doc's own finding; adding it here would show a wrong
+ * icon for most real cards, which is worse than no icon).
  */
 export function CategoryCard({ categoryCard, onSelect }: CategoryCardProps) {
   const highlights = categoryCard.highlights.slice(0, 2);
@@ -36,14 +52,14 @@ export function CategoryCard({ categoryCard, onSelect }: CategoryCardProps) {
           <img
             src={categoryCard.image}
             alt=""
-            style={{ width: "100%", height: 140, objectFit: "cover", display: "block" }}
+            style={{ width: "100%", aspectRatio: "3 / 4", objectFit: "cover", display: "block" }}
           />
         ) : (
           <div
             aria-hidden="true"
             style={{
               width: "100%",
-              height: 140,
+              aspectRatio: "3 / 4",
               background: color.ice,
               display: "flex",
               alignItems: "center",

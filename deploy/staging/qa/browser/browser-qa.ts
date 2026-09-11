@@ -367,6 +367,7 @@ interface CategorySnapshot {
   id: string;
   name: string;
   description: string;
+  slug: string | null;
 }
 interface ServiceSnapshot {
   id: string;
@@ -374,6 +375,19 @@ interface ServiceSnapshot {
   title: string;
   availableMethods: string[];
   merchantId: string | null;
+}
+interface CategoryCardSnapshot {
+  id: string;
+  categoryId: string;
+  targetServiceId: string;
+  title: string;
+  image: string | null;
+}
+interface CardProductSnapshot {
+  id: string;
+  serviceId: string;
+  title: string;
+  status: string;
 }
 
 /**
@@ -594,6 +608,7 @@ async function runCustomerChecks(browser: Browser): Promise<void> {
   await page.setViewportSize(DESKTOP);
 
   await runServicesModuleChecks(page, issues);
+  await runCategoryLandingAndCardProductChecks(page, issues);
 
   await reportPageIssues('Customer (landing + login + Home + Services)', issues);
   await context.close();
@@ -1069,6 +1084,147 @@ async function runServicesModuleChecks(page: Page, issues: PageIssues): Promise<
     assert(broken.length === 0, `${broken.length}/${total} broken images on Home after Services navigation`);
     assert(await assertNoHorizontalOverflow(page), 'unexpected horizontal overflow on Home after Services navigation');
   });
+}
+
+// ---------------------------------------------------------------------------
+// SERVICES-R5.23 — Category Landing / CategoryCard / CardProduct Detail
+// ---------------------------------------------------------------------------
+
+/**
+ * SERVICES-R5.23 — `docs/services-r5-23-services-prototype-fidelity-audit.md`
+ * §8 found neither `/categories/[slug]` (Category Landing, CategoryCard's
+ * own render surface) nor `/services/[categoryId]/[serviceId]/cards/
+ * [cardProductId]` (CardProduct Detail) had ANY staging browser coverage
+ * despite both existing since R5.21/R5.16. Runs inside the same
+ * authenticated context `runServicesModuleChecks` already used — no
+ * separate login. Entirely count-agnostic against a live snapshot (no
+ * hardcoded catalog size), same discipline as every other check in this
+ * file since commit 563d319.
+ *
+ * Selectors match real component source: `CategoryCard.tsx` (a `<button>`
+ * wrapping a `<strong>{title}</strong>` and a "مشاهده خدمت ←" affordance),
+ * `CardProductCard.tsx`/`CardProductHero.tsx` (`<h1>{title}</h1>` on
+ * Detail), `DisabledCardPurchaseCTA.tsx` (`aria-label="خرید کارت —
+ * به‌زودی"`).
+ */
+async function runCategoryLandingAndCardProductChecks(page: Page, issues: PageIssues): Promise<void> {
+  const snapshot = await step('Fetch real Category (with slug)/CategoryCard/CardProduct snapshot', async () => {
+    const catRes = await fetch(`${API_ORIGIN}/api/v1/categories?limit=100`);
+    const catJson = (await catRes.json()) as { data: { items: CategorySnapshot[] } };
+    const categoriesWithSlug = catJson.data.items.filter((c) => !!c.slug);
+    return { categoriesWithSlug };
+  });
+  if (!snapshot || snapshot.categoriesWithSlug.length === 0) {
+    skip(
+      'Category Landing / CategoryCard — all checks',
+      'no real Category currently has a slug set — the route is correctly unreachable with no fabricated slug (see SERVICES-R5.21\'s own "no bulk-fabricated Category.slug" rule); this is a real content state, not a QA gap',
+    );
+  } else {
+    const category = snapshot.categoriesWithSlug[0];
+
+    const cardsRes = await fetch(`${API_ORIGIN}/api/v1/category-cards?categoryId=${category.id}&limit=100`);
+    const cardsJson = (await cardsRes.json()) as { data: { items: CategoryCardSnapshot[] } };
+    const categoryCards = cardsJson.data.items;
+
+    await step(`Category Landing renders the real hero for "${category.name}" (/categories/${category.slug})`, async () => {
+      issues.markNavigationAttempt();
+      await page.goto(`${CUSTOMER_ORIGIN}/categories/${category.slug}`, { waitUntil: 'networkidle' });
+      await page.getByRole('heading', { level: 1, name: category.name, exact: true }).waitFor({ timeout: 10000 });
+      const html = await page.content();
+      assert(html.includes(category.name), `expected the real category name "${category.name}" in the Category Landing hero`);
+      assert(html.includes(category.description), 'expected the real category description in the Category Landing hero');
+      // Media architecture: never a raw storage key/filesystem path leaking
+      // into rendered HTML (SERVICES-R5.23's explicit "no forbidden raw
+      // storage-key UI" requirement) — a resolved URL always starts with
+      // the real media-serving route, never a bare `categories/*.jpeg`
+      // reference-directory path.
+      assert(!html.includes('categories/') || !/categories\/[^"]+\.(jpe?g|png|webp)/i.test(html), 'must never reference the reference-only categories/ directory as a runtime image path');
+    });
+
+    await captureScreenshot(page, 'category-landing-desktop', DESKTOP);
+    for (const vp of RESPONSIVE_WIDTHS) {
+      await page.setViewportSize(vp);
+      await page.waitForTimeout(300);
+      await step(`Category Landing — no horizontal overflow at ${vp.width}px`, async () => {
+        assert(await assertNoHorizontalOverflow(page), `unexpected horizontal overflow on Category Landing at ${vp.width}px`);
+      });
+      await captureScreenshot(page, `category-landing-${vp.width}`, vp);
+    }
+    await page.setViewportSize(DESKTOP);
+
+    if (categoryCards.length === 0) {
+      skip('CategoryCard grid / click-through', `"${category.name}" has a Landing route but zero real CategoryCard rows — the empty state should render, not a fabricated card`);
+      await step(`Category Landing — the real "no cards yet" empty state renders for "${category.name}"`, async () => {
+        const html = await page.content();
+        assert(html.includes('در حال حاضر کارتی برای این دسته‌بندی ثبت نشده است.'), 'expected the real CategoryCardGrid empty-state copy');
+      });
+    } else {
+      const card = categoryCards[0];
+      await step(`CategoryCard grid renders ${categoryCards.length} real card(s), no broken images, correct relationship to "${category.name}"`, async () => {
+        for (const c of categoryCards) {
+          assert(c.categoryId === category.id, `CategoryCard ${c.id} must belong to the Category whose Landing page it renders on`);
+        }
+        const { broken } = await assertNoBrokenImages(page);
+        assert(broken.length === 0, `broken images on "${category.name}" Category Landing`);
+        const html = await page.content();
+        assert(html.includes(card.title), `expected the real CategoryCard title "${card.title}" to render`);
+      });
+
+      await step(`CategoryCard click navigates to its real target Service (ownership-enforced, never an unrelated Service)`, async () => {
+        issues.markNavigationAttempt();
+        await page.getByText(card.title, { exact: true }).first().click();
+        await page.waitForURL(new RegExp(`/services/${category.id}/${card.targetServiceId}$`), { timeout: 15000 });
+        await page.waitForLoadState('networkidle');
+      });
+    }
+  }
+
+  const cardProductSnapshot = await step('Fetch a real Service with at least one real ACTIVE CardProduct', async () => {
+    for (let p = 1; p <= 5; p++) {
+      const res = await fetch(`${API_ORIGIN}/api/v1/services?limit=100&page=${p}`);
+      const json = (await res.json()) as { data: { items: ServiceSnapshot[]; total: number } };
+      for (const svc of json.data.items) {
+        const cardsRes = await fetch(`${API_ORIGIN}/api/v1/cards?serviceId=${svc.id}&limit=1`);
+        const cardsJson = (await cardsRes.json()) as { data: { items: CardProductSnapshot[] } };
+        if (cardsJson.data.items.length > 0) {
+          return { service: svc, cardProduct: cardsJson.data.items[0] };
+        }
+      }
+      if (json.data.items.length < 100) break;
+    }
+    return null;
+  });
+
+  if (!cardProductSnapshot) {
+    skip('CardProduct Detail — all checks', 'no real Service currently has a real ACTIVE CardProduct — nothing purchasable exists yet to click through to; this is a real content state, not a QA gap');
+    return;
+  }
+
+  const { service, cardProduct } = cardProductSnapshot;
+  await step(`CardProduct discovery — Service Detail lists the real CardProduct "${cardProduct.title}"`, async () => {
+    issues.markNavigationAttempt();
+    await page.goto(`${CUSTOMER_ORIGIN}/services/${service.categoryId}/${service.id}`, { waitUntil: 'networkidle' });
+    await page.getByText(cardProduct.title, { exact: true }).first().waitFor({ timeout: 10000 });
+    const { broken } = await assertNoBrokenImages(page);
+    assert(broken.length === 0, `broken images on Service Detail for "${service.title}"`);
+  });
+
+  await step(`CardProduct Detail renders the real hero, benefits/validity where present, and the real disabled purchase CTA`, async () => {
+    issues.markNavigationAttempt();
+    await page.getByText(cardProduct.title, { exact: true }).first().click();
+    await page.waitForURL(new RegExp(`/cards/${cardProduct.id}$`), { timeout: 15000 });
+    await page.waitForLoadState('networkidle');
+    await page.getByRole('heading', { level: 1, name: cardProduct.title, exact: true }).waitFor({ timeout: 10000 });
+    const html = await page.content();
+    assert(html.includes('خرید کارت'), 'expected the real disabled card-purchase CTA text');
+    assert(html.includes('به‌زودی'), 'expected the "به‌زودی" caption on the disabled card CTA');
+    const ctaDisabled = await page.getByRole('button', { name: 'خرید کارت — به‌زودی' }).isDisabled();
+    assert(ctaDisabled, 'expected the card purchase CTA button to be disabled');
+    const { broken } = await assertNoBrokenImages(page);
+    assert(broken.length === 0, `broken images on CardProduct Detail for "${cardProduct.title}"`);
+  });
+
+  await captureScreenshot(page, 'card-product-detail-desktop', DESKTOP);
 }
 
 // ---------------------------------------------------------------------------

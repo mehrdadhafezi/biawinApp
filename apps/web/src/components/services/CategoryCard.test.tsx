@@ -36,6 +36,12 @@ describe("CategoryCard (Discovery Card) rendering", () => {
     expect(html).not.toContain("<img");
   });
 
+  it("renders the image at the reference cards' tall 3/4 aspect ratio, not a flat fixed height (SERVICES-R5.23)", () => {
+    const html = renderToStaticMarkup(<CategoryCard categoryCard={categoryCard()} onSelect={() => {}} />);
+    expect(html).toContain("aspect-ratio:3 / 4");
+    expect(html).not.toContain("height:140px");
+  });
+
   it("caps highlights at 2, even if the API somehow returns more", () => {
     const html = renderToStaticMarkup(
       <CategoryCard
