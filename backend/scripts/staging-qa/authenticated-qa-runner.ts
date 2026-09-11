@@ -807,6 +807,16 @@ async function main(): Promise<void> {
 
     // --- Section 13: SERVICES-R5.19 CardProduct Purchase Order QA ---------
     await servicesR519CardProductPurchaseFoundationCheck(customerToken, superAdmin);
+
+    // --- Section 14: SERVICES-R5.24 CategoryCard ownership + CRUD QA -------
+    // No prior section in this file ever exercised `/admin/category-cards`
+    // or `CategoryCardsService`'s server-side ownership check — confirmed
+    // by grep before writing this (zero matches for
+    // "admin/category-cards"). Browser-level CategoryCard coverage exists
+    // (`deploy/staging/qa/browser/browser-qa.ts`, SERVICES-R5.23) but never
+    // proves the ownership REJECTION path, only the happy path a real
+    // click can reach.
+    await categoryCardOwnershipAndCrudCheck(superAdmin);
   } catch (fatal) {
     finish(fatal instanceof Error ? fatal : new Error(String(fatal)));
     return;
@@ -1797,10 +1807,18 @@ async function discoverPurchasableCardProduct(): Promise<
   QaCardProductSummary | undefined
 > {
   const limit = 100;
-  for (let page = 0; page < 5; page += 1) {
+  // SERVICES-R5.24 — `page`/`limit` is the real, documented `PaginationQueryDto`
+  // contract; `skip` is a derived, read-only value with no `@IsInt()`/Swagger
+  // decorator, never meant to be client-supplied. Sending it as a raw query
+  // key used to crash EVERY endpoint that extends `PaginationQueryDto` with
+  // an unhandled 500 (`backend/src/common/dto/pagination.dto.ts` now has a
+  // no-op setter guarding against exactly this) — fixed at the source this
+  // stage, but this call site is switched to the real contract regardless,
+  // since `skip` was never a supported input to begin with.
+  for (let page = 1; page <= 5; page += 1) {
     const res = await apiCall<{ items: QaCardProductSummary[]; total: number }>(
       API_ORIGIN,
-      `/api/v1/cards?skip=${page * limit}&limit=${limit}`,
+      `/api/v1/cards?page=${page}&limit=${limit}`,
     );
     if (!res.ok || !Array.isArray(res.body.items)) return undefined;
     const candidate = res.body.items.find(
@@ -1813,6 +1831,185 @@ async function discoverPurchasableCardProduct(): Promise<
     if (res.body.items.length < limit) return undefined;
   }
   return undefined;
+}
+
+interface QaCategorySummary {
+  id: string;
+  name: string;
+  slug: string | null;
+}
+interface QaServiceSummary {
+  id: string;
+  categoryId: string;
+}
+
+/**
+ * SERVICES-R5.24 — discovers two real, DIFFERENT Categories that each own
+ * at least one real Service, purely from the public catalog (no admin
+ * access needed) — the minimum real fixture `categoryCardOwnershipAndCrudCheck`
+ * needs to construct both a valid CategoryCard and a deliberately
+ * cross-category (invalid) one. Never fabricates a Category/Service; if
+ * staging genuinely has fewer than two categories with a real service
+ * each, returns `undefined` and the caller reports NOT_TESTED, not FAIL.
+ */
+async function discoverTwoCategoriesWithServices(): Promise<
+  { categoryA: QaCategorySummary; serviceA: QaServiceSummary; categoryB: QaCategorySummary; serviceB: QaServiceSummary }
+  | undefined
+> {
+  const catRes = await apiCall<{ items: QaCategorySummary[] }>(API_ORIGIN, '/api/v1/categories?limit=100');
+  if (!catRes.ok || !Array.isArray(catRes.body.items)) return undefined;
+
+  const byCategory = new Map<string, QaServiceSummary>();
+  for (let page = 1; page <= 5; page += 1) {
+    const res = await apiCall<{ items: QaServiceSummary[] }>(API_ORIGIN, `/api/v1/services?page=${page}&limit=100`);
+    if (!res.ok || !Array.isArray(res.body.items)) break;
+    for (const svc of res.body.items) {
+      if (!byCategory.has(svc.categoryId)) byCategory.set(svc.categoryId, svc);
+    }
+    if (res.body.items.length < 100) break;
+  }
+
+  const eligible = catRes.body.items.filter((c) => byCategory.has(c.id));
+  if (eligible.length < 2) return undefined;
+  const [categoryA, categoryB] = eligible;
+  return {
+    categoryA,
+    serviceA: byCategory.get(categoryA.id)!,
+    categoryB,
+    serviceB: byCategory.get(categoryB.id)!,
+  };
+}
+
+/**
+ * SERVICES-R5.24 — the first authenticated-QA coverage for
+ * `/admin/category-cards`: the server-side ownership check
+ * (`CategoryCardsService`, SERVICES-R5.21 — `targetService.categoryId`
+ * MUST equal the CategoryCard's own `categoryId`, else 422) had only ever
+ * been proven by backend unit tests and the browser-level happy path
+ * (`browser-qa.ts`, which can only click a real, already-valid card — it
+ * cannot exercise the rejection branch at all). No `DELETE` endpoint
+ * exists for `CategoryCard` (zero-hard-delete convention, same as
+ * `Category`/`Service`/`CardProduct` — `active` is the only removal
+ * mechanism), so cleanup deactivates the disposable row instead of
+ * deleting it, mirroring `propagationActiveCheck`'s own pattern.
+ */
+async function categoryCardOwnershipAndCrudCheck(
+  admin: AdminSession | undefined,
+): Promise<void> {
+  if (!admin) {
+    skip('CategoryCard ownership + CRUD — all checks', 'no admin session available');
+    return;
+  }
+
+  const fixture = await step(
+    'CategoryCard QA: discover two real Categories, each with a real Service',
+    discoverTwoCategoriesWithServices,
+  );
+  if (!fixture) {
+    skip(
+      'CategoryCard ownership + CRUD — all checks',
+      'fewer than two real Categories currently have a real Service each — nothing to construct a valid/invalid CategoryCard pair from; this is a real catalog-content state, not a QA gap',
+    );
+    return;
+  }
+  const { categoryA, serviceA, categoryB, serviceB } = fixture;
+
+  await step(
+    'CategoryCard QA: server rejects a targetService that does NOT belong to the given Category (ownership check)',
+    async () => {
+      const res = await apiCall<{ id: string }>(API_ORIGIN, '/api/v1/admin/category-cards', {
+        method: 'POST',
+        token: admin.accessToken,
+        body: JSON.stringify({
+          categoryId: categoryA.id,
+          targetServiceId: serviceB.id,
+          title: `${QA_TAG}-invalid-ownership`,
+          highlights: [],
+          sortOrder: 9999,
+          active: true,
+        }),
+      });
+      assert(
+        !res.ok && res.status === 422,
+        `expected a 422 ownership rejection for categoryId=${categoryA.id} + a Service from a different Category (${categoryB.id}), got ${detail(res)}`,
+      );
+    },
+  );
+
+  let id: string | undefined;
+  await step('CategoryCard QA: create a valid disposable row (real Category + its own real Service)', async () => {
+    const res = await apiCall<{ id: string; categoryId: string; targetServiceId: string }>(
+      API_ORIGIN,
+      '/api/v1/admin/category-cards',
+      {
+        method: 'POST',
+        token: admin.accessToken,
+        body: JSON.stringify({
+          categoryId: categoryA.id,
+          targetServiceId: serviceA.id,
+          title: `${QA_TAG}-card`,
+          highlights: [`${QA_TAG}-h1`, `${QA_TAG}-h2`],
+          sortOrder: 9999,
+          active: true,
+        }),
+      },
+    );
+    assert(res.ok, `create failed: ${detail(res)}`);
+    assert(res.body.categoryId === categoryA.id, `expected categoryId to persist as ${categoryA.id}, got ${res.body.categoryId}`);
+    assert(res.body.targetServiceId === serviceA.id, `expected targetServiceId to persist as ${serviceA.id}, got ${res.body.targetServiceId}`);
+    id = res.body.id;
+  });
+  if (!id) {
+    skip('CategoryCard QA: edit/active-filter/cleanup', 'create failed, nothing to operate on');
+    return;
+  }
+  const cardId = id;
+  registerRestore('CategoryCard QA: deactivate disposable row (cleanup — no DELETE endpoint exists)', async () => {
+    const res = await apiCall(API_ORIGIN, `/api/v1/admin/category-cards/${cardId}`, {
+      method: 'PUT',
+      token: admin.accessToken,
+      body: JSON.stringify({ active: false }),
+    });
+    if (!res.ok) throw new Error(`cleanup deactivate failed: ${detail(res)}`);
+  });
+
+  await step('CategoryCard QA: edit persists (title/highlights)', async () => {
+    const put = await apiCall(API_ORIGIN, `/api/v1/admin/category-cards/${cardId}`, {
+      method: 'PUT',
+      token: admin.accessToken,
+      body: JSON.stringify({ title: `${QA_TAG}-card-updated` }),
+    });
+    assert(put.ok, `update failed: ${detail(put)}`);
+    const get = await apiCall<{ title: string }>(API_ORIGIN, `/api/v1/admin/category-cards/${cardId}`, { token: admin.accessToken });
+    assert(get.ok && get.body.title === `${QA_TAG}-card-updated`, `expected the updated title to persist, got ${detail(get)}`);
+  });
+
+  await step('CategoryCard QA: appears in the public, active-filtered list for its real Category', async () => {
+    const pub = await apiCall<{ items: Array<{ id: string; categoryId: string; targetServiceId: string }> }>(
+      API_ORIGIN,
+      `/api/v1/category-cards?categoryId=${categoryA.id}&limit=100`,
+    );
+    assert(pub.ok, `public category-cards list failed: ${detail(pub)}`);
+    const found = pub.body.items.find((c) => c.id === cardId);
+    assert(!!found, 'expected the real, active CategoryCard to appear in the public list for its Category');
+    assert(found!.categoryId === categoryA.id, 'expected the public row\'s categoryId to match the real Category');
+    assert(found!.targetServiceId === serviceA.id, 'expected the public row\'s targetServiceId to match the real target Service');
+  });
+
+  await step('CategoryCard QA: deactivated row disappears from the public list (active-filtering proof)', async () => {
+    const put = await apiCall(API_ORIGIN, `/api/v1/admin/category-cards/${cardId}`, {
+      method: 'PUT',
+      token: admin.accessToken,
+      body: JSON.stringify({ active: false }),
+    });
+    assert(put.ok, `deactivate failed: ${detail(put)}`);
+    const pub = await apiCall<{ items: Array<{ id: string }> }>(
+      API_ORIGIN,
+      `/api/v1/category-cards?categoryId=${categoryA.id}&limit=100`,
+    );
+    assert(pub.ok, `public category-cards list failed: ${detail(pub)}`);
+    assert(!pub.body.items.some((c) => c.id === cardId), 'expected the deactivated CategoryCard to be absent from the public list');
+  });
 }
 
 /**

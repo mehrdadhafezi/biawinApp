@@ -1091,6 +1091,65 @@ async function runServicesModuleChecks(page: Page, issues: PageIssues): Promise<
 // ---------------------------------------------------------------------------
 
 /**
+ * SERVICES-R5.24 root-cause fix — every backend response, success OR error
+ * (including a 429 from the global `ThrottlerGuard`: 100 req/60s/IP,
+ * `backend/src/app.module.ts`), is wrapped as either `{success:true,
+ * data}` or `{success:false, error}` by `ResponseInterceptor`/
+ * `HttpExceptionFilter` — never a bare `{data: ...}`. The R5.23 version of
+ * this file's snapshot fetches assumed `{data: {items}}` unconditionally
+ * and crashed with "Cannot read properties of undefined (reading
+ * 'items')" the moment any one of them got a 429 instead of a 200 — which
+ * the OLD `fetchCardProductSnapshot` (below) made likely: it issued one
+ * `/cards?serviceId=X` request PER real Service (worst case ~500
+ * sequential requests just to find a single real CardProduct), easily
+ * exceeding the throttle on its own within one run. Every fetch in this
+ * function now goes through this helper, which checks `success` before
+ * ever touching `.data` and returns `null` on failure instead of
+ * throwing — a real 429 now fails one `step()` with a clear message,
+ * never crashes the whole script.
+ */
+async function fetchApi<T>(path: string): Promise<T | null> {
+  const res = await fetch(`${API_ORIGIN}${path}`);
+  let json: { success: boolean; data?: T; error?: { code: string; message: string } };
+  try {
+    json = await res.json();
+  } catch {
+    return null;
+  }
+  if (!json.success || json.data === undefined) {
+    console.warn(`[browser-qa] ${path} -> HTTP ${res.status}${json?.error ? ` ${json.error.code}: ${json.error.message}` : ''}`);
+    return null;
+  }
+  return json.data;
+}
+
+/**
+ * SERVICES-R5.24 — mirrors `discoverPurchasableCardProduct()`
+ * (`backend/scripts/staging-qa/authenticated-qa-runner.ts`, the
+ * established, already-correct pattern for this exact problem): page
+ * through `GET /cards` directly (already the full, real, ACTIVE-only
+ * catalog — no `serviceId` filter needed to just find ONE real card), and
+ * resolve its owning Service with a single direct `GET /services/:id`
+ * lookup. Worst case ~6 requests total (5 pages + 1 service lookup)
+ * instead of the old code's worst-case ~500.
+ */
+async function fetchCardProductSnapshot(): Promise<{ service: ServiceSnapshot; cardProduct: CardProductSnapshot } | null> {
+  const limit = 100;
+  for (let p = 0; p < 5; p++) {
+    const cardsData = await fetchApi<{ items: CardProductSnapshot[] }>(`/api/v1/cards?skip=${p * limit}&limit=${limit}`);
+    if (!cardsData) return null;
+    const cardProduct = cardsData.items[0];
+    if (cardProduct) {
+      const service = await fetchApi<ServiceSnapshot>(`/api/v1/services/${cardProduct.serviceId}`);
+      if (!service) return null;
+      return { service, cardProduct };
+    }
+    if (cardsData.items.length < limit) break;
+  }
+  return null;
+}
+
+/**
  * SERVICES-R5.23 — `docs/services-r5-23-services-prototype-fidelity-audit.md`
  * §8 found neither `/categories/[slug]` (Category Landing, CategoryCard's
  * own render surface) nor `/services/[categoryId]/[serviceId]/cards/
@@ -1109,9 +1168,9 @@ async function runServicesModuleChecks(page: Page, issues: PageIssues): Promise<
  */
 async function runCategoryLandingAndCardProductChecks(page: Page, issues: PageIssues): Promise<void> {
   const snapshot = await step('Fetch real Category (with slug)/CategoryCard/CardProduct snapshot', async () => {
-    const catRes = await fetch(`${API_ORIGIN}/api/v1/categories?limit=100`);
-    const catJson = (await catRes.json()) as { data: { items: CategorySnapshot[] } };
-    const categoriesWithSlug = catJson.data.items.filter((c) => !!c.slug);
+    const catData = await fetchApi<{ items: CategorySnapshot[] }>('/api/v1/categories?limit=100');
+    if (!catData) throw new Error('could not fetch the real Category snapshot (see console for the underlying HTTP/error detail)');
+    const categoriesWithSlug = catData.items.filter((c) => !!c.slug);
     return { categoriesWithSlug };
   });
   if (!snapshot || snapshot.categoriesWithSlug.length === 0) {
@@ -1122,9 +1181,8 @@ async function runCategoryLandingAndCardProductChecks(page: Page, issues: PageIs
   } else {
     const category = snapshot.categoriesWithSlug[0];
 
-    const cardsRes = await fetch(`${API_ORIGIN}/api/v1/category-cards?categoryId=${category.id}&limit=100`);
-    const cardsJson = (await cardsRes.json()) as { data: { items: CategoryCardSnapshot[] } };
-    const categoryCards = cardsJson.data.items;
+    const cardsData = await fetchApi<{ items: CategoryCardSnapshot[] }>(`/api/v1/category-cards?categoryId=${category.id}&limit=100`);
+    const categoryCards = cardsData?.items ?? [];
 
     await step(`Category Landing renders the real hero for "${category.name}" (/categories/${category.slug})`, async () => {
       issues.markNavigationAttempt();
@@ -1171,29 +1229,32 @@ async function runCategoryLandingAndCardProductChecks(page: Page, issues: PageIs
       });
 
       await step(`CategoryCard click navigates to its real target Service (ownership-enforced, never an unrelated Service)`, async () => {
+        // SERVICES-R5.24 real fix, found by actually running this against a
+        // live local stack (not assumed from reading the source): a plain
+        // `getByText(card.title, {exact:true})` is genuinely ambiguous
+        // whenever a CategoryCard's real title equals its own Category's
+        // name — a real, common case, since this stage's own local content
+        // populated several cards that way (e.g. "مبلمان"). `getByText`
+        // matches ANY text node regardless of role, and `CategoryHero`'s
+        // `<h1>{category.name}</h1>` sits earlier in the DOM than the card,
+        // so `.first()` landed on the non-interactive heading and the click
+        // did nothing — a real Timeout, not a flaky one. `CategoryCard.tsx`
+        // renders the whole card as one real `<button>` (`all:unset`,
+        // still a real interactive element) — scoping to `getByRole
+        // ('button')` excludes the heading entirely, since CategoryHero
+        // renders no buttons at all.
         issues.markNavigationAttempt();
-        await page.getByText(card.title, { exact: true }).first().click();
+        await page.getByRole('button').filter({ hasText: card.title }).first().click();
         await page.waitForURL(new RegExp(`/services/${category.id}/${card.targetServiceId}$`), { timeout: 15000 });
         await page.waitForLoadState('networkidle');
       });
     }
   }
 
-  const cardProductSnapshot = await step('Fetch a real Service with at least one real ACTIVE CardProduct', async () => {
-    for (let p = 1; p <= 5; p++) {
-      const res = await fetch(`${API_ORIGIN}/api/v1/services?limit=100&page=${p}`);
-      const json = (await res.json()) as { data: { items: ServiceSnapshot[]; total: number } };
-      for (const svc of json.data.items) {
-        const cardsRes = await fetch(`${API_ORIGIN}/api/v1/cards?serviceId=${svc.id}&limit=1`);
-        const cardsJson = (await cardsRes.json()) as { data: { items: CardProductSnapshot[] } };
-        if (cardsJson.data.items.length > 0) {
-          return { service: svc, cardProduct: cardsJson.data.items[0] };
-        }
-      }
-      if (json.data.items.length < 100) break;
-    }
-    return null;
-  });
+  const cardProductSnapshot = await step(
+    'Fetch a real Service with at least one real ACTIVE CardProduct (single efficient /cards page scan, no per-service N+1 loop)',
+    fetchCardProductSnapshot,
+  );
 
   if (!cardProductSnapshot) {
     skip('CardProduct Detail — all checks', 'no real Service currently has a real ACTIVE CardProduct — nothing purchasable exists yet to click through to; this is a real content state, not a QA gap');
@@ -1201,17 +1262,22 @@ async function runCategoryLandingAndCardProductChecks(page: Page, issues: PageIs
   }
 
   const { service, cardProduct } = cardProductSnapshot;
+  // SERVICES-R5.24 — same `getByRole('button')` scoping as the CategoryCard
+  // click above, for the same reason: `cardProduct.title` could coincide
+  // with other page text (the Service's own title/hero), and only the
+  // real `<button>` `CardProductCard.tsx` renders is the actual target.
+  const cardProductButton = () => page.getByRole('button').filter({ hasText: cardProduct.title }).first();
   await step(`CardProduct discovery — Service Detail lists the real CardProduct "${cardProduct.title}"`, async () => {
     issues.markNavigationAttempt();
     await page.goto(`${CUSTOMER_ORIGIN}/services/${service.categoryId}/${service.id}`, { waitUntil: 'networkidle' });
-    await page.getByText(cardProduct.title, { exact: true }).first().waitFor({ timeout: 10000 });
+    await cardProductButton().waitFor({ timeout: 10000 });
     const { broken } = await assertNoBrokenImages(page);
     assert(broken.length === 0, `broken images on Service Detail for "${service.title}"`);
   });
 
   await step(`CardProduct Detail renders the real hero, benefits/validity where present, and the real disabled purchase CTA`, async () => {
     issues.markNavigationAttempt();
-    await page.getByText(cardProduct.title, { exact: true }).first().click();
+    await cardProductButton().click();
     await page.waitForURL(new RegExp(`/cards/${cardProduct.id}$`), { timeout: 15000 });
     await page.waitForLoadState('networkidle');
     await page.getByRole('heading', { level: 1, name: cardProduct.title, exact: true }).waitFor({ timeout: 10000 });
