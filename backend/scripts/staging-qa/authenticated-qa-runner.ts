@@ -2539,6 +2539,28 @@ async function servicesR519CardProductPurchaseFoundationCheck(
   );
 
   await step(
+    'SERVICES-R5.26 client-supplied userId/ownerId rejected (CardProduct shape)',
+    async () => {
+      const res = await attemptOrder(customerToken, {
+        cardProductId: randomUUID(),
+        idempotencyKey: `${QA_TAG}-r526-owner-tamper`,
+        userId: randomUUID(),
+        ownerId: randomUUID(),
+      });
+      if (res.ok) {
+        if (res.body.id) unexpectedOrderIds.push(res.body.id);
+        throw new Error(
+          `expected unknown userId/ownerId fields to be rejected on the CardProduct shape, but an Order was created (id=${res.body.id})`,
+        );
+      }
+      assert(
+        res.status === 400,
+        `expected the deployed ValidationPipe to reject unknown userId/ownerId fields with 400 (same whitelist mechanism proven for the Service shape at SERVICES-R5.1), got ${detail(res)}`,
+      );
+    },
+  );
+
+  await step(
     'SERVICES-R5.19 providing both serviceId and cardProductId rejected',
     async () => {
       const res = await attemptOrder(customerToken, {

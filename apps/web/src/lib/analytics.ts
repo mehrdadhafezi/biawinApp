@@ -25,18 +25,21 @@
  * `CardProductViewed` (`CardProductGrid` mount per card, mirroring
  * `CategoryCardGrid`'s exact pattern above).
  *
- * `PurchaseCTAClicked` is declared here for a future real purchase button,
- * but has **no call site today** — the only purchase-adjacent controls in
- * this app (`DisabledPurchaseCTA`/`DisabledCardPurchaseCTA`) are real,
- * native `disabled` buttons, and a disabled HTML button never fires
- * `onClick` (the browser suppresses the event outright, it doesn't even
- * bubble to a wrapping element). Firing this event from anywhere else —
- * the caption text, a wrapping div, the card selection tap that merely
- * navigates to Detail — would misrepresent what the user actually
- * clicked. Wiring it honestly requires a real, enabled purchase button,
- * which doesn't exist yet (purchase execution is still out of scope, see
- * `DisabledPurchaseCTA`'s own doc comment); this type exists so the first
- * stage that adds one doesn't also have to design its analytics shape.
+ * `PurchaseCTAClicked` was declared in R5.22 with no call site (no real,
+ * enabled purchase button existed yet — a disabled HTML button never fires
+ * `onClick` at all, so firing this from anywhere else would have
+ * misrepresented what the user clicked). SERVICES-R5.26 finally wires a
+ * real one: `PurchaseSheet.tsx`'s confirm button, the only genuinely
+ * clickable purchase-intent control in the app.
+ *
+ * SERVICES-R5.26 also adds `OrderCreated` — fires once, after `POST
+ * /orders` actually succeeds (`PurchaseSheet.tsx`), carrying the real,
+ * newly-created `Order.id`/`amount`/`status`. This is an honest "a
+ * `pending` Order now exists" signal, not a payment event — this stage
+ * explicitly does not implement Payment, so no `PaymentSucceeded`/
+ * `PaymentFailed`/`VoucherIssued`/`CardRedeemed` event exists or is
+ * claimed here; those belong to R5.27–R5.29, once something real happens
+ * for them to describe.
  */
 export type AnalyticsEvent =
   | {
@@ -72,6 +75,13 @@ export type AnalyticsEvent =
       name: "PurchaseCTAClicked";
       context: "service" | "cardProduct";
       id: string;
+    }
+  | {
+      name: "OrderCreated";
+      orderId: string;
+      cardProductId: string;
+      serviceId: string;
+      amount: number;
     };
 
 export function trackEvent(event: AnalyticsEvent): void {

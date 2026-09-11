@@ -388,6 +388,8 @@ interface CardProductSnapshot {
   serviceId: string;
   title: string;
   status: string;
+  journeyType: string;
+  priceAmount: number | null;
 }
 
 /**
@@ -1132,21 +1134,35 @@ async function fetchApi<T>(path: string): Promise<T | null> {
  * resolve its owning Service with a single direct `GET /services/:id`
  * lookup. Worst case ~6 requests total (5 pages + 1 service lookup)
  * instead of the old code's worst-case ~500.
+ *
+ * SERVICES-R5.26 — now prefers a genuinely PURCHASABLE card (real
+ * `journeyType === 'PURCHASE'` with a positive `priceAmount`, the exact
+ * eligibility rule `isCardProductPurchasable()` and
+ * `CardProductPricingService.resolveAuthoritativePrice()` both enforce) so
+ * the real Purchase Flow click-through below actually exercises the real
+ * enabled CTA whenever such data exists; falls back to the first ACTIVE
+ * card (exercising the disabled-CTA branch instead) only when no
+ * purchasable one exists today — never fabricated.
  */
 async function fetchCardProductSnapshot(): Promise<{ service: ServiceSnapshot; cardProduct: CardProductSnapshot } | null> {
   const limit = 100;
+  let fallback: CardProductSnapshot | undefined;
   for (let p = 0; p < 5; p++) {
     const cardsData = await fetchApi<{ items: CardProductSnapshot[] }>(`/api/v1/cards?skip=${p * limit}&limit=${limit}`);
-    if (!cardsData) return null;
-    const cardProduct = cardsData.items[0];
-    if (cardProduct) {
-      const service = await fetchApi<ServiceSnapshot>(`/api/v1/services/${cardProduct.serviceId}`);
-      if (!service) return null;
-      return { service, cardProduct };
-    }
+    if (!cardsData) return fallback ? await withService(fallback) : null;
+    if (!fallback) fallback = cardsData.items[0];
+    const purchasable = cardsData.items.find(
+      (c) => c.journeyType === 'PURCHASE' && c.priceAmount != null && c.priceAmount > 0,
+    );
+    if (purchasable) return await withService(purchasable);
     if (cardsData.items.length < limit) break;
   }
-  return null;
+  return fallback ? await withService(fallback) : null;
+
+  async function withService(cardProduct: CardProductSnapshot) {
+    const service = await fetchApi<ServiceSnapshot>(`/api/v1/services/${cardProduct.serviceId}`);
+    return service ? { service, cardProduct } : null;
+  }
 }
 
 /**
@@ -1275,22 +1291,88 @@ async function runCategoryLandingAndCardProductChecks(page: Page, issues: PageIs
     assert(broken.length === 0, `broken images on Service Detail for "${service.title}"`);
   });
 
-  await step(`CardProduct Detail renders the real hero, benefits/validity where present, and the real disabled purchase CTA`, async () => {
+  const isPurchasable =
+    cardProduct.journeyType === 'PURCHASE' && cardProduct.priceAmount != null && cardProduct.priceAmount > 0;
+
+  await step(`CardProduct Detail renders the real hero, benefits/validity where present, and the real purchase CTA (${isPurchasable ? 'enabled — purchasable' : 'disabled'})`, async () => {
     issues.markNavigationAttempt();
     await cardProductButton().click();
     await page.waitForURL(new RegExp(`/cards/${cardProduct.id}$`), { timeout: 15000 });
     await page.waitForLoadState('networkidle');
     await page.getByRole('heading', { level: 1, name: cardProduct.title, exact: true }).waitFor({ timeout: 10000 });
     const html = await page.content();
-    assert(html.includes('خرید کارت'), 'expected the real disabled card-purchase CTA text');
-    assert(html.includes('به‌زودی'), 'expected the "به‌زودی" caption on the disabled card CTA');
-    const ctaDisabled = await page.getByRole('button', { name: 'خرید کارت — به‌زودی' }).isDisabled();
-    assert(ctaDisabled, 'expected the card purchase CTA button to be disabled');
+    assert(html.includes('خرید کارت'), 'expected the real card-purchase CTA text');
+    if (isPurchasable) {
+      const ctaEnabled = await page.getByRole('button', { name: 'خرید کارت', exact: true }).isEnabled();
+      assert(ctaEnabled, 'expected the real, enabled card purchase CTA for a genuinely purchasable CardProduct — never a fake-looking disabled one');
+    } else {
+      assert(html.includes('به‌زودی'), 'expected the "به‌زودی" caption on the disabled card CTA');
+      const ctaDisabled = await page.getByRole('button', { name: 'خرید کارت — به‌زودی' }).isDisabled();
+      assert(ctaDisabled, 'expected the card purchase CTA button to be disabled');
+    }
     const { broken } = await assertNoBrokenImages(page);
     assert(broken.length === 0, `broken images on CardProduct Detail for "${cardProduct.title}"`);
   });
 
   await captureScreenshot(page, 'card-product-detail-desktop', DESKTOP);
+
+  if (!isPurchasable) {
+    skip('SERVICES-R5.26 Purchase Flow click-through', `"${cardProduct.title}" is not purchasable (journeyType=${cardProduct.journeyType}, priceAmount=${cardProduct.priceAmount}) — no genuinely purchasable CardProduct exists on this environment today to click through the real flow; this is a real content state, not a QA gap`);
+    return;
+  }
+
+  /**
+   * SERVICES-R5.26 — the real Purchase Flow, end to end, through the actual
+   * rendered UI (not an API shortcut — the authenticated API-layer runner,
+   * `backend/scripts/staging-qa/authenticated-qa-runner.ts`, is the
+   * authoritative, cleanup-capable proof of the backend contract itself;
+   * this proves the real page wiring on top of it: CTA -> PurchaseSheet ->
+   * POST /orders -> redirect -> `/purchase/[orderId]`).
+   *
+   * Selectors are grounded in `PurchaseSheet.tsx` (dialog role from
+   * `BottomSheet`, header "تأیید خرید", confirm button "تأیید و ادامه
+   * پرداخت") and `apps/web/src/app/purchase/[orderId]/page.tsx` ("سفارش شما
+   * ثبت شد و آماده پرداخت است", "مبلغ قابل پرداخت").
+   *
+   * Known, accepted side effect: this creates one real, persisted, harmless
+   * `pending` Order for the STAGING_TEST_AUTH customer account — `Order` has
+   * no delete endpoint (same accepted limitation as this file's own
+   * CategoryCard QA rows, deactivated rather than deleted), and a `pending`
+   * Order has zero financial/fulfillment side effects of its own (no
+   * Payment/Installment/CustomerCardInstance/Wallet row is ever created for
+   * it — proven exhaustively by the API-layer runner's own delta checks).
+   * Left in place intentionally rather than faked away.
+   */
+  await step('SERVICES-R5.26 clicking the real CTA opens the Purchase confirmation sheet with the correct amount', async () => {
+    await page.getByRole('button', { name: 'خرید کارت', exact: true }).click();
+    await page.getByRole('dialog').waitFor({ timeout: 10000 });
+    const sheetText = await page.getByRole('dialog').innerText();
+    assert(sheetText.includes('تأیید خرید'), 'expected the Purchase Sheet header "تأیید خرید"');
+    assert(sheetText.includes('مبلغ پرداختی'), 'expected the payable-price label "مبلغ پرداختی"');
+    assert(sheetText.includes('ارزش کارت'), 'expected the card-value label "ارزش کارت", kept visually distinct from the payable price');
+  });
+
+  await captureScreenshot(page, 'card-product-purchase-sheet-desktop', DESKTOP);
+
+  await step('SERVICES-R5.26 confirming the purchase creates a real Order and lands on the ready-for-payment page — no gateway, no fake payment-success state', async () => {
+    issues.markNavigationAttempt();
+    await page.getByRole('button', { name: 'تأیید و ادامه پرداخت', exact: true }).click();
+    await page.waitForURL(/\/purchase\/[^/]+$/, { timeout: 15000 });
+    await page.waitForLoadState('networkidle');
+    // The result page fetches GET /orders/:id client-side and renders a
+    // loading skeleton first (see PurchaseResultPage's own `!order` branch)
+    // — `networkidle` alone can race ahead of that fetch resolving, so wait
+    // for the real result heading itself before reading page content.
+    await page.getByText('سفارش شما ثبت شد و آماده پرداخت است').waitFor({ timeout: 10000 });
+    const html = await page.content();
+    assert(html.includes('سفارش شما ثبت شد و آماده پرداخت است'), 'expected the honest "ready for payment" result copy, not a fabricated success/paid state');
+    assert(html.includes('مبلغ قابل پرداخت'), 'expected the payable-amount fact on the result page');
+    assert(!html.includes('پرداخت با موفقیت'), 'must never show a fake payment-success message — no gateway exists yet (R5.27)');
+    const { broken } = await assertNoBrokenImages(page);
+    assert(broken.length === 0, 'broken images on the Purchase result page');
+  });
+
+  await captureScreenshot(page, 'card-product-purchase-result-desktop', DESKTOP);
 }
 
 // ---------------------------------------------------------------------------

@@ -85,3 +85,30 @@ export function formatCardProductPrice(
   if (card.priceAmount == null) return "قیمت اعلام نشده";
   return formatToman(card.priceAmount);
 }
+
+/**
+ * SERVICES-R5.26 — the exact eligibility rule `CardProductPurchaseCTA.tsx`
+ * uses to decide between the real Purchase Flow CTA and the disabled one,
+ * extracted as a pure function so it can be unit-tested directly (the CTA
+ * component itself renders `PurchaseSheet`, which calls `useRouter()` —
+ * untestable under this workspace's `testEnvironment: "node"` Jest config,
+ * same reason `AuthModal.tsx` — the closest prior-art `useRouter()`
+ * consumer — has no unit test either; live browser verification is the
+ * real proof for that half, this function is the real proof for the
+ * decision logic).
+ *
+ * Deliberately mirrors `CardProductPricingService.resolveAuthoritativePrice()`
+ * (`backend/src/modules/orders/pricing/card-product-pricing.service.ts`)
+ * exactly: a positive `priceAmount` and `journeyType === 'PURCHASE'`, never
+ * `priceLabel` (display-only) and never `valueAmount`/`status` (the public
+ * API only ever returns `status: 'ACTIVE'` rows to begin with — see
+ * `CardProductsService.list()`/`findOneOrThrow()` — so this component never
+ * needs to re-check status itself). This is a UX decision only (which CTA
+ * to render); the server independently re-validates everything regardless
+ * and is the only real security boundary.
+ */
+export function isCardProductPurchasable(
+  card: Pick<CardProductDto, "journeyType" | "priceAmount">,
+): boolean {
+  return card.journeyType === "PURCHASE" && card.priceAmount != null && card.priceAmount > 0;
+}

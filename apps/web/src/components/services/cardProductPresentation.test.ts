@@ -1,4 +1,4 @@
-import { formatCardProductPrice, formatCardProductValue } from "./cardProductPresentation";
+import { formatCardProductPrice, formatCardProductValue, isCardProductPurchasable } from "./cardProductPresentation";
 
 /**
  * SERVICES-R5.19 — renamed from `formatCardProductPrice` and re-sourced
@@ -95,5 +95,45 @@ describe("formatCardProductPrice", () => {
         valueAmount: 999999999,
       }),
     ).toBe("قیمت اعلام نشده");
+  });
+});
+
+/**
+ * SERVICES-R5.26 — the exact eligibility gate `CardProductPurchaseCTA.tsx`
+ * uses to decide between the real Purchase Flow CTA and the disabled one.
+ * Mirrors `CardProductPricingService.resolveAuthoritativePrice()` exactly
+ * (positive `priceAmount` only) — see this function's own doc comment for
+ * why `priceLabel`/`valueAmount`/`status` must never factor in.
+ */
+describe("isCardProductPurchasable", () => {
+  it("true for a PURCHASE journey with a positive priceAmount", () => {
+    expect(isCardProductPurchasable({ journeyType: "PURCHASE", priceAmount: 1000000 })).toBe(true);
+  });
+
+  it("false when priceAmount is null, even for a PURCHASE journey", () => {
+    expect(isCardProductPurchasable({ journeyType: "PURCHASE", priceAmount: null })).toBe(false);
+  });
+
+  it("false when priceAmount is zero or negative", () => {
+    expect(isCardProductPurchasable({ journeyType: "PURCHASE", priceAmount: 0 })).toBe(false);
+    expect(isCardProductPurchasable({ journeyType: "PURCHASE", priceAmount: -1 })).toBe(false);
+  });
+
+  it("false for every non-PURCHASE journey, even with a real positive priceAmount", () => {
+    const journeys = ["CREDIT_REQUEST", "LEAD", "EXTERNAL_REDIRECT", "QUOTE_REQUEST", "FREE_SERVICE"] as const;
+    for (const journeyType of journeys) {
+      expect(isCardProductPurchasable({ journeyType, priceAmount: 1000000 })).toBe(false);
+    }
+  });
+
+  it("NEVER reads priceLabel — a priceLabel override alone does not make a card purchasable", () => {
+    expect(
+      isCardProductPurchasable({
+        journeyType: "PURCHASE",
+        priceAmount: null,
+        // @ts-expect-error -- priceLabel is not part of this function's parameter type; asserted here to prove it can't leak in even if present on the object.
+        priceLabel: "قیمت ویژه",
+      }),
+    ).toBe(false);
   });
 });

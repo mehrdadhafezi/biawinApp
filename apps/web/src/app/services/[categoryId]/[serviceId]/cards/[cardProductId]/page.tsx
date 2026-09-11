@@ -7,22 +7,25 @@ import { AppShell } from "../../../../../../components/shell/AppShell";
 import { SkeletonBlock, SkeletonStyles } from "../../../../../../components/common/SkeletonBlock";
 import { CardProductHero } from "../../../../../../components/services/CardProductHero";
 import { CardProductInfo } from "../../../../../../components/services/CardProductInfo";
-import { DisabledCardPurchaseCTA } from "../../../../../../components/services/DisabledCardPurchaseCTA";
+import { CardProductPurchaseCTA } from "../../../../../../components/services/CardProductPurchaseCTA";
 import { ServicesErrorState } from "../../../../../../components/services/ServicesStates";
 import { belongsToCategory, cardProductBelongsToService } from "../../../../../../components/services/serviceValidation";
 import { servicesApi, cardProductsApi, type ServiceDto, type CardProductDto } from "../../../../../../lib/services-api";
 import { ApiError } from "../../../../../../lib/api-client";
 
 /**
- * Card Product Detail (SERVICES-R5.18) —
+ * Card Product Detail (SERVICES-R5.18, purchase flow added R5.26) —
  * `/services/[categoryId]/[serviceId]/cards/[cardProductId]`.
  *
- * Read-only: `GET /services/:id` then `GET /cards/:id` only. The single
- * purchase-adjacent control on this page is `DisabledCardPurchaseCTA`
- * ("خرید کارت") — visual only, does nothing when tapped, exactly like
- * `DisabledPurchaseCTA` elsewhere in this module. No Order/payment/
- * wallet/credit/installment/CustomerCardInstance-issuance logic exists
- * here or anywhere in this stage.
+ * Read-only data fetch (`GET /services/:id` then `GET /cards/:id`); the
+ * purchase-adjacent control is `CardProductPurchaseCTA`, which renders a
+ * REAL, enabled "خرید کارت" button (opening `PurchaseSheet`, which calls
+ * the real `POST /orders`) for any CardProduct that is genuinely
+ * purchasable, and `DisabledCardPurchaseCTA` — unchanged since R5.18 — for
+ * everything else. No payment/wallet/credit/installment/
+ * CustomerCardInstance-issuance logic exists here or anywhere in this
+ * stage; a successful purchase only ever creates a `pending` Order (see
+ * `PurchaseSheet.tsx`'s own doc comment).
  *
  * Relationship validation mirrors the Merchant Detail route
  * (`[merchantId]/page.tsx`) exactly, one hop further into the new
@@ -104,7 +107,7 @@ export default function CardProductDetailPage() {
           <>
             <CardProductHero cardProduct={cardProduct} />
             <CardProductInfo cardProduct={cardProduct} />
-            <DisabledCardPurchaseCTA />
+            <CardProductPurchaseCTA cardProduct={cardProduct} />
           </>
         )}
       </div>
