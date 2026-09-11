@@ -484,10 +484,42 @@ async function runAdminChecks(browser: Browser): Promise<void> {
   await captureScreenshot(page, 'admin-home-hero-cards-mobile', MOBILE);
   await page.setViewportSize(DESKTOP);
 
+  await adminCatalogChecks(page);
+
   await mediaPickerRegressionCheck(page);
 
   await reportPageIssues('Admin (login + dashboard + home + media picker)', issues);
   await context.close();
+}
+
+/**
+ * SERVICES-R5.26.1 — before this stage, no Admin catalog page
+ * (Category/CategoryCard/Service/CardProduct — all four `/catalog/*`
+ * routes, confirmed present in `apps/admin`'s own build output) had ANY
+ * browser-level screenshot or render coverage; only the API-layer QA
+ * exercised them. Deliberately just render/list/no-broken-image/no-console-
+ * error proof, same shallow depth as the Home hero-cards check above — the
+ * deep CRUD/ownership assertions already live in `authenticated-qa-runner.ts`
+ * (`categoryCardOwnershipAndCrudCheck`), which asserts on real JSON, not
+ * rendered text.
+ */
+async function adminCatalogChecks(page: Page): Promise<void> {
+  const catalogPages: Array<{ path: string; label: string; screenshot: string }> = [
+    { path: '/catalog/categories', label: 'Admin catalog — Categories list', screenshot: 'admin-catalog-categories' },
+    { path: '/catalog/category-cards', label: 'Admin catalog — CategoryCards list', screenshot: 'admin-catalog-category-cards' },
+    { path: '/catalog/services', label: 'Admin catalog — Services list', screenshot: 'admin-catalog-services' },
+    { path: '/catalog/card-products', label: 'Admin catalog — CardProducts list', screenshot: 'admin-catalog-card-products' },
+  ];
+
+  for (const cp of catalogPages) {
+    await step(`${cp.label} renders (no broken images)`, async () => {
+      await page.goto(`${ADMIN_ORIGIN}${cp.path}`, { waitUntil: 'networkidle' });
+      await page.waitForSelector('table', { timeout: 10000 });
+      const { broken } = await assertNoBrokenImages(page);
+      assert(broken.length === 0, `broken images on ${cp.path}`);
+    });
+    await captureScreenshot(page, cp.screenshot, DESKTOP);
+  }
 }
 
 /** Stage 5.20 regression bar: uploading inside the Media Picker must not submit the outer Home content form. */

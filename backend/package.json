@@ -24,6 +24,7 @@
     "prisma:migrate": "prisma migrate dev",
     "prisma:seed": "prisma db seed",
     "seed:home-media": "ts-node --compiler-options {\"module\":\"commonjs\"} prisma/seed-home-media.ts",
+    "seed:default-catalog": "ts-node --compiler-options {\"module\":\"commonjs\"} prisma/seed-default-catalog.ts",
     "prisma:studio": "prisma studio"
   },
   "dependencies": {

@@ -817,6 +817,9 @@ async function main(): Promise<void> {
     // proves the ownership REJECTION path, only the happy path a real
     // click can reach.
     await categoryCardOwnershipAndCrudCheck(superAdmin);
+
+    // --- Section 15: SERVICES-R5.26.1 default catalog end-to-end QA --------
+    await servicesR5261DefaultCatalogCheck();
   } catch (fatal) {
     finish(fatal instanceof Error ? fatal : new Error(String(fatal)));
     return;
@@ -1789,6 +1792,10 @@ interface QaCardProductSummary {
   status: string;
   journeyType: string;
   priceAmount: number | null;
+  /** SERVICES-R5.26.1 — the card's own displayed worth/ceiling, never conflated with priceAmount. */
+  valueAmount: number | null;
+  /** SERVICES-R5.26.1 — resolved public image URL, or null if no MediaAsset is attached. */
+  image: string | null;
 }
 
 /**
@@ -2010,6 +2017,106 @@ async function categoryCardOwnershipAndCrudCheck(
     assert(pub.ok, `public category-cards list failed: ${detail(pub)}`);
     assert(!pub.body.items.some((c) => c.id === cardId), 'expected the deactivated CategoryCard to be absent from the public list');
   });
+}
+
+/**
+ * SERVICES-R5.26.1 — the default-catalog population's own end-to-end proof:
+ * a real Category with a real slug, real CategoryCards whose images
+ * actually resolve and whose target Services genuinely belong to that same
+ * Category, and a real ACTIVE/PURCHASE CardProduct with both a positive
+ * `priceAmount` AND a positive `valueAmount` whose own image resolves too.
+ * Entirely dynamic — no hardcoded category/service/card-product id or
+ * count, discovers whatever real data currently exists and reports
+ * NOT_TESTED (never a fabricated PASS) if none does.
+ */
+async function servicesR5261DefaultCatalogCheck(): Promise<void> {
+  const category = await step(
+    'SERVICES-R5.26.1 discover a real Category with a real slug',
+    async () => {
+      const res = await apiCall<{ items: QaCategorySummary[] }>(API_ORIGIN, '/api/v1/categories?limit=100');
+      if (!res.ok) return undefined;
+      return res.body.items.find((c) => !!c.slug);
+    },
+  );
+  if (!category) {
+    skip(
+      'SERVICES-R5.26.1 Category/CategoryCard chain checks',
+      'NOT_TESTED — no real Category with a slug exists today; a real content gap, not fabricated past.',
+    );
+  } else {
+    const cards = await step(
+      `SERVICES-R5.26.1 discover real CategoryCards for "${category.name}"`,
+      async () => {
+        const res = await apiCall<{ items: Array<{ id: string; categoryId: string; targetServiceId: string; title: string; image: string | null }> }>(
+          API_ORIGIN,
+          `/api/v1/category-cards?categoryId=${category.id}&limit=100`,
+        );
+        return res.ok ? res.body.items : [];
+      },
+    );
+    if (!cards || cards.length === 0) {
+      skip(
+        `SERVICES-R5.26.1 CategoryCard image/ownership checks for "${category.name}"`,
+        'NOT_TESTED — the discovered Category has a slug but zero real CategoryCards today.',
+      );
+    } else {
+      for (const card of cards) {
+        await step(
+          `SERVICES-R5.26.1 CategoryCard "${card.title}" image resolves and target Service belongs to "${category.name}"`,
+          async () => {
+            assert(!!card.image, `expected CategoryCard "${card.title}" to have a resolved image URL`);
+            const imgRes = await fetch(card.image!);
+            assert(imgRes.ok, `expected CategoryCard "${card.title}"'s image to load, got ${detail(imgRes)}`);
+            const svc = await apiCall<{ id: string; categoryId: string }>(API_ORIGIN, `/api/v1/services/${card.targetServiceId}`);
+            assert(svc.ok, `expected the target Service to resolve, got ${detail(svc)}`);
+            assert(
+              svc.body.categoryId === category.id,
+              `expected CategoryCard "${card.title}"'s targetService to belong to "${category.name}" (${category.id}), got categoryId=${svc.body.categoryId}`,
+            );
+          },
+        );
+      }
+    }
+  }
+
+  const cardProduct = await step(
+    'SERVICES-R5.26.1 discover a real ACTIVE/PURCHASE CardProduct with both price and value set',
+    async () => {
+      const limit = 100;
+      for (let page = 1; page <= 5; page += 1) {
+        const res = await apiCall<{ items: QaCardProductSummary[] }>(API_ORIGIN, `/api/v1/cards?page=${page}&limit=${limit}`);
+        if (!res.ok) return undefined;
+        const candidate = res.body.items.find(
+          (c) =>
+            c.journeyType === 'PURCHASE' &&
+            typeof c.priceAmount === 'number' &&
+            c.priceAmount > 0 &&
+            typeof c.valueAmount === 'number' &&
+            c.valueAmount > 0,
+        );
+        if (candidate) return candidate;
+        if (res.body.items.length < limit) return undefined;
+      }
+      return undefined;
+    },
+  );
+  if (!cardProduct) {
+    skip(
+      'SERVICES-R5.26.1 CardProduct price/value/image checks',
+      'NOT_TESTED — no real ACTIVE/PURCHASE CardProduct with both priceAmount and valueAmount set exists today.',
+    );
+  } else {
+    await step(
+      `SERVICES-R5.26.1 CardProduct priceAmount/valueAmount are independently positive and its image resolves (id=${cardProduct.id})`,
+      async () => {
+        assert(cardProduct.priceAmount! > 0, 'expected a positive priceAmount (what the customer pays)');
+        assert(cardProduct.valueAmount! > 0, 'expected a positive valueAmount (the card\'s own displayed worth), independent of priceAmount');
+        assert(!!cardProduct.image, 'expected the CardProduct to have a resolved image URL');
+        const imgRes = await fetch(cardProduct.image!);
+        assert(imgRes.ok, `expected the CardProduct's image to load, got ${detail(imgRes)}`);
+      },
+    );
+  }
 }
 
 /**
