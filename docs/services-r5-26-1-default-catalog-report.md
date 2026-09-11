@@ -146,7 +146,13 @@ All run locally, all clean:
 
 ## 15. Commit
 
-Commit: `<filled in after commit>`
-Branch: `main`.
+Commit: `2535e56141abfb3f123e62283fedb131f60848f5` — "feat(services): SERVICES-R5.26.1 seed default catalog content", 20 files changed, 758 insertions(+).
+Branch: `main`, pushed (`0971dde..2535e56`).
+
+Final clean confirmation runs (after the admin-login rate-limit window — self-inflicted by repeated testing in this same session — cleared):
+- Authenticated API QA: **100 PASS, 0 FAIL, 2 NOT_TESTED**.
+- Browser QA (Admin + Customer): **99 PASS, 0 FAIL, 1 NOT_TESTED**.
+
+Staging deploy/QA: attempted exactly as instructed (`cd /srv/biawin-staging && ./deploy/staging/deploy.sh`, then `./deploy/staging/run-authenticated-qa.sh`) — **NOT EXECUTED**, `/srv/biawin-staging` does not exist in this environment (confirmed via `ls /srv` → "No such file or directory"). Consistent with every prior stage (R5.22–R5.26).
 
 🤖 Generated with [Claude Code](https://claude.com/claude-code)
