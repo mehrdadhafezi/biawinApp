@@ -58,6 +58,19 @@ COPY --from=build /workspace/backend/prisma.config.ts ./backend/prisma.config.ts
 # deploy.sh, same rationale as keeping devDependencies in this image for
 # `prisma db seed`.
 COPY apps/web/public/home ./apps/web/public/home
+# SERVICES-R5.26.2 root-cause fix — same rationale as the `apps/web/public/
+# home` copy immediately above, for `seed-default-catalog.ts`'s own
+# equivalent dependency: it reads the default Services catalog's reference
+# images from `docs/prototypes/services/categories/**` (`REFERENCE_DIR =
+# join(process.cwd(), '..', 'docs', 'prototypes', 'services', 'categories')`
+# — `process.cwd()` is `/workspace/backend` here, via this same file's
+# `cd backend &&` prefix in deploy.sh's `DEFAULT_CATALOG_CMD`). Missing this
+# line was the actual bug: on a genuinely fresh database (no pre-existing
+# MediaAsset rows for `findOrUploadMedia()` to reuse), the very first real
+# upload attempt threw `ENOENT` inside the container — invisible when this
+# script was only ever run locally via `ts-node` against a real filesystem
+# checkout, never against the actual runtime image. Small (14 jpegs, ~1.2MB).
+COPY docs/prototypes/services/categories ./docs/prototypes/services/categories
 
 EXPOSE 4000
 HEALTHCHECK --interval=10s --timeout=5s --start-period=15s --retries=6 \

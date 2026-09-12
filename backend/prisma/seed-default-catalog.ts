@@ -267,7 +267,23 @@ async function main() {
       where: { categoryId: category.id, title: cardSeed.title },
     });
     if (existing) {
-      console.log(`  [skip, already exists] ${cardSeed.categoryName} / ${cardSeed.title}`);
+      if (!existing.mediaAssetId) {
+        // SERVICES-R5.26.2 — same backfill-if-missing discipline as the
+        // CardProduct section below: an existing row is otherwise left
+        // untouched (never overwrites Admin-managed content), but a real
+        // gap in the one field this script itself owns (its own default
+        // image) is still worth healing — this exact field is what the
+        // authenticated QA's "every active CategoryCard's image resolves"
+        // check asserts on every row.
+        const mediaAssetId = await findOrUploadMedia(mediaService, prisma, cardSeed.imageFile, admin.id);
+        await prisma.categoryCard.update({
+          where: { id: existing.id },
+          data: { mediaAssetId, updatedBy: admin.id },
+        });
+        console.log(`  [backfilled image] ${cardSeed.categoryName} / ${cardSeed.title}`);
+      } else {
+        console.log(`  [skip, already exists] ${cardSeed.categoryName} / ${cardSeed.title}`);
+      }
       continue;
     }
     const mediaAssetId = await findOrUploadMedia(mediaService, prisma, cardSeed.imageFile, admin.id);
