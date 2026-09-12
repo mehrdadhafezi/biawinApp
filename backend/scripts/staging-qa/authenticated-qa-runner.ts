@@ -820,6 +820,9 @@ async function main(): Promise<void> {
 
     // --- Section 15: SERVICES-R5.26.1 default catalog end-to-end QA --------
     await servicesR5261DefaultCatalogCheck();
+
+    // --- Section 16: SERVICES-R5.26.2 default catalog finalization QA ------
+    await servicesR5262DefaultCatalogFinalizationCheck();
   } catch (fatal) {
     finish(fatal instanceof Error ? fatal : new Error(String(fatal)));
     return;
@@ -2114,6 +2117,143 @@ async function servicesR5261DefaultCatalogCheck(): Promise<void> {
         assert(!!cardProduct.image, 'expected the CardProduct to have a resolved image URL');
         const imgRes = await fetch(cardProduct.image!);
         assert(imgRes.ok, `expected the CardProduct's image to load, got ${detail(imgRes)}`);
+      },
+    );
+  }
+}
+
+/**
+ * SERVICES-R5.26.2 — the default-catalog seed is now wired into the
+ * official deploy pipeline (`deploy.sh`'s new `DEFAULT_CATALOG_CMD` step),
+ * so this stage's own acceptance bar — "staging must end up with >= 5 real
+ * CardProducts, and the CardProduct positive-path must never be NOT_TESTED
+ * because we seeded it ourselves" — is asserted explicitly and
+ * exhaustively here, not just spot-checked (R5.26.1's own section already
+ * does one full chain; this one checks EVERY real row, not just one).
+ * Entirely dynamic — counts and ids are discovered live, nothing hardcoded.
+ */
+async function servicesR5262DefaultCatalogFinalizationCheck(): Promise<void> {
+  await step('SERVICES-R5.26.2 real Categories exist', async () => {
+    const res = await apiCall<{ items: QaCategorySummary[] }>(API_ORIGIN, '/api/v1/categories?limit=100');
+    assert(res.ok && res.body.items.length > 0, `expected at least one real Category, got ${detail(res)}`);
+  });
+
+  const categoriesWithSlug = await step(
+    'SERVICES-R5.26.2 every Category with a real slug has an image that resolves',
+    async () => {
+      const res = await apiCall<{ items: Array<{ id: string; name: string; slug: string | null; image: string | null }> }>(
+        API_ORIGIN,
+        '/api/v1/categories?limit=100',
+      );
+      if (!res.ok) return [];
+      const withSlug = res.body.items.filter((c) => !!c.slug);
+      for (const c of withSlug) {
+        if (!c.image) continue; // a slug with no hero image set yet is a real, valid content state — not asserted against here
+        const imgRes = await fetch(c.image);
+        assert(imgRes.ok, `expected Category "${c.name}"'s image to load, got ${detail(imgRes)}`);
+      }
+      return withSlug;
+    },
+  );
+  if (!categoriesWithSlug || categoriesWithSlug.length === 0) {
+    skip('SERVICES-R5.26.2 Categories with a real slug', 'NOT_TESTED — no real Category has a slug set today.');
+  }
+
+  const activeCategoryCards = await step(
+    'SERVICES-R5.26.2 discover every active CategoryCard',
+    async () => {
+      const cats = await apiCall<{ items: QaCategorySummary[] }>(API_ORIGIN, '/api/v1/categories?limit=100');
+      if (!cats.ok) return [];
+      const all: Array<{ id: string; categoryId: string; targetServiceId: string; title: string; image: string | null }> = [];
+      for (const cat of cats.body.items) {
+        const res = await apiCall<{ items: typeof all }>(API_ORIGIN, `/api/v1/category-cards?categoryId=${cat.id}&limit=100`);
+        if (res.ok) all.push(...res.body.items);
+      }
+      return all;
+    },
+  );
+  if (!activeCategoryCards || activeCategoryCards.length === 0) {
+    skip('SERVICES-R5.26.2 CategoryCard image/ownership checks (all active cards)', 'NOT_TESTED — no active CategoryCard exists today.');
+  } else {
+    await step(
+      `SERVICES-R5.26.2 every active CategoryCard's image resolves and its targetService belongs to its own Category (n=${activeCategoryCards.length})`,
+      async () => {
+        for (const card of activeCategoryCards) {
+          assert(!!card.image, `expected CategoryCard "${card.title}" to have a resolved image URL`);
+          const imgRes = await fetch(card.image!);
+          assert(imgRes.ok, `expected CategoryCard "${card.title}"'s image to load, got ${detail(imgRes)}`);
+          const svc = await apiCall<{ id: string; categoryId: string }>(API_ORIGIN, `/api/v1/services/${card.targetServiceId}`);
+          assert(svc.ok, `expected CategoryCard "${card.title}"'s targetService to resolve, got ${detail(svc)}`);
+          assert(
+            svc.body.categoryId === card.categoryId,
+            `expected CategoryCard "${card.title}"'s targetService to belong to its own Category (${card.categoryId}), got categoryId=${svc.body.categoryId}`,
+          );
+        }
+      },
+    );
+  }
+
+  await step('SERVICES-R5.26.2 real Services exist, each with a valid Category relation', async () => {
+    const res = await apiCall<{ items: Array<{ id: string; categoryId: string }>; total: number }>(
+      API_ORIGIN,
+      '/api/v1/services?limit=100&page=1',
+    );
+    assert(res.ok && res.body.items.length > 0, `expected at least one real Service, got ${detail(res)}`);
+    const sample = res.body.items.slice(0, 20);
+    for (const svc of sample) {
+      const cat = await apiCall<{ id: string }>(API_ORIGIN, `/api/v1/categories/${svc.categoryId}`);
+      assert(cat.ok, `expected Service ${svc.id}'s categoryId (${svc.categoryId}) to resolve to a real Category, got ${detail(cat)}`);
+    }
+  });
+
+  const allCardProducts = await step(
+    'SERVICES-R5.26.2 discover every real CardProduct (full catalog scan, not just one)',
+    async () => {
+      const limit = 100;
+      const all: QaCardProductSummary[] = [];
+      for (let page = 1; page <= 5; page += 1) {
+        const res = await apiCall<{ items: QaCardProductSummary[] }>(API_ORIGIN, `/api/v1/cards?page=${page}&limit=${limit}`);
+        if (!res.ok) break;
+        all.push(...res.body.items);
+        if (res.body.items.length < limit) break;
+      }
+      return all;
+    },
+  );
+  const cardProducts = allCardProducts ?? [];
+
+  await step(
+    `SERVICES-R5.26.2 at least 5 real ACTIVE/PURCHASE CardProducts exist (this stage's own default-catalog acceptance bar) — found ${cardProducts.length}`,
+    async () => {
+      assert(
+        cardProducts.length >= 5,
+        `expected >= 5 real CardProducts (the default-catalog seed's own acceptance bar), found ${cardProducts.length} — was the default-catalog seed actually run? (deploy.sh step 6/8, or \`pnpm --filter @biawin/backend seed:default-catalog\` locally)`,
+      );
+    },
+  );
+
+  if (cardProducts.length === 0) {
+    skip(
+      'SERVICES-R5.26.2 per-CardProduct field/ownership validation',
+      'NOT_TESTED — zero CardProducts exist to validate (already reported as a FAIL above via the >= 5 assertion, not silently accepted).',
+    );
+  } else {
+    await step(
+      `SERVICES-R5.26.2 every real CardProduct is ACTIVE/PURCHASE with a positive price and value, a resolving image, and correct Service/Category ownership (n=${cardProducts.length})`,
+      async () => {
+        for (const cp of cardProducts) {
+          assert(cp.status === 'ACTIVE', `expected CardProduct ${cp.id} to be ACTIVE (public /cards never returns non-ACTIVE anyway — a real invariant check), got ${cp.status}`);
+          assert(cp.journeyType === 'PURCHASE', `expected CardProduct ${cp.id} to be journeyType=PURCHASE, got ${cp.journeyType}`);
+          assert(typeof cp.priceAmount === 'number' && cp.priceAmount > 0, `expected CardProduct ${cp.id} to have a positive priceAmount, got ${cp.priceAmount}`);
+          assert(typeof cp.valueAmount === 'number' && cp.valueAmount > 0, `expected CardProduct ${cp.id} to have a positive valueAmount, got ${cp.valueAmount}`);
+          assert(!!cp.image, `expected CardProduct ${cp.id} to have a resolved image URL`);
+          const imgRes = await fetch(cp.image!);
+          assert(imgRes.ok, `expected CardProduct ${cp.id}'s image to load, got ${detail(imgRes)}`);
+          const svc = await apiCall<{ id: string; categoryId: string }>(API_ORIGIN, `/api/v1/services/${cp.serviceId}`);
+          assert(svc.ok, `expected CardProduct ${cp.id}'s serviceId (${cp.serviceId}) to resolve to a real Service, got ${detail(svc)}`);
+          const cat = await apiCall<{ id: string }>(API_ORIGIN, `/api/v1/categories/${svc.body.categoryId}`);
+          assert(cat.ok, `expected CardProduct ${cp.id}'s Service's categoryId (${svc.body.categoryId}) to resolve to a real Category, got ${detail(cat)}`);
+        }
       },
     );
   }

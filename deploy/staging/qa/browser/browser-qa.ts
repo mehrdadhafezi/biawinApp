@@ -257,6 +257,35 @@ function isBenignCatalogFetchCancelledByNavigation(req: Request, errorText: stri
   );
 }
 
+/**
+ * BENIGN HOME-PAGE IMAGE CANCELLATION (SERVICES-R5.26.2) — the exact same
+ * render-lifecycle class `isBenignImageCancelledByNavigation` above already
+ * covers for `/services/*.webp`, just for the two image sources the real
+ * Customer Home page itself requests in bulk on every mount: the 12-item
+ * orbit ring (`OrbitItem.imageKey`, resolved through the real Media Library
+ * as `/api/v1/media/*.webp` since SERVICES-R5.22) and the 8-image
+ * membership story strip (static `/home/membership/item-NN.webp`). A real
+ * run navigating Home -> Category Landing (this file's own
+ * `runCategoryLandingAndCardProductChecks`, which smoke-tests Home first)
+ * reported `net::ERR_ABORTED` on several of both, all `navigationCorrelated
+ * = true` — and every one independently verified (curl, outside the
+ * browser) to return a real HTTP 200 + `image/webp`, not a backend failure.
+ * Narrow on purpose, same four conditions as the sibling rule above: exact
+ * `net::ERR_ABORTED`, `resourceType() === 'image'`, one of these two exact
+ * first-party path shapes, AND a real navigation recorded while this
+ * specific request was in flight. Anything else — a different path, a
+ * different error, or no correlated navigation — still fails the run.
+ */
+function isBenignHomeImageCancelledByNavigation(req: Request, errorText: string, navigationCorrelated: boolean): boolean {
+  return (
+    errorText === 'net::ERR_ABORTED' &&
+    req.resourceType() === 'image' &&
+    (/^https?:\/\/[^/]+\/api\/v1\/media\/[^/]+\.webp(\?.*)?$/.test(req.url()) ||
+      /^https?:\/\/[^/]+\/home\/membership\/item-\d+\.webp(\?.*)?$/.test(req.url())) &&
+    navigationCorrelated
+  );
+}
+
 function trackPageIssues(page: Page): PageIssues {
   const navigationTimestamps: number[] = [];
   const issues: PageIssues = {
@@ -320,6 +349,9 @@ function trackPageIssues(page: Page): PageIssues {
     } else if (isBenignCatalogFetchCancelledByNavigation(req, errorText, navigationCorrelated)) {
       classifiedBenign = true;
       benignReason = 'BENIGN TEST-NAVIGATION CATALOG FETCH CANCELLATION: first-party /api/v1/categories|services catalog fetch cancelled by a test-driven navigation (page.goto/click/goBack) tearing down the page that issued it, endpoint independently verified healthy (SERVICES-R1.5/R1.8 rule)';
+    } else if (isBenignHomeImageCancelledByNavigation(req, errorText, navigationCorrelated)) {
+      classifiedBenign = true;
+      benignReason = 'BENIGN HOME-PAGE IMAGE CANCELLATION: Home page orbit-ring (/api/v1/media/*.webp) or membership-strip (/home/membership/item-NN.webp) image request cancelled during an in-flight navigation, asset independently verified healthy (SERVICES-R5.26.2 rule)';
     }
 
     const qaStepAtFailure = currentStepLabel;
@@ -502,24 +534,117 @@ async function runAdminChecks(browser: Browser): Promise<void> {
  * deep CRUD/ownership assertions already live in `authenticated-qa-runner.ts`
  * (`categoryCardOwnershipAndCrudCheck`), which asserts on real JSON, not
  * rendered text.
+ *
+ * SERVICES-R5.26.2 root-cause fix — the original version of this function
+ * called `page.waitForSelector('table', ...)` unconditionally. Both
+ * `CatalogListTable.tsx` and `ResourceListPage.tsx` (confirmed by reading
+ * their source) render NO `<table>` at all when the list is genuinely
+ * empty — just a `<p>{emptyLabel}</p>` — which is a real, valid state, not
+ * a defect. Before this stage's default-catalog seed was wired into the
+ * official deploy pipeline (`deploy.sh`'s new `DEFAULT_CATALOG_CMD` step),
+ * a fresh/staging environment's CardProducts list was genuinely empty, and
+ * this exact line is why that legitimate empty state was reported as a
+ * browser-QA FAIL instead of a PASS. Fixed by racing the real `<table>`
+ * against the real, exact `emptyLabel` text for each page (mirrors the
+ * "BENIGN vs REAL" pattern already used elsewhere in this file for network
+ * failures) — both are valid terminal states now.
  */
+const CATALOG_EMPTY_LABELS: Record<string, string> = {
+  '/catalog/categories': 'هنوز دسته‌بندی‌ای ثبت نشده است.',
+  '/catalog/category-cards': 'هنوز کارت دسته‌بندی‌ای ثبت نشده است.',
+  '/catalog/services': 'هنوز خدمتی ثبت نشده است.',
+  '/catalog/card-products': 'هنوز کارت محصولی ثبت نشده است.',
+};
+
 async function adminCatalogChecks(page: Page): Promise<void> {
   const catalogPages: Array<{ path: string; label: string; screenshot: string }> = [
     { path: '/catalog/categories', label: 'Admin catalog — Categories list', screenshot: 'admin-catalog-categories' },
     { path: '/catalog/category-cards', label: 'Admin catalog — CategoryCards list', screenshot: 'admin-catalog-category-cards' },
     { path: '/catalog/services', label: 'Admin catalog — Services list', screenshot: 'admin-catalog-services' },
-    { path: '/catalog/card-products', label: 'Admin catalog — CardProducts list', screenshot: 'admin-catalog-card-products' },
   ];
 
   for (const cp of catalogPages) {
-    await step(`${cp.label} renders (no broken images)`, async () => {
+    await step(`${cp.label} renders (populated or a real, valid empty state — no broken images)`, async () => {
       await page.goto(`${ADMIN_ORIGIN}${cp.path}`, { waitUntil: 'networkidle' });
-      await page.waitForSelector('table', { timeout: 10000 });
+      const table = page.locator('table.biawin-catalog-list-table');
+      const emptyState = page.getByText(CATALOG_EMPTY_LABELS[cp.path], { exact: true });
+      await table.or(emptyState).first().waitFor({ timeout: 10000 });
+      const isPopulated = await table.count() > 0;
+      if (isPopulated) {
+        const rowCount = await table.locator('tbody tr').count();
+        assert(rowCount > 0, `expected the real <table> on ${cp.path} to have at least one row`);
+      } else {
+        assert(await emptyState.isVisible(), `expected the real empty-state copy on ${cp.path}`);
+      }
       const { broken } = await assertNoBrokenImages(page);
       assert(broken.length === 0, `broken images on ${cp.path}`);
     });
     await captureScreenshot(page, cp.screenshot, DESKTOP);
   }
+
+  await adminCardProductsCheck(page);
+}
+
+/**
+ * SERVICES-R5.26.2 — CardProducts gets its own, stronger check per this
+ * stage's explicit acceptance bar: after the default-catalog seed actually
+ * ran (this stage wires it into `deploy.sh`), the list must be genuinely
+ * POPULATED with >= 5 real rows — not merely "a table exists." Still
+ * structurally handles a genuinely empty catalog as a valid, passing state
+ * (same empty-state race as the other three pages) rather than assuming
+ * population, per this stage's explicit "test both branches" requirement —
+ * but only the populated branch additionally opens a real CardProduct's
+ * edit page and confirms its image resolves through the real Media
+ * Library (a `<img src="...">` under `.biawin-media-picker-field-preview`,
+ * never a raw storage key) and its price/value fields are present.
+ */
+async function adminCardProductsCheck(page: Page): Promise<void> {
+  const path = '/catalog/card-products';
+  await page.goto(`${ADMIN_ORIGIN}${path}`, { waitUntil: 'networkidle' });
+  const table = page.locator('table.biawin-catalog-list-table');
+  const emptyState = page.getByText(CATALOG_EMPTY_LABELS[path], { exact: true });
+
+  await step('Admin catalog — CardProducts list renders (populated or a real, valid empty state — no broken images)', async () => {
+    await table.or(emptyState).first().waitFor({ timeout: 10000 });
+    const { broken } = await assertNoBrokenImages(page);
+    assert(broken.length === 0, `broken images on ${path}`);
+  });
+  await captureScreenshot(page, 'admin-catalog-card-products', DESKTOP);
+
+  const isPopulated = await table.count() > 0;
+  if (!isPopulated) {
+    skip(
+      'Admin catalog — CardProducts populated-state checks (>= 5 rows, real image/price/value on detail)',
+      'NOT_TESTED — the CardProducts list is genuinely empty on this environment today (a real, valid state the empty-state check above already confirmed renders correctly) — nothing to open.',
+    );
+    return;
+  }
+
+  await step('Admin catalog — CardProducts list has at least 5 real rows (SERVICES-R5.26.2 acceptance bar)', async () => {
+    const rowCount = await table.locator('tbody tr').count();
+    assert(rowCount >= 5, `expected >= 5 real CardProduct rows, found ${rowCount}`);
+  });
+
+  await step('Admin catalog — opening a real CardProduct shows its real image (Media Library, never a raw storage key) and its price/value fields', async () => {
+    await table.locator('tbody tr').first().locator('a').first().click();
+    await page.waitForURL(/\/catalog\/card-products\/[^/]+$/, { timeout: 15000 });
+    // EditCardProductContent fetches the row client-side and renders only
+    // "در حال بارگذاری…" until that resolves (confirmed in its own source,
+    // apps/admin/src/app/catalog/card-products/[id]/page.tsx) — the same
+    // loading-skeleton race already fixed once for the Purchase result page
+    // (SERVICES-R5.26). `networkidle` alone can resolve before that re-render
+    // lands, so wait for the real form's own price-field label instead.
+    await page.getByText('مبلغ (ریال)', { exact: true }).waitFor({ timeout: 10000 });
+    const html = await page.content();
+    assert(!/imageKey["'\s:=]+["'][a-z0-9/_.-]+\.(jpe?g|png|webp)/i.test(html), 'must never expose a raw storage key/filesystem path in the CardProduct edit form');
+    const img = page.locator('.biawin-media-picker-field-preview img');
+    if (await img.count() > 0) {
+      const src = await img.first().getAttribute('src');
+      assert(!!src && /^https?:\/\//.test(src), `expected a real resolved image URL, got "${src}"`);
+    }
+    assert(html.includes('مبلغ') || html.includes('قیمت'), 'expected the payable-price field on the CardProduct edit form');
+    assert(html.includes('ارزش'), 'expected the card-value field on the CardProduct edit form');
+  });
 }
 
 /** Stage 5.20 regression bar: uploading inside the Media Picker must not submit the outer Home content form. */

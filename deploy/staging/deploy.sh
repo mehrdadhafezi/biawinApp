@@ -4,9 +4,10 @@
 #   ./deploy/staging/deploy.sh
 #
 # Does: git pull -> re-exec itself from the just-updated file -> build images
-# -> bring up infra -> migrate+seed -> Home CMS media migration -> deploy
-# backend/web/admin -> health check. Exits non-zero and leaves the previous
-# containers running if anything fails before the final cutover.
+# -> bring up infra -> migrate+seed -> Home CMS media migration -> default
+# catalog seed -> deploy backend/web/admin -> health check. Exits non-zero
+# and leaves the previous containers running if anything fails before the
+# final cutover.
 #
 # admin (Stage 5.22) requires admin-staging.biawin.ir's DNS/vhost/SSL to
 # already exist on this server (docs/10-release-process.md "One-time server
@@ -27,8 +28,19 @@ REPO_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
 # variables from the same file makes that drift structurally impossible.
 SEED_CMD='cd backend && pnpm exec prisma migrate deploy && node dist/prisma/seed.js'
 MEDIA_MIGRATION_CMD='cd backend && node dist/prisma/seed-home-media.js'
+# SERVICES-R5.26.2 — same reasoning as MEDIA_MIGRATION_CMD: this is what was
+# missing on staging. R5.26.1 populated Category/CategoryCard/CardProduct
+# defaults by running `prisma/seed-default-catalog.ts` manually, by hand,
+# against a local database — it was never wired into this script, so it
+# never ran on any real deploy (staging's Admin CardProducts page legitimately
+# showed empty). Runs the ALREADY-COMPILED `dist/prisma/seed-default-catalog.js`
+# for the exact same runtime-image reason SEED_CMD/MEDIA_MIGRATION_CMD do
+# (backend/src is not in the image — see their own comments below). Must run
+# AFTER $SEED_CMD (needs the Category/Service rows seed.ts creates, and the
+# SUPER_ADMIN account it seeds to attribute uploads to).
+DEFAULT_CATALOG_CMD='cd backend && node dist/prisma/seed-default-catalog.js'
 
-# Lets verify-runtime-image.sh `source` this file to read the two variables
+# Lets verify-runtime-image.sh `source` this file to read the three variables
 # above WITHOUT executing an actual deploy (no git operations, no docker
 # build/up, no `set -euo pipefail` that would kill the sourcing shell on the
 # first unset variable) — set DEPLOY_SH_SOURCE_ONLY=1 before sourcing.
@@ -89,7 +101,7 @@ for svc in postgres redis minio; do
   done
 done
 
-log "4/7 running prisma migrate deploy + db seed (one-off, against the just-built backend image)"
+log "4/8 running prisma migrate deploy + db seed (one-off, against the just-built backend image)"
 # $SEED_CMD runs `node dist/prisma/seed.js` — the ALREADY-COMPILED output
 # `nest build` emits (prisma/*.ts is in tsc's default compile scope, same as
 # src/) — NOT `prisma db seed` / `pnpm exec ts-node ... prisma/seed.ts`.
@@ -107,17 +119,23 @@ log "4/7 running prisma migrate deploy + db seed (one-off, against the just-buil
 # file — that is the actual command, this comment is just an explanation.
 $COMPOSE run --rm backend sh -c "$SEED_CMD"
 
-log "5/7 running Home CMS static asset migration (Stage 5.21, idempotent — safe to re-run every deploy)"
+log "5/8 running Home CMS static asset migration (Stage 5.21, idempotent — safe to re-run every deploy)"
 # $MEDIA_MIGRATION_CMD — same reasoning as step 4, dist/prisma/seed-home-media.js,
 # not ts-node against source (which needs backend/src/app.module.ts and
 # everything it transitively pulls in — the entire NestJS module graph,
 # absent here by design).
 $COMPOSE run --rm backend sh -c "$MEDIA_MIGRATION_CMD"
 
-log "6/7 deploying backend + web + admin"
+log "6/8 running default Services catalog seed (SERVICES-R5.26.2, idempotent — safe to re-run every deploy)"
+# $DEFAULT_CATALOG_CMD — same runtime-image reasoning as steps 4/5. Must run
+# after $SEED_CMD (step 4), which is what creates the Category/Service rows
+# and the SUPER_ADMIN account this script needs.
+$COMPOSE run --rm backend sh -c "$DEFAULT_CATALOG_CMD"
+
+log "7/8 deploying backend + web + admin"
 $COMPOSE up -d backend web admin
 
-log "7/7 health check"
+log "8/8 health check"
 ok=0
 for i in $(seq 1 30); do
   if curl -fsS http://127.0.0.1:4001/api/health >/dev/null 2>&1; then

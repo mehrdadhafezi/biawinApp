@@ -330,6 +330,35 @@ async function main() {
     console.log(`  [created] ${cp.serviceTitle} / ${cp.title}`);
   }
 
+  console.log('\nBackfilling images for any other ACTIVE/PURCHASE CardProduct still missing one...');
+  // SERVICES-R5.26.2 — generalized, idempotent backfill: catches ANY
+  // real, publicly-purchasable CardProduct left with `mediaAssetId: null`,
+  // not just the ones this script itself created above. Found via this
+  // stage's own data-integrity pass: one pre-existing row from earlier
+  // R5.19/R5.26 QA work (`کارت اعتباری بیمه شخص ثالث`) was real,
+  // ACTIVE/PURCHASE/priced/valued, but had never been given an image —
+  // left alone by R5.26.1 as "not this stage's data" (see its own audit
+  // §8), but this stage's explicit job is to finalize the catalog into a
+  // fully healthy, deployable state, so every real purchasable card gets a
+  // real image now. Never touches title/service/price/value — additive
+  // only, same "backfill what's missing, never overwrite what's set"
+  // discipline as every other write in this script. Matched by a keyword
+  // in the title, not hardcoded to one id — reusable if another such gap
+  // is ever found.
+  const stillMissingImage = await prisma.cardProduct.findMany({
+    where: { status: 'ACTIVE', journeyType: 'PURCHASE', mediaAssetId: null },
+  });
+  for (const cp of stillMissingImage) {
+    const fallbackImage = /بیمه/.test(cp.title) ? 'insurance.jpeg' : null;
+    if (!fallbackImage) {
+      console.log(`  [skip, no thematic reference image known] ${cp.title}`);
+      continue;
+    }
+    const mediaAssetId = await findOrUploadMedia(mediaService, prisma, fallbackImage, admin.id);
+    await prisma.cardProduct.update({ where: { id: cp.id }, data: { mediaAssetId, updatedBy: admin.id } });
+    console.log(`  [backfilled image] ${cp.title} -> ${fallbackImage}`);
+  }
+
   console.log('\nDone.');
   await app.close();
   // Same MinIO-keep-alive-socket rationale as seed-home-media.ts.
