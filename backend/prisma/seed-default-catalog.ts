@@ -188,6 +188,31 @@ const CARD_PRODUCTS: CardProductSeed[] = [
     validityDays: 365,
     imageFile: 'Home appliances.jpeg',
   },
+  {
+    // SERVICES-R5.26.2 catalog-gap fix — this section's own comment above
+    // already said "one per already-populated Category", but بیمه (fully
+    // populated since R5.26.1 — real slug, real Category hero, real
+    // CategoryCard) never actually got its own CardProduct. Root cause of
+    // the "found 4, need >=5" QA gap: this array only ever had 4 entries;
+    // the 5th CardProduct some local dev databases show
+    // (`کارت اعتباری بیمه شخص ثالث`, id=4381a567..., wrongly owned by
+    // Service "لوازم نوزاد"/Category "کودک و نوجوان", `createdAt` two full
+    // days before this script's own rows) was never created by any seed —
+    // leftover manual test data from earlier R5.19/R5.26 QA work, which is
+    // exactly why it only ever existed on that one local database and
+    // never on staging. This row is a genuine, correctly-owned addition
+    // (the real `بیمه شخص ثالث` Service under `بیمه`) — it does not
+    // replace, touch, or reference that old stray row in any way.
+    serviceTitle: 'بیمه شخص ثالث',
+    title: 'کارت بیمه شخص ثالث',
+    cardType: 'CREDIT_CARD',
+    priceAmount: 3_000_000,
+    valueAmount: 10_000_000,
+    valueDisplayType: 'UP_TO',
+    benefits: ['اعتبار خرید بیمه شخص ثالث خودرو', 'قابل استفاده نزد نمایندگی‌های منتخب بیمه'],
+    validityDays: 365,
+    imageFile: 'insurance.jpeg',
+  },
 ];
 
 async function findOrUploadMedia(
