@@ -822,7 +822,7 @@ async function main(): Promise<void> {
     await servicesR5261DefaultCatalogCheck();
 
     // --- Section 16: SERVICES-R5.26.2 default catalog finalization QA ------
-    await servicesR5262DefaultCatalogFinalizationCheck();
+    await servicesR5262DefaultCatalogFinalizationCheck(superAdmin);
   } catch (fatal) {
     finish(fatal instanceof Error ? fatal : new Error(String(fatal)));
     return;
@@ -2132,7 +2132,27 @@ async function servicesR5261DefaultCatalogCheck(): Promise<void> {
  * does one full chain; this one checks EVERY real row, not just one).
  * Entirely dynamic — counts and ids are discovered live, nothing hardcoded.
  */
-async function servicesR5262DefaultCatalogFinalizationCheck(): Promise<void> {
+/**
+ * SERVICES-R5.26.2 (catalog-bootstrap correction pass) — the repository's
+ * actual `docs/prototypes/services/categories/` directory is FLAT (14
+ * individual image files, confirmed by direct enumeration — no nested
+ * per-category subdirectories anywhere under it). The 14 known reference
+ * filenames and their real, visually-verified Category ownership are
+ * documented in full in `docs/services-r5-26-1-default-catalog-audit.md`
+ * §2/§4 — 13 resolve to a real Category/CategoryCard, one (`Motor.jpeg`,
+ * موتور سیکلت) is a deliberate, documented exclusion (no real Category/
+ * Service exists for it — see that audit's §5). This constant is the same
+ * list, kept here so the QA can independently verify the bootstrap
+ * actually used every expected image and fabricated nothing extra.
+ */
+const EXPECTED_PROTOTYPE_IMAGES = [
+  'Carpet.jpeg', 'Clothes.jpeg', 'Cosmetics.jpeg', 'Dental.jpeg', 'Digital.jpeg',
+  'Gold.jpeg', 'Home appliances.jpeg', 'Kalakhab.jpeg', 'Perfume.jpeg', 'Shoes.jpeg',
+  'Sofa.jpeg', 'insurance.jpeg', 'tourism.jpeg',
+] as const;
+const DELIBERATELY_EXCLUDED_PROTOTYPE_IMAGE = 'Motor.jpeg';
+
+async function servicesR5262DefaultCatalogFinalizationCheck(admin: AdminSession | undefined): Promise<void> {
   await step('SERVICES-R5.26.2 real Categories exist', async () => {
     const res = await apiCall<{ items: QaCategorySummary[] }>(API_ORIGIN, '/api/v1/categories?limit=100');
     assert(res.ok && res.body.items.length > 0, `expected at least one real Category, got ${detail(res)}`);
@@ -2191,6 +2211,14 @@ async function servicesR5262DefaultCatalogFinalizationCheck(): Promise<void> {
         }
       },
     );
+    await step('SERVICES-R5.26.2 no duplicate active CategoryCards exist (same Category + title)', async () => {
+      const seen = new Set<string>();
+      for (const card of activeCategoryCards) {
+        const key = `${card.categoryId}::${card.title}`;
+        assert(!seen.has(key), `expected exactly one active CategoryCard for (categoryId=${card.categoryId}, title="${card.title}"), found a duplicate`);
+        seen.add(key);
+      }
+    });
   }
 
   await step('SERVICES-R5.26.2 real Services exist, each with a valid Category relation', async () => {
@@ -2253,6 +2281,86 @@ async function servicesR5262DefaultCatalogFinalizationCheck(): Promise<void> {
           assert(svc.ok, `expected CardProduct ${cp.id}'s serviceId (${cp.serviceId}) to resolve to a real Service, got ${detail(svc)}`);
           const cat = await apiCall<{ id: string }>(API_ORIGIN, `/api/v1/categories/${svc.body.categoryId}`);
           assert(cat.ok, `expected CardProduct ${cp.id}'s Service's categoryId (${svc.body.categoryId}) to resolve to a real Category, got ${detail(cat)}`);
+        }
+      },
+    );
+  }
+
+  // --- Prototype-directory bootstrap coverage — proves the catalog was
+  // actually built FROM the real reference images, not from arbitrary
+  // substitutes, and that the one deliberate exclusion (Motor.jpeg) still
+  // holds (never silently created). Needs Admin access to see raw
+  // `mediaAssetId` values (the public API only ever returns resolved image
+  // URLs) — skipped, not failed, without an admin session.
+  if (!admin) {
+    skip('SERVICES-R5.26.2 prototype-image bootstrap coverage', 'no admin session available');
+  } else {
+    const mediaByFileName = await step(
+      'SERVICES-R5.26.2 discover every real MediaAsset (full scan, to check prototype-image coverage)',
+      async () => {
+        const limit = 100;
+        const byName = new Map<string, string>();
+        for (let page = 0; page < 10; page += 1) {
+          const res = await apiCall<{ items: Array<{ id: string; fileName: string }> }>(
+            API_ORIGIN,
+            `/api/v1/admin/media?skip=${page * limit}&limit=${limit}`,
+            { token: admin.accessToken },
+          );
+          if (!res.ok) break;
+          for (const m of res.body.items) if (!byName.has(m.fileName)) byName.set(m.fileName, m.id);
+          if (res.body.items.length < limit) break;
+        }
+        return byName;
+      },
+    );
+
+    await step(
+      `SERVICES-R5.26.2 every expected prototype reference image was imported as a real MediaAsset (n=${EXPECTED_PROTOTYPE_IMAGES.length})`,
+      async () => {
+        for (const fileName of EXPECTED_PROTOTYPE_IMAGES) {
+          assert(mediaByFileName?.has(fileName) ?? false, `expected a real MediaAsset for reference image "${fileName}" (the default-catalog bootstrap's own source), found none`);
+        }
+      },
+    );
+
+    await step(
+      `SERVICES-R5.26.2 "${DELIBERATELY_EXCLUDED_PROTOTYPE_IMAGE}" stays a documented exclusion, never silently imported`,
+      async () => {
+        assert(
+          !(mediaByFileName?.has(DELIBERATELY_EXCLUDED_PROTOTYPE_IMAGE) ?? false),
+          `expected "${DELIBERATELY_EXCLUDED_PROTOTYPE_IMAGE}" to remain unimported (no real Category/Service exists for it — see docs/services-r5-26-1-default-catalog-audit.md §5); finding a real MediaAsset for it means either a real Category/Service now exists (update this list) or it was fabricated`,
+        );
+      },
+    );
+
+    const adminMediaUsers = await step(
+      'SERVICES-R5.26.2 fetch Admin catalog (categories/category-cards/card-products) to cross-check media usage',
+      async () => {
+        const [cats, cards, cps] = await Promise.all([
+          apiCall<{ items: Array<{ mediaAssetId: string | null }> }>(API_ORIGIN, '/api/v1/admin/categories?limit=100', { token: admin.accessToken }),
+          apiCall<{ items: Array<{ mediaAssetId: string | null }> }>(API_ORIGIN, '/api/v1/admin/category-cards?limit=100', { token: admin.accessToken }),
+          apiCall<{ items: Array<{ mediaAssetId: string | null }> }>(API_ORIGIN, '/api/v1/admin/card-products?limit=100', { token: admin.accessToken }),
+        ]);
+        return [
+          ...(cats.ok ? cats.body.items : []),
+          ...(cards.ok ? cards.body.items : []),
+          ...(cps.ok ? cps.body.items : []),
+        ];
+      },
+    );
+    const usedMediaAssetIds = new Set(
+      (adminMediaUsers ?? [])
+        .map((r) => r.mediaAssetId)
+        .filter((id): id is string => !!id),
+    );
+
+    await step(
+      'SERVICES-R5.26.2 every imported prototype image is actually USED somewhere in the catalog, not just uploaded and orphaned',
+      async () => {
+        for (const fileName of EXPECTED_PROTOTYPE_IMAGES) {
+          const assetId = mediaByFileName?.get(fileName);
+          if (!assetId) continue; // already reported missing above
+          assert(usedMediaAssetIds.has(assetId), `expected reference image "${fileName}" (MediaAsset ${assetId}) to be referenced by at least one Category/CategoryCard/CardProduct, found it unused`);
         }
       },
     );

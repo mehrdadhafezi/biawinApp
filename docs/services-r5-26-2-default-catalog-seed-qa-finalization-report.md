@@ -78,4 +78,24 @@ Not touched. No `PaymentService`/`GatewayProvider`/`WalletService.debit`/`Credit
 
 Local implementation, local QA (API + browser), and full quality gates are **complete and fully green**. Staging deploy and staging QA are **NOT EXECUTED** — this environment has no reachable staging server, a hard, pre-existing constraint of this sandbox, not a defect introduced by this stage. This stage is therefore reported as **locally complete, staging-unverified** — not declared "SERVICES-R5.26.2 COMPLETE," per this stage's own explicit instruction not to claim completion when a required step cannot be run.
 
+## 10. Follow-up Fixes (post-initial-deploy)
+
+Three rounds of follow-up work, each triggered by a real result from a real staging run (not guessed):
+
+### 10.1 Runtime image missing the reference-asset directory
+
+Staging's first real deploy attempt crashed inside `DEFAULT_CATALOG_CMD`: `deploy/staging/Dockerfile.backend` never copied `docs/` into the image, but `seed-default-catalog.ts` reads its 9 reference images from `docs/prototypes/services/categories/` (`REFERENCE_DIR = join(process.cwd(), '..', 'docs', 'prototypes', 'services', 'categories')`, resolving to `/workspace/docs/...` inside the container — a path that never existed there). Reproduced empirically (not just inferred): temporarily deleted a `MediaAsset` row and renamed the reference directory aside locally, forcing the exact "must re-upload, file missing" code path — got the exact predicted `ENOENT` crash. Fixed with one `COPY docs/prototypes/services/categories ./docs/prototypes/services/categories` line in `Dockerfile.backend`, mirroring the existing pattern already used for `seed-home-media.ts`'s own `apps/web/public/home` dependency. Restoring the directory and re-running confirmed recovery; this also surfaced a second, smaller gap — a `CategoryCard`'s `mediaAssetId` left `null` by a cascading `MediaAsset` delete was never backfilled by the seed's `if (existing) skip` logic — fixed by extending the same backfill-if-missing pattern already used for `CardProduct` to `CategoryCard`. Commit `33fe613`.
+
+### 10.2 Only 4 of the required ≥5 CardProducts were real seed data
+
+A real staging QA run reported `found 4` against the `>= 5` bar. Root cause: the canonical `CARD_PRODUCTS` array in `seed-default-catalog.ts` only ever had 4 entries. The "5th" that made local verification pass earlier was never created by any seed — a `کارت اعتباری بیمه شخص ثالث` row `createdAt` two full days before this script's other rows, wrongly owned (`Service: لوازم نوزاد` / `Category: کودک و نوجوان`, nothing to do with insurance) — leftover manual test data from R5.19/R5.26 QA work that only ever existed on one local dev database. Fixed by adding a genuine, correctly-owned 5th entry: `کارت بیمه شخص ثالث` under the real `بیمه شخص ثالث` Service (`بیمه` Category — fully populated since R5.26.1 but had never gotten its own `CardProduct`, completing this file's own pre-existing "one per already-populated Category" comment). Does not touch, reference, or replace the old stray row. Commit `d29ec94`.
+
+### 10.3 Catalog-bootstrap model correction + QA hardening
+
+A follow-up task assumed `docs/prototypes/services/categories/` contains nested per-category subdirectories (`category-dir/image.png`). Direct enumeration (`find docs/prototypes/services/categories -type d`) confirms this is false — it is a **flat** directory of 14 individual image files, zero subdirectories anywhere. The correct, already-established, evidence-based model (§2/§4 of `docs/services-r5-26-1-default-catalog-audit.md` — built from actually opening and reading each image, not guessing from filenames) is: each flat image file is itself one candidate default CategoryCard, and the Category it belongs to is the one its own rendered Persian title names. 13 of 14 images resolve this way to a real Category/CategoryCard/Service chain; `Motor.jpeg` (موتور سیکلت) is a deliberate, documented exclusion (no real Category/Service exists for it — see that audit's §5), independently corroborated by it being the only one of the 14 never uploaded to the Media Library at all.
+
+Hardened `servicesR5262DefaultCatalogFinalizationCheck` in `authenticated-qa-runner.ts` (no application code changes needed — the bootstrap itself already matched this corrected model) with:
+- a duplicate-CategoryCard check (no two active cards share the same `categoryId`+`title`),
+- an exhaustive prototype-image-coverage check (all 13 expected reference filenames really exist as `MediaAsset` rows, `Motor.jpeg` never silently does, and every imported image is actually referenced by a real Category/CategoryCard/CardProduct — not just uploaded and orphaned), using the real Admin catalog endpoints, entirely dynamic.
+
 🤖 Generated with [Claude Code](https://claude.com/claude-code)
