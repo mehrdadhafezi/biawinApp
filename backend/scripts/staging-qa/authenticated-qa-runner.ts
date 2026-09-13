@@ -397,11 +397,26 @@ async function main(): Promise<void> {
         !reuse.ok,
         `expected the logged-out refresh token to be rejected, got ${detail(reuse)}`,
       );
-      // Re-authenticate — every later step needs a live session, and logout
-      // only invalidated the refresh token, not the still-valid access token,
-      // but we re-login anyway for a clean, long-lived session for the rest
-      // of this run.
-      superAdmin = await adminLogin(ADMIN_SEED_EMAIL, ADMIN_SEED_PASSWORD);
+      // SERVICES-R5.26.2 throttle-forensics fix — this step used to
+      // re-authenticate here "for a clean, long-lived session," but its own
+      // comment already proved that unnecessary: logout only invalidates the
+      // REFRESH token, never the still-live ACCESS token already held in
+      // `superAdmin` from the very first login above — every later step in
+      // this file only ever uses `superAdmin.accessToken`, never the
+      // refresh token, so nothing downstream needs a fresh login. That
+      // extra call was a real, avoidable consumer of the shared
+      // `POST /admin/auth/login` throttle bucket (10 attempts / 10 min / IP
+      // — `AdminAuthController`'s own `@Throttle`), on top of the SUPER_ADMIN
+      // login, the deliberate wrong-password attempt above, and the
+      // CONTENT_EDITOR/SUPPORT_VIEWER logins below — 5 real hits to one
+      // shared bucket per run before this fix, now 4. Root-caused via a
+      // real local reproduction (10 rapid attempts -> real 429 with
+      // `X-RateLimit-Remaining: 0` on the 11th), not assumed: a single QA
+      // run was never at risk on its own, but re-running deploy+QA
+      // repeatedly within the same 10-minute window against the same IP
+      // (the exact iterative debug loop this stage went through) reliably
+      // exhausts it — removing this one avoidable call buys real headroom
+      // without touching the throttle's actual security policy at all.
     });
 
     // --- Section 3: RBAC — provision temporary CONTENT_EDITOR/SUPPORT_VIEWER

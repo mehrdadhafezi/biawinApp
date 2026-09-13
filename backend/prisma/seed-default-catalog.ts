@@ -103,8 +103,23 @@ const CATEGORY_CARDS: CategoryCardSeed[] = [
     sortOrder: 1,
   },
   {
+    // SERVICES-R5.26.2 root-cause fix — `targetServiceTitle` used to say
+    // 'خرید پوشاک', which is NOT one of `seed.ts`'s real پوشاک Services
+    // (verified directly against its own source array: `مانتو و کت زنانه`,
+    // `پوشاک مردانه`, `کفش`, `کیف`, `پوشاک کودک`, `لباس ورزشی` — no
+    // "خرید پوشاک" anywhere). That fictional title only ever resolved
+    // locally because a Service by that exact name happened to exist there
+    // too, as leftover state from the same undocumented, pre-this-script
+    // manual bootstrap that also gave پوشاک its slug/hero/first CategoryCard
+    // (see the audit's §3) — never present on a database seeded only
+    // through the real, committed `seed.ts` + this script. On a genuinely
+    // fresh database this Service lookup returned null, silently `continue`d
+    // before ever calling `findOrUploadMedia('Clothes.jpeg', ...)` — this is
+    // the exact, confirmed reason staging's prototype-image-coverage QA
+    // found no MediaAsset for `Clothes.jpeg` while every other entry (whose
+    // target Services all really do exist in `seed.ts`) succeeded.
     categoryName: 'پوشاک',
-    targetServiceTitle: 'خرید پوشاک',
+    targetServiceTitle: 'پوشاک مردانه',
     title: 'پوشاک',
     highlights: ['انواع خدمات پوشاک', 'طرح‌های خرید و پشتیبانی'],
     imageFile: 'Clothes.jpeg',
