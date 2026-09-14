@@ -78,20 +78,51 @@ interface CardProductSeed {
 
 // ---------------------------------------------------------------------------
 // §1 — Categories that already exist (seed.ts) but were never visually
-// finished. سلامت/دیجیتال only — اتومبیل stays untouched (no reference image
-// maps to it, see the audit's §5).
+// finished. اتومبیل stays untouched (no reference image maps to it, see the
+// audit's §5).
+//
+// SERVICES-R5.26.2 catalog-gap fix (2nd pass) — this array used to have only
+// `سلامت`/`دیجیتال`. The other 7 categories below (`پوشاک` was already fixed
+// in the prior pass) LOOKED fully populated on every local database this
+// script was ever run against, but that was leftover, undocumented manual
+// state from before this script existed — never actually produced by this
+// array. On a genuinely fresh database (confirmed: real staging, per its own
+// reported `Category "پوشاک" slug=NULL mediaAssetId=NULL` evidence) NONE of
+// these 7 ever got their Category-level slug/hero image, because nothing in
+// source control ever set it. `CATEGORY_CARDS` below referencing e.g. `طلا و
+// جواهر` by name still worked (the Category row itself exists via `seed.ts`)
+// — only the Category's OWN `slug`/`mediaAssetId` fields were the gap, a
+// different field than any CategoryCard's own `mediaAssetId`. Every mapping
+// below was independently re-verified against `seed.ts`'s real committed
+// Category/Service arrays before being added (see
+// docs/services-r5-26-2-default-catalog-seed-qa-finalization-report.md for
+// the full forensic table) — none invented from filenames alone.
 // ---------------------------------------------------------------------------
 const CATEGORY_POPULATIONS: CategoryPopulation[] = [
   { categoryName: 'سلامت', slug: 'salamat', imageFile: 'Dental.jpeg' },
   { categoryName: 'دیجیتال', slug: 'dijital', imageFile: 'Digital.jpeg' },
+  { categoryName: 'گردشگری', slug: 'gardeshgari', imageFile: 'tourism.jpeg' },
+  { categoryName: 'بیمه', slug: 'bime', imageFile: 'insurance.jpeg' },
+  { categoryName: 'مبلمان', slug: 'moblman', imageFile: 'Sofa.jpeg' },
+  { categoryName: 'لوازم خانگی', slug: 'lavazem-khanegi', imageFile: 'Home appliances.jpeg' },
+  { categoryName: 'طلا و جواهر', slug: 'tala-javaher', imageFile: 'Gold.jpeg' },
+  { categoryName: 'زیبایی', slug: 'zibaei', imageFile: 'Cosmetics.jpeg' },
+  { categoryName: 'خانه و زندگی', slug: 'khane-zendegi', imageFile: 'Kalakhab.jpeg' },
+  { categoryName: 'پوشاک', slug: 'poushak', imageFile: 'Clothes.jpeg' },
 ];
 
 // ---------------------------------------------------------------------------
-// §2 — New CategoryCards. Two land under already-populated Categories as a
-// genuine SECOND discovery card (خانه و زندگی already has "کالای خواب";
-// پوشاک already has "کیف و کفش"; زیبایی already has "عطر و ادکلن") — the
-// reference mockups clearly intend two distinct cards per Category in these
-// cases, not a replacement.
+// §2 — CategoryCards. `فرش`/`پوشاک`/`آرایشی` land under Categories that get
+// a SECOND discovery card here (خانه و زندگی also gets `کالای خواب` below;
+// پوشاک also gets `کیف و کفش` below; زیبایی also gets `عطر و ادکلن` below) —
+// the reference mockups clearly intend two distinct cards per Category in
+// these three cases, not a replacement. The other 8 entries below
+// (`طلا`/`لوازم خانگی`/`کالای خواب`/`عطر و ادکلن`/`کیف و کفش`/`مبلمان`/
+// `بیمه`/`گردشگری`) are each a Category's ONLY/first CategoryCard —
+// SERVICES-R5.26.2 (2nd pass) addition, same "never captured in source
+// control, only ever existed as local leftover manual state" gap as
+// `CATEGORY_POPULATIONS` above; every targetService re-verified against
+// `seed.ts`'s real committed source before being added.
 // ---------------------------------------------------------------------------
 const CATEGORY_CARDS: CategoryCardSeed[] = [
   {
@@ -147,6 +178,70 @@ const CATEGORY_CARDS: CategoryCardSeed[] = [
     title: 'کالای دیجیتال',
     highlights: ['انواع خدمات کالای دیجیتال', 'طرح‌های خرید و پشتیبانی'],
     imageFile: 'Digital.jpeg',
+    sortOrder: 0,
+  },
+  {
+    categoryName: 'طلا و جواهر',
+    targetServiceTitle: 'شمش طلا',
+    title: 'طلا',
+    highlights: ['انواع خدمات طلا', 'طرح‌های خرید و پشتیبانی طلا'],
+    imageFile: 'Gold.jpeg',
+    sortOrder: 0,
+  },
+  {
+    categoryName: 'لوازم خانگی',
+    targetServiceTitle: 'یخچال و فریزر',
+    title: 'لوازم خانگی',
+    highlights: ['انواع خدمات لوازم خانگی', 'طرح‌های خرید و پشتیبانی'],
+    imageFile: 'Home appliances.jpeg',
+    sortOrder: 0,
+  },
+  {
+    categoryName: 'خانه و زندگی',
+    targetServiceTitle: 'کالای خواب',
+    title: 'کالای خواب',
+    highlights: ['خدمات متنوع کالای خواب', 'طرح‌های خرید و پشتیبانی'],
+    imageFile: 'Kalakhab.jpeg',
+    sortOrder: 0,
+  },
+  {
+    categoryName: 'زیبایی',
+    targetServiceTitle: 'عطر و ادکلن',
+    title: 'عطر و ادکلن',
+    highlights: ['خدمات متنوع عطر و ادکلن', 'طرح‌های خرید و پشتیبانی'],
+    imageFile: 'Perfume.jpeg',
+    sortOrder: 0,
+  },
+  {
+    categoryName: 'پوشاک',
+    targetServiceTitle: 'کفش',
+    title: 'کیف و کفش',
+    highlights: ['خدمات متنوع پوشاک', 'طرح‌های خرید و پشتیبانی'],
+    imageFile: 'Shoes.jpeg',
+    sortOrder: 0,
+  },
+  {
+    categoryName: 'مبلمان',
+    targetServiceTitle: 'مبل راحتی',
+    title: 'مبلمان',
+    highlights: ['خدمات متنوع مبلمان', 'طرح‌های خرید و پشتیبانی'],
+    imageFile: 'Sofa.jpeg',
+    sortOrder: 0,
+  },
+  {
+    categoryName: 'بیمه',
+    targetServiceTitle: 'بیمه شخص ثالث',
+    title: 'بیمه',
+    highlights: ['خدمات متنوع بیمه', 'طرح‌های پوشش و پشتیبانی'],
+    imageFile: 'insurance.jpeg',
+    sortOrder: 0,
+  },
+  {
+    categoryName: 'گردشگری',
+    targetServiceTitle: 'تور کیش',
+    title: 'گردشگری',
+    highlights: ['خدمات متنوع گردشگری', 'طرح‌های سفر و پشتیبانی'],
+    imageFile: 'tourism.jpeg',
     sortOrder: 0,
   },
 ];
