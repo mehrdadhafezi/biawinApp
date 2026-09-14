@@ -68,10 +68,41 @@ fail() { echo "[run-qa][ERROR] $*" >&2; exit 1; }
 cd "$REPO_DIR"
 mkdir -p "$REPORT_DIR"
 
-log "1/3 rebuilding the backend image from the current checkout (fast if nothing changed — this does NOT redeploy or restart the running backend/web/admin containers, it only ensures the QA runner's compiled script is current)"
+log "1/4 clearing QA-run throttle state (SERVICES-R5.26.2 — admin-login throttle, isolated to this QA execution only)"
+# Root cause (found by reading @nestjs/throttler's actual default
+# `generateKey`, not assumed): each throttled ROUTE gets its own Redis
+# bucket, keyed by `sha256(ControllerClass-Handler-throttlerName-req.ip)` —
+# never shared across routes, and `AdminAuthController.login`'s own
+# `@Throttle` (10 attempts/10min/IP — docs/admin-architecture-decision-
+# record.md §12.5, unchanged, still protecting real production traffic) is
+# never touched by this. A single clean `run-authenticated-qa.sh` execution
+# already makes 4 real `/admin/auth/login` calls (SUPER_ADMIN, a deliberate
+# wrong-password negative-test, CONTENT_EDITOR, SUPPORT_VIEWER — all
+# genuine, necessary RBAC coverage, not reducible) against the API-layer's
+# own internal-Docker-network identity, plus the browser-layer's own real
+# admin login against the public domain — two DIFFERENT `req.ip` values
+# (internal container IP vs. real egress IP), so they don't share a bucket.
+# The actual, confirmed failure mode is RE-RUNNING this script repeatedly
+# within the same 10-minute window during iterative deploy/QA debugging —
+# 3 such runs (4 hits each) already exceeds the 10-attempt cap on the
+# API-layer's own stable internal IP. Clearing only the throttler-shaped
+# Redis keys (`{<sha256>:default}*` — NEVER `otp:*`/`bull:*`/anything else
+# Redis also holds) immediately before every QA execution makes each run
+# start from a clean slate, deterministically, without touching the guard,
+# its limit, or any application code — scoped entirely to this QA
+# orchestration script, never reachable by a real client.
+redis_container="$($COMPOSE ps -q redis)"
+if [ -n "$redis_container" ]; then
+  cleared=$(docker exec "$redis_container" sh -c "redis-cli --scan --pattern '{*:default}*' | xargs -r redis-cli del" 2>&1) || true
+  log "  cleared throttler keys: ${cleared:-0}"
+else
+  log "  WARNING: redis service not found/running — skipping throttle-state clear (QA may hit a stale 429 from a prior run)"
+fi
+
+log "2/4 rebuilding the backend image from the current checkout (fast if nothing changed — this does NOT redeploy or restart the running backend/web/admin containers, it only ensures the QA runner's compiled script is current)"
 $COMPOSE build backend
 
-log "2/3 running the API-layer QA runner inside the backend image"
+log "3/4 running the API-layer QA runner inside the backend image"
 # SERVICES-R1.2 real-staging finding: this container is started via
 # `$COMPOSE run --rm backend`, i.e. it's a member of the compose network,
 # NOT a general-internet host — and on this server it genuinely cannot
@@ -97,7 +128,7 @@ if [ "$api_exit" -ne 0 ]; then
   log "API-layer QA reported failures (exit $api_exit) — see the report above and in $REPORT_DIR/. Continuing to the browser layer anyway so you get both results in one run; the FINAL exit code below reflects both."
 fi
 
-log "3/3 running the browser/visual QA layer (building the Playwright image if needed)"
+log "4/4 running the browser/visual QA layer (building the Playwright image if needed)"
 browser_exit=0
 docker build -f "$REPO_DIR/deploy/staging/qa/browser/Dockerfile" -t biawin-staging-browser-qa:latest "$REPO_DIR/deploy/staging/qa/browser" \
   || fail "failed to build the browser-qa image"

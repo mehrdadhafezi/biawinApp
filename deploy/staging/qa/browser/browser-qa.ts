@@ -286,6 +286,39 @@ function isBenignHomeImageCancelledByNavigation(req: Request, errorText: string,
   );
 }
 
+/**
+ * BENIGN HOME-CMS FETCH CANCELLATION (R5.26.2 Targeted QA Fix) — the exact
+ * same class `isBenignCatalogFetchCancelledByNavigation` above already
+ * covers for `/api/v1/categories|services`, for the four public Home CMS
+ * endpoints `useHomeHeroCards`/`useHomeServiceBanners`/
+ * `useHomeServiceMosaic`/`useHomeNewsArticles` each call on every mount of
+ * Customer Home (`apps/web/src/components/home/useHomeCms.ts`, via
+ * `homeApi.listHomeHeroCards()` etc. in `apps/web/src/lib/home-api.ts`).
+ * None of those hooks use an `AbortController` — each just sets a local
+ * `cancelled` flag to skip the `setState` after unmount, same
+ * fire-and-forget shape `useServiceCatalog()` already had — so Chromium
+ * itself cancels any of the four still in flight the instant this script's
+ * own navigation away from Home (e.g. `runCategoryLandingAndCardProductChecks`,
+ * which smoke-tests Home before navigating into a Category) tears the page
+ * down. All four endpoints independently verified (curl, outside the
+ * browser) to return real HTTP 200 JSON — not a backend failure. Narrow on
+ * purpose, same shape as the sibling catalog rule: exact `net::ERR_ABORTED`,
+ * `resourceType() === 'fetch'`, the URL is exactly one of our own
+ * first-party `/api/v1/home/{hero-cards,service-banners,
+ * service-mosaic-tiles,news-articles}` endpoints (never any other route —
+ * an aborted mutation or auth call is NEVER covered by this), AND a real
+ * navigation recorded near the failure. A home-CMS fetch that fails outside
+ * a correlated navigation, or any other endpoint, still fails the run.
+ */
+function isBenignHomeCmsFetchCancelledByNavigation(req: Request, errorText: string, navigationCorrelated: boolean): boolean {
+  return (
+    errorText === 'net::ERR_ABORTED' &&
+    req.resourceType() === 'fetch' &&
+    /^https?:\/\/[^/]+\/api\/v1\/home\/(hero-cards|service-banners|service-mosaic-tiles|news-articles)(\?.*)?$/.test(req.url()) &&
+    navigationCorrelated
+  );
+}
+
 function trackPageIssues(page: Page): PageIssues {
   const navigationTimestamps: number[] = [];
   const issues: PageIssues = {
@@ -352,6 +385,9 @@ function trackPageIssues(page: Page): PageIssues {
     } else if (isBenignHomeImageCancelledByNavigation(req, errorText, navigationCorrelated)) {
       classifiedBenign = true;
       benignReason = 'BENIGN HOME-PAGE IMAGE CANCELLATION: Home page orbit-ring (/api/v1/media/*.webp) or membership-strip (/home/membership/item-NN.webp) image request cancelled during an in-flight navigation, asset independently verified healthy (SERVICES-R5.26.2 rule)';
+    } else if (isBenignHomeCmsFetchCancelledByNavigation(req, errorText, navigationCorrelated)) {
+      classifiedBenign = true;
+      benignReason = 'BENIGN HOME-CMS FETCH CANCELLATION: first-party /api/v1/home/{hero-cards,service-banners,service-mosaic-tiles,news-articles} fetch cancelled by a test-driven navigation tearing down Home before the hook\'s fire-and-forget fetch resolved, endpoint independently verified healthy (R5.26.2 Targeted QA Fix rule)';
     }
 
     const qaStepAtFailure = currentStepLabel;
