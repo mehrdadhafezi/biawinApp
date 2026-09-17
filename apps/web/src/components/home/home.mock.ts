@@ -14,7 +14,12 @@
  *    `HomeNewsArticle` — per Stage 5.21's own instruction to use the real,
  *    as-shipped Stage 5.19 contract rather than the earlier planning
  *    document, these two sections keep their pre-existing static/live-
- *    non-CMS sources unchanged).
+ *    non-CMS sources unchanged). `CATEGORY_TICKER_IMAGE` is now a fallback
+ *    rather than always-primary for its own names — `CategoriesSection`
+ *    prefers the real `Category.image` (Media Library, the same source
+ *    `CategoryHero`/`CategoryCard` already use) once fetched, per the
+ *    category prototype image forensic audit fix (Sep 2026); the static
+ *    map still covers every category without a real image yet.
  *
  * 2. `SERVICE_BANNERS`, `SERVICE_MOSAIC_HALVES`/`WIDE`, `NEWS_ARTICLES`, and
  *    `HERO_CARDS` (new this stage) are now FALLBACK-ONLY content —

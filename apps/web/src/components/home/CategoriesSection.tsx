@@ -1,8 +1,25 @@
 "use client";
 
+import { useEffect, useState } from "react";
 import { useRouter } from "next/navigation";
 import { color } from "@biawin/ui";
+import { homeApi } from "../../lib/home-api";
 import { CATEGORY_TICKER_DOWN, CATEGORY_TICKER_IMAGE, CATEGORY_TICKER_UP } from "./home.mock";
+
+/**
+ * Five ticker labels are the prototype's own shortened/colloquial names,
+ * not the real `Category.name` string — verified directly against the real
+ * 19-row Category table (category prototype image forensic audit, Sep
+ * 2026). Used ONLY to resolve which real Category backs a ticker tile's
+ * `image` lookup below; the displayed label text is unchanged either way.
+ */
+const TICKER_NAME_TO_CATEGORY_NAME: Record<string, string> = {
+  "خودرو": "اتومبیل",
+  "مالی": "مالی و اعتباری",
+  "کودک": "کودک و نوجوان",
+  "طلا": "طلا و جواهر",
+  "ورزش": "باشگاه و ورزش",
+};
 
 /**
  * `.categories.credit-power-section` — the two-column auto-scrolling
@@ -12,19 +29,48 @@ import { CATEGORY_TICKER_DOWN, CATEGORY_TICKER_IMAGE, CATEGORY_TICKER_UP } from 
  * background circular photo items, `.credit-service-item`/
  * `.credit-service-photo`/`.credit-service-name`, re-read directly from
  * the source this time, not from the earlier wrong implementation).
- * Real photos extracted from the prototype's own inline images — see
- * docs/home-prototype-asset-map.md — not emoji. "مشاهده همه خدمات" is a
- * real link to the now-shipped `/services` browse page (Stage 9.1).
+ * "مشاهده همه خدمات" is a real link to the now-shipped `/services` browse
+ * page (Stage 9.1).
+ *
+ * Image priority (category prototype image forensic audit fix): the real,
+ * backend-resolved Category photo (`GET /categories`'s `image` field, the
+ * same Media Library source `CategoryHero`/`CategoryCard` already use) is
+ * preferred once fetched; `CATEGORY_TICKER_IMAGE`'s static prototype
+ * extract (docs/home-prototype-asset-map.md) remains the fallback for any
+ * category without one yet, or while this component's own fetch is still
+ * in flight — never a second resolver, never a raw `mediaAssetId`.
  */
 export function CategoriesSection() {
   const router = useRouter();
+  const [categoryImageByName, setCategoryImageByName] = useState<Record<string, string>>({});
+
+  useEffect(() => {
+    let cancelled = false;
+    homeApi
+      .listCategories()
+      .then((result) => {
+        if (cancelled) return;
+        const map: Record<string, string> = {};
+        for (const category of result.items) {
+          if (category.image) map[category.name] = category.image;
+        }
+        setCategoryImageByName(map);
+      })
+      .catch(() => {
+        // The static CATEGORY_TICKER_IMAGE fallback below already covers
+        // every ticker name, so a failed fetch just keeps today's behavior.
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, []);
 
   return (
     <section aria-label="قدرت اعتبار در باشگاه" className="biawin-credit-power-section">
       <div className="biawin-credit-power-shell">
         <div aria-label="همه خدمات بیاوین" className="biawin-credit-tickers">
-          <TickerColumn items={CATEGORY_TICKER_UP} direction="up" />
-          <TickerColumn items={CATEGORY_TICKER_DOWN} direction="down" />
+          <TickerColumn items={CATEGORY_TICKER_UP} direction="up" categoryImageByName={categoryImageByName} />
+          <TickerColumn items={CATEGORY_TICKER_DOWN} direction="down" categoryImageByName={categoryImageByName} />
         </div>
 
         <div className="biawin-credit-power-copy">
@@ -131,19 +177,31 @@ export function CategoriesSection() {
   );
 }
 
-function TickerColumn({ items, direction }: { items: readonly string[]; direction: "up" | "down" }) {
+function TickerColumn({
+  items,
+  direction,
+  categoryImageByName,
+}: {
+  items: readonly string[];
+  direction: "up" | "down";
+  categoryImageByName: Record<string, string>;
+}) {
   return (
     <div className={`biawin-ticker-col biawin-ticker-col--${direction}`}>
       <div className="biawin-ticker-fade biawin-ticker-fade--top" />
       <div className={`biawin-ticker-track biawin-ticker-track--${direction}`}>
-        {[...items, ...items].map((name, i) => (
-          <div key={`${name}-${i}`} className="biawin-credit-service-item" aria-hidden={i >= items.length}>
-            <span className="biawin-credit-service-photo">
-              <img src={CATEGORY_TICKER_IMAGE[name]} alt={name} loading="lazy" />
-            </span>
-            <span className="biawin-credit-service-name">{name}</span>
-          </div>
-        ))}
+        {[...items, ...items].map((name, i) => {
+          const categoryName = TICKER_NAME_TO_CATEGORY_NAME[name] ?? name;
+          const src = categoryImageByName[categoryName] ?? CATEGORY_TICKER_IMAGE[name];
+          return (
+            <div key={`${name}-${i}`} className="biawin-credit-service-item" aria-hidden={i >= items.length}>
+              <span className="biawin-credit-service-photo">
+                <img src={src} alt={name} loading="lazy" />
+              </span>
+              <span className="biawin-credit-service-name">{name}</span>
+            </div>
+          );
+        })}
       </div>
       <div className="biawin-ticker-fade biawin-ticker-fade--bottom" />
     </div>

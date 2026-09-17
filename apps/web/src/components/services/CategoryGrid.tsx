@@ -77,11 +77,16 @@ export function CategoryGrid({ categories, onSelect }: CategoryGridProps) {
 }
 
 function CategoryTile({ category, onSelect }: { category: CategoryDto; onSelect: (category: CategoryDto) => void }) {
-  const iconSrc = CATEGORY_ICON[category.name] ?? CATEGORY_ICON_FALLBACK;
+  // Prefer the real, backend-resolved Media Library photo (SERVICES-R5.22
+  // `category.image`, same field CategoryHero's full-bleed photo already
+  // uses) over the static SERVICES-R1 icon set below — that set predates
+  // `Category.mediaAssetId` and was never wired to it. A Category without a
+  // real image yet (`image: null`) keeps the exact icon it always had.
+  const iconSrc = category.image ?? CATEGORY_ICON[category.name] ?? CATEGORY_ICON_FALLBACK;
   return (
     <button type="button" onClick={() => onSelect(category)} style={{ ...tileStyle, cursor: "pointer" }}>
       <span style={thumbStyle}>
-        {/* Real, migrated prototype WEBP assets (docs/services-r1-fidelity-report.md) — a plain <img>, not next/image, to match every other Services image today (no imageUrl resolver exists yet for backend-hosted images; these are static public/ files, not fetched from an API). */}
+        {/* A plain <img>, not next/image, matching every other Services image today. Either a real Media Library photo (`category.image`) or the migrated prototype WEBP fallback (docs/services-r1-fidelity-report.md) — never a second resolver. */}
         <img src={iconSrc} alt="" aria-hidden="true" style={{ width: "100%", height: "100%", objectFit: "cover" }} />
       </span>
       <span style={labelStyle}>{category.name}</span>

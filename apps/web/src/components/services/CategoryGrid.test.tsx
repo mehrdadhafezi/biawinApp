@@ -81,4 +81,16 @@ describe("CategoryGrid", () => {
     const html = renderToStaticMarkup(<CategoryGrid categories={[]} onSelect={() => {}} />);
     expect(html).not.toContain("بیشتر");
   });
+
+  it("prefers the real backend-resolved category.image over the static icon, and keeps the static icon when image is null", () => {
+    const withRealImage = [category({ id: "c-poushak", name: "پوشاک", image: "http://localhost:4000/api/v1/media/real-photo.jpg" })];
+    const withoutImage = [category({ id: "c-poushak", name: "پوشاک", image: null })];
+
+    const withRealImageHtml = renderToStaticMarkup(<CategoryGrid categories={withRealImage} onSelect={() => {}} />);
+    expect(withRealImageHtml).toContain("http://localhost:4000/api/v1/media/real-photo.jpg");
+    expect(withRealImageHtml).not.toContain("icon-poushak.webp");
+
+    const withoutImageHtml = renderToStaticMarkup(<CategoryGrid categories={withoutImage} onSelect={() => {}} />);
+    expect(withoutImageHtml).toContain("icon-poushak.webp");
+  });
 });
