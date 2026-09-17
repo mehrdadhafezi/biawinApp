@@ -6,44 +6,36 @@
  * runtime code — every image this script touches ends up as a real
  * `MediaAsset` row, resolved the normal way).
  *
- * Every Category/Service this script targets already exists — created by
- * `seed.ts`, which already ran in every environment this script is meant to
- * run in (local, staging). This script never creates a Category or Service;
- * it only:
- *   1. sets `slug` on the few Categories that exist but never had one, and
- *   2. adds the CategoryCard rows + a small set of real, correctly-owned,
- *      ACTIVE/PURCHASE/priced CardProducts the reference mockups call for.
+ * SERVICES CATALOG RESET (business clarification, Sep 2026) — the
+ * directory is now the explicit single source of truth for the Services
+ * catalog's top-level categories: ALL 14 files (Motor.jpeg included) map
+ * 1:1 to a Category, each Category's own thumbnail (`mediaAssetId`) AND
+ * its CategoryCard's promotional image are INTENTIONALLY the same file
+ * (confirmed business decision — supersedes the prior "Category ≠
+ * CategoryCard image" separation this script briefly enforced). Any
+ * pre-existing Category with no corresponding prototype image is hidden
+ * (`active: false`, never deleted — see `LEGACY_CATEGORIES_TO_HIDE`) so
+ * the public catalog shows exactly the 14 prototype-backed categories.
+ * `CardProduct.mediaAssetId` is UNCHANGED by this reset — it still must
+ * never inherit a CategoryCard's promotional mockup (see
+ * `CATEGORY_CARD_ONLY_IMAGES`'s own doc comment).
  *
- * SERVICES ASSET ASSIGNMENT MATRIX (Sep 2026) — every file under
- * `docs/prototypes/services/categories/` was visually confirmed to be a
- * composited CategoryCard promotional mockup (badge + product photo +
- * baked-in title text that exactly matches one CategoryCard.title + 2
- * bullet highlights + icon), never a plain, role-agnostic photo. An earlier
- * pass of this script incorrectly reused these same 13 files as
- * `Category.mediaAssetId` (the small `/services` grid thumbnail) and as
- * `CardProduct.mediaAssetId` (the purchasable-card image) too. Ownership is
- * now strict: these 13 files belong to `CategoryCard.mediaAssetId` ONLY.
- * `CATEGORY_CARD_ONLY_IMAGES` below both documents that boundary and powers
- * this script's own idempotent repair of the two prior mis-assignments —
- * see its own doc comment.
+ * This script never creates a Category or Service on its own initiative
+ * beyond what the 14-image reset explicitly calls for — the other 108
+ * real Services (under both prototype-backed and hidden categories) are
+ * still exclusively `seed.ts`'s responsibility.
  *
  * Idempotent throughout, same discipline as `seed.ts`/`seed-home-media.ts`:
- * a Category whose `slug` is already set is left untouched (never overwrites
- * Admin-managed content); a CategoryCard is matched by `categoryId`+`title`;
- * a CardProduct by `serviceId`+`title`; a MediaAsset upload is skipped (and
- * the existing row reused) whenever one with the exact same `fileName`
- * already exists — re-running this script after a partial run (or after
- * this exact reference set was already uploaded by hand, as happened once
- * in this environment — see the audit's §3) creates nothing twice.
+ * a Category whose `slug`+`mediaAssetId` are already set is left untouched
+ * (never overwrites Admin-managed content); a CategoryCard is matched by
+ * `categoryId`+`title`; a CardProduct by `serviceId`+`title`; a MediaAsset
+ * upload is skipped (and the existing row reused) whenever one with the
+ * exact same `fileName` already exists — re-running this script after a
+ * partial run creates nothing twice.
  *
  * Goes through the real `MediaService.upload()` via a bootstrapped Nest
  * application context — the same architecture `seed-home-media.ts`
  * established, never a filesystem-path/raw-storage-key shortcut.
- *
- * Motor.jpeg (موتور سیکلت) is deliberately NOT referenced anywhere in this
- * script — no real Category/Service exists for it, and inventing one would
- * be fabricating business content this script has no authority to decide.
- * See the audit's §5.
  *
  * Run: `pnpm --filter @biawin/backend seed:default-catalog`
  */
@@ -62,6 +54,15 @@ const REFERENCE_DIR = join(process.cwd(), '..', 'docs', 'prototypes', 'services'
 interface CategoryPopulation {
   categoryName: string;
   slug: string;
+  imageFile: string;
+}
+
+interface NewCategorySeed {
+  categoryName: string;
+  slug: string;
+  description: string;
+  keywords: string[];
+  imageFile: string;
 }
 
 interface CategoryCardSeed {
@@ -85,18 +86,19 @@ interface CardProductSeed {
   // No `imageFile` — a CardProduct's purchase-card image is a distinct,
   // not-yet-sourced content decision (Services Asset Assignment Matrix,
   // Sep 2026); it must never be inherited from the CategoryCard's
-  // promotional mockup. Created with `mediaAssetId: null`.
+  // promotional mockup, even after the Category-tier reuse was
+  // reinstated by the Services Catalog Reset. Created with
+  // `mediaAssetId: null`.
 }
 
 /**
- * The 13 usable reference filenames under `docs/prototypes/services/
- * categories/` (Motor.jpeg excluded — never referenced by anything).
- * Every one was visually confirmed to be a CategoryCard-shaped promotional
- * mockup, never a Category-thumbnail- or CardProduct-shaped asset (Services
- * Asset Assignment Matrix, Sep 2026). Used ONLY to detect and idempotently
- * repair a Category or CardProduct row whose `mediaAssetId` still points at
- * one of these files (an earlier pass of this script's own bug) — never to
- * pick or guess a *replacement* image for either tier, since none exists.
+ * The 13 CategoryCard-shaped promotional mockups (Motor.jpeg excluded —
+ * it has no CardProduct/purchasable Service). Used ONLY to detect and
+ * idempotently repair a CardProduct row whose `mediaAssetId` still points
+ * at one of these files — the Services Catalog Reset reinstated their use
+ * at the Category tier, but never at the CardProduct tier; that boundary
+ * is unchanged. Never used to pick or guess a CardProduct's replacement
+ * image, since none exists yet.
  */
 const CATEGORY_CARD_ONLY_IMAGES = new Set<string>([
   'Carpet.jpeg',
@@ -115,93 +117,183 @@ const CATEGORY_CARD_ONLY_IMAGES = new Set<string>([
 ]);
 
 // ---------------------------------------------------------------------------
-// §1 — Categories that already exist (seed.ts) but never had a Landing-page
-// `slug`. اتومبیل stays untouched (no reference image maps to it, see the
-// audit's §5). Sets `slug` ONLY — a Category's own thumbnail
-// (`mediaAssetId`) is a separate, not-yet-sourced content decision (see
-// `CATEGORY_CARD_ONLY_IMAGES` above); this array used to also assign one of
-// the 13 CategoryCard mockups here, which the Services Asset Assignment
-// Matrix (Sep 2026) confirmed was wrong — corrected below, see the repair
-// pass in `main()`.
-//
-// SERVICES-R5.26.2 catalog-gap fix (2nd pass) — this array used to have only
-// `سلامت`/`دیجیتال`. The other 7 categories below (`پوشاک` was already fixed
-// in the prior pass) LOOKED fully populated on every local database this
-// script was ever run against, but that was leftover, undocumented manual
-// state from before this script existed — never actually produced by this
-// array. On a genuinely fresh database (confirmed: real staging, per its own
-// reported `Category "پوشاک" slug=NULL mediaAssetId=NULL` evidence) NONE of
-// these 7 ever got their Category-level slug, because nothing in source
-// control ever set it. `CATEGORY_CARDS` below referencing e.g. `طلا و جواهر`
-// by name still worked (the Category row itself exists via `seed.ts`) —
-// only the Category's OWN `slug` field was the gap, a different field than
-// any CategoryCard's own `mediaAssetId`. Every mapping below was
-// independently re-verified against `seed.ts`'s real committed
-// Category/Service arrays before being added (see
-// docs/services-r5-26-2-default-catalog-seed-qa-finalization-report.md for
-// the full forensic table) — none invented from filenames alone.
+// §0 — Services Catalog Reset: every pre-existing Category with no
+// corresponding prototype image is hidden (`active: false`), never
+// deleted — their Services/CardProducts/Orders are completely untouched,
+// only Category-tier visibility changes. `useServiceCatalog()`
+// (apps/web/src/components/services/useServiceCatalog.ts) already filters
+// `categories.filter(c => c.active)` client-side, so this alone removes
+// them from `/services` and from `/services/[categoryId]` (an inactive
+// category's own id no longer resolves in that filtered list) — no
+// backend/API change was needed or made. Only clears `active` when it is
+// currently `true`, so a category an Admin has already hidden (or
+// un-hidden) is never fought over. A name not found in the current
+// database (e.g. a category that exists on one environment but not
+// another) is logged and skipped, never fabricated.
 // ---------------------------------------------------------------------------
-const CATEGORY_POPULATIONS: CategoryPopulation[] = [
-  { categoryName: 'سلامت', slug: 'salamat' },
-  { categoryName: 'دیجیتال', slug: 'dijital' },
-  { categoryName: 'گردشگری', slug: 'gardeshgari' },
-  { categoryName: 'بیمه', slug: 'bime' },
-  { categoryName: 'مبلمان', slug: 'moblman' },
-  { categoryName: 'لوازم خانگی', slug: 'lavazem-khanegi' },
-  { categoryName: 'طلا و جواهر', slug: 'tala-javaher' },
-  { categoryName: 'زیبایی', slug: 'zibaei' },
-  { categoryName: 'خانه و زندگی', slug: 'khane-zendegi' },
-  { categoryName: 'پوشاک', slug: 'poushak' },
+const LEGACY_CATEGORIES_TO_HIDE: string[] = [
+  'آموزش',
+  'اتومبیل',
+  'باشگاه و ورزش',
+  'تستی',
+  'خدمات سازمانی',
+  'خرید روزمره',
+  'مالی و اعتباری',
+  'موبایل و لپ‌تاپ',
+  'کارت هدیه',
+  'کودک و نوجوان',
 ];
 
 // ---------------------------------------------------------------------------
-// §2 — CategoryCards. `فرش`/`پوشاک`/`آرایشی` land under Categories that get
-// a SECOND discovery card here (خانه و زندگی also gets `کالای خواب` below;
-// پوشاک also gets `کیف و کفش` below; زیبایی also gets `عطر و ادکلن` below) —
-// the reference mockups clearly intend two distinct cards per Category in
-// these three cases, not a replacement. The other 8 entries below
-// (`طلا`/`لوازم خانگی`/`کالای خواب`/`عطر و ادکلن`/`کیف و کفش`/`مبلمان`/
-// `بیمه`/`گردشگری`) are each a Category's ONLY/first CategoryCard —
-// SERVICES-R5.26.2 (2nd pass) addition, same "never captured in source
-// control, only ever existed as local leftover manual state" gap as
-// `CATEGORY_POPULATIONS` above; every targetService re-verified against
-// `seed.ts`'s real committed source before being added.
-//
-// `imageFile` here is the ONLY tier these 13 reference mockups are ever
-// assigned to (Services Asset Assignment Matrix, Sep 2026) — unchanged by
-// the current fix, confirmed correct.
+// §1 — Categories that already exist (seed.ts) but were never visually
+// finished. Services Catalog Reset (Sep 2026): `mediaAssetId` is
+// intentionally the SAME file as the Category's own CategoryCard below —
+// a confirmed business decision, not a reversion to an unaudited state.
+// اتومبیل is deliberately absent (hidden above, no prototype image maps
+// to it).
+// ---------------------------------------------------------------------------
+const CATEGORY_POPULATIONS: CategoryPopulation[] = [
+  { categoryName: 'سلامت', slug: 'salamat', imageFile: 'Dental.jpeg' },
+  { categoryName: 'دیجیتال', slug: 'dijital', imageFile: 'Digital.jpeg' },
+  { categoryName: 'گردشگری', slug: 'gardeshgari', imageFile: 'tourism.jpeg' },
+  { categoryName: 'بیمه', slug: 'bime', imageFile: 'insurance.jpeg' },
+  { categoryName: 'مبلمان', slug: 'moblman', imageFile: 'Sofa.jpeg' },
+  { categoryName: 'لوازم خانگی', slug: 'lavazem-khanegi', imageFile: 'Home appliances.jpeg' },
+  { categoryName: 'طلا و جواهر', slug: 'tala-javaher', imageFile: 'Gold.jpeg' },
+  { categoryName: 'زیبایی', slug: 'zibaei', imageFile: 'Cosmetics.jpeg' },
+  { categoryName: 'خانه و زندگی', slug: 'khane-zendegi', imageFile: 'Kalakhab.jpeg' },
+  { categoryName: 'پوشاک', slug: 'poushak', imageFile: 'Clothes.jpeg' },
+];
+
+// ---------------------------------------------------------------------------
+// §1b — Services Catalog Reset (Sep 2026): 4 prototype images (Carpet,
+// Perfume, Shoes, Motor) have NO existing 1:1 Category today — each
+// shares a Category with a sibling image (فرش/کالای خواب both under
+// خانه و زندگی; عطر و ادکلن/آرایشی both under زیبایی; کیف و کفش/پوشاک both
+// under پوشاک) or has no Category/Service at all (Motor). To reach the
+// confirmed "14 images = 14 categories" model, these 4 are created here
+// (create-if-missing, idempotent by `name`) — genuinely new Category
+// rows, not fabricated from nothing: their name/description/keywords are
+// each taken directly from the prototype image's own baked-in title
+// (visually confirmed, see the Services Asset Assignment Matrix) or the
+// existing CategoryCard/CardProduct copy already live for that exact
+// content. Once created, never overwritten (matches every other
+// "populate once" write in this script).
+// ---------------------------------------------------------------------------
+const NEW_CATEGORIES: NewCategorySeed[] = [
+  {
+    categoryName: 'فرش',
+    slug: 'farsh',
+    description: 'خدمات متنوع فرش',
+    keywords: ['فرش', 'خانه'],
+    imageFile: 'Carpet.jpeg',
+  },
+  {
+    categoryName: 'عطر و ادکلن',
+    slug: 'atr-adkolan',
+    description: 'خدمات متنوع عطر و ادکلن',
+    keywords: ['عطر', 'ادکلن', 'زیبایی'],
+    imageFile: 'Perfume.jpeg',
+  },
+  {
+    categoryName: 'کیف و کفش',
+    slug: 'kif-kafsh',
+    description: 'انتخابی برای هر سلیقه',
+    keywords: ['کیف', 'کفش', 'پوشاک'],
+    imageFile: 'Shoes.jpeg',
+  },
+  {
+    categoryName: 'موتور سیکلت',
+    slug: 'motor-siklet',
+    description: 'خدمات و اطلاعات موتور سیکلت',
+    keywords: ['موتور سیکلت', 'موتور'],
+    imageFile: 'Motor.jpeg',
+  },
+];
+
+// ---------------------------------------------------------------------------
+// §1c — Services Catalog Reset (Sep 2026): the 3 real, pre-existing
+// Services this reset re-homes onto their own new prototype-backed
+// Category (see `NEW_CATEGORIES` above), so each of the 4-way-split
+// prototype pairs ends up with its target Service under the SAME
+// Category as its own CategoryCard — matching every other CategoryCard's
+// invariant ("a CategoryCard only ever points at a Service in its own
+// Category", schema.prisma's own CategoryCard doc comment). This moves
+// the Service ONLY (`categoryId`); its id, title, price fields, and any
+// CardProduct/Order referencing it (by `serviceId`, never by Category)
+// are completely unaffected — "کارت خرید کفش ۲۰ میلیونی"'s purchase flow
+// keeps working unchanged. Idempotent: a Service already under its
+// target Category is left alone.
+// ---------------------------------------------------------------------------
+const SERVICE_REPARENTING: { serviceTitle: string; fromCategoryName: string; toCategoryName: string }[] = [
+  { serviceTitle: 'فرش و کفپوش', fromCategoryName: 'خانه و زندگی', toCategoryName: 'فرش' },
+  { serviceTitle: 'عطر و ادکلن', fromCategoryName: 'زیبایی', toCategoryName: 'عطر و ادکلن' },
+  { serviceTitle: 'کفش', fromCategoryName: 'پوشاک', toCategoryName: 'کیف و کفش' },
+];
+
+// ---------------------------------------------------------------------------
+// §1d — Services Catalog Reset (Sep 2026): re-homes the 3 CategoryCard
+// rows that move alongside their Service above, onto the same new
+// Category — the row itself (id, mediaAssetId, highlights, createdAt) is
+// updated in place, never duplicated; `sortOrder` is normalized to 0
+// since each becomes the sole card in its own new Category (matching
+// every other single-card Category's convention). Idempotent: a
+// CategoryCard already under its target Category is left alone (the
+// `CATEGORY_CARDS` create/backfill loop below then correctly treats it
+// as "already exists").
+// ---------------------------------------------------------------------------
+const CATEGORY_CARD_REPARENTING: { title: string; fromCategoryName: string; toCategoryName: string }[] = [
+  { title: 'فرش', fromCategoryName: 'خانه و زندگی', toCategoryName: 'فرش' },
+  { title: 'عطر و ادکلن', fromCategoryName: 'زیبایی', toCategoryName: 'عطر و ادکلن' },
+  { title: 'کیف و کفش', fromCategoryName: 'پوشاک', toCategoryName: 'کیف و کفش' },
+];
+
+// ---------------------------------------------------------------------------
+// §1e — Services Catalog Reset (Sep 2026): Motor.jpeg has no real Service
+// anywhere in `seed.ts` (confirmed, repeatedly, across every prior audit
+// this engagement ran) — this is the one genuinely NEW Service this
+// script creates, a minimal, honestly-labeled placeholder matching the
+// image's own baked-in title, with NO invented price/value/purchase
+// method (`availableMethods: []`) and NO CardProduct — see Part 7's own
+// "NO PURCHASABLE PRODUCT CURRENTLY EXISTS" rule, honored by simply never
+// creating one. Idempotent: created once (matched by categoryId+title),
+// never re-created or overwritten.
+// ---------------------------------------------------------------------------
+const MOTOR_SERVICE = {
+  categoryName: 'موتور سیکلت',
+  title: 'موتور سیکلت',
+  groupLabel: 'موتور سیکلت',
+  subtitle: 'خدمات و اطلاعات موتور سیکلت',
+  badge: '',
+  icon: '🏍️',
+};
+
+// ---------------------------------------------------------------------------
+// §2 — CategoryCards. Services Catalog Reset (Sep 2026): `فرش`/`عطر و
+// ادکلن`/`کیف و کفش` now target their OWN new Category (see
+// `CATEGORY_CARD_REPARENTING` above) instead of sharing خانه و زندگی/
+// زیبایی/پوشاک — everything else about these 3 entries (title,
+// highlights, imageFile, targetServiceTitle) is unchanged. `موتور سیکلت`
+// is a new entry, added for the same reason. `imageFile` here is the
+// tier these 14 reference mockups are always assigned to, regardless of
+// whether the Category tier also reuses the same file.
 // ---------------------------------------------------------------------------
 const CATEGORY_CARDS: CategoryCardSeed[] = [
   {
-    categoryName: 'خانه و زندگی',
+    categoryName: 'فرش',
     targetServiceTitle: 'فرش و کفپوش',
     title: 'فرش',
     highlights: ['خدمات متنوع فرش', 'طرح‌های خرید و پشتیبانی'],
     imageFile: 'Carpet.jpeg',
-    sortOrder: 1,
+    sortOrder: 0,
   },
   {
-    // SERVICES-R5.26.2 root-cause fix — `targetServiceTitle` used to say
-    // 'خرید پوشاک', which is NOT one of `seed.ts`'s real پوشاک Services
-    // (verified directly against its own source array: `مانتو و کت زنانه`,
-    // `پوشاک مردانه`, `کفش`, `کیف`, `پوشاک کودک`, `لباس ورزشی` — no
-    // "خرید پوشاک" anywhere). That fictional title only ever resolved
-    // locally because a Service by that exact name happened to exist there
-    // too, as leftover state from the same undocumented, pre-this-script
-    // manual bootstrap that also gave پوشاک its slug/hero/first CategoryCard
-    // (see the audit's §3) — never present on a database seeded only
-    // through the real, committed `seed.ts` + this script. On a genuinely
-    // fresh database this Service lookup returned null, silently `continue`d
-    // before ever calling `findOrUploadMedia('Clothes.jpeg', ...)` — this is
-    // the exact, confirmed reason staging's prototype-image-coverage QA
-    // found no MediaAsset for `Clothes.jpeg` while every other entry (whose
-    // target Services all really do exist in `seed.ts`) succeeded.
     categoryName: 'پوشاک',
     targetServiceTitle: 'پوشاک مردانه',
     title: 'پوشاک',
     highlights: ['انواع خدمات پوشاک', 'طرح‌های خرید و پشتیبانی'],
     imageFile: 'Clothes.jpeg',
-    sortOrder: 1,
+    sortOrder: 0,
   },
   {
     categoryName: 'زیبایی',
@@ -209,7 +301,7 @@ const CATEGORY_CARDS: CategoryCardSeed[] = [
     title: 'آرایشی',
     highlights: ['خدمات متنوع آرایشی', 'طرح‌های زیبایی و پشتیبانی'],
     imageFile: 'Cosmetics.jpeg',
-    sortOrder: 1,
+    sortOrder: 0,
   },
   {
     categoryName: 'سلامت',
@@ -252,7 +344,7 @@ const CATEGORY_CARDS: CategoryCardSeed[] = [
     sortOrder: 0,
   },
   {
-    categoryName: 'زیبایی',
+    categoryName: 'عطر و ادکلن',
     targetServiceTitle: 'عطر و ادکلن',
     title: 'عطر و ادکلن',
     highlights: ['خدمات متنوع عطر و ادکلن', 'طرح‌های خرید و پشتیبانی'],
@@ -260,7 +352,7 @@ const CATEGORY_CARDS: CategoryCardSeed[] = [
     sortOrder: 0,
   },
   {
-    categoryName: 'پوشاک',
+    categoryName: 'کیف و کفش',
     targetServiceTitle: 'کفش',
     title: 'کیف و کفش',
     highlights: ['خدمات متنوع پوشاک', 'طرح‌های خرید و پشتیبانی'],
@@ -291,21 +383,24 @@ const CATEGORY_CARDS: CategoryCardSeed[] = [
     imageFile: 'tourism.jpeg',
     sortOrder: 0,
   },
+  {
+    categoryName: 'موتور سیکلت',
+    targetServiceTitle: 'موتور سیکلت',
+    title: 'موتور سیکلت',
+    highlights: ['خدمات متنوع موتور سیکلت', 'طرح‌های خرید و پشتیبانی'],
+    imageFile: 'Motor.jpeg',
+    sortOrder: 0,
+  },
 ];
 
 // ---------------------------------------------------------------------------
-// §3 — Real, correctly-owned, ACTIVE/PURCHASE/priced CardProducts, one per
-// already-populated Category, so R5.26 (and R5.27 later) has more than the
-// single pre-existing, mis-owned test row to discover (see the audit's §8).
-// `priceAmount` = what the customer pays Biawin; `valueAmount` = the card's
-// own displayed worth/ceiling — never conflated (SERVICES-R5.19 rule).
-//
-// Created with NO image (`mediaAssetId: null`) — this array used to reuse
-// its sibling CategoryCard's `imageFile` here too, which the Services Asset
-// Assignment Matrix (Sep 2026) confirmed was wrong (that mockup belongs to
-// the CategoryCard alone). No CardProduct-specific asset exists yet; never
-// inventing one is preferred over reusing a mismatched one — see the repair
-// pass in `main()` for existing rows already carrying the wrong image.
+// §3 — Real, correctly-owned, ACTIVE/PURCHASE/priced CardProducts.
+// `priceAmount` = what the customer pays Biawin; `valueAmount` = the
+// card's own displayed worth/ceiling — never conflated (SERVICES-R5.19
+// rule). Created with NO image (`mediaAssetId: null`) — see
+// `CardProductSeed`'s own doc comment; unchanged by the Services Catalog
+// Reset. No CardProduct is added for موتور سیکلت — per Part 7's explicit
+// rule, no price/value/product is invented where none exists.
 // ---------------------------------------------------------------------------
 const CARD_PRODUCTS: CardProductSeed[] = [
   {
@@ -349,20 +444,6 @@ const CARD_PRODUCTS: CardProductSeed[] = [
     validityDays: 365,
   },
   {
-    // SERVICES-R5.26.2 catalog-gap fix — this section's own comment above
-    // already said "one per already-populated Category", but بیمه (fully
-    // populated since R5.26.1 — real slug, real Category hero, real
-    // CategoryCard) never actually got its own CardProduct. Root cause of
-    // the "found 4, need >=5" QA gap: this array only ever had 4 entries;
-    // the 5th CardProduct some local dev databases show
-    // (`کارت اعتباری بیمه شخص ثالث`, id=4381a567..., wrongly owned by
-    // Service "لوازم نوزاد"/Category "کودک و نوجوان", `createdAt` two full
-    // days before this script's own rows) was never created by any seed —
-    // leftover manual test data from earlier R5.19/R5.26 QA work, which is
-    // exactly why it only ever existed on that one local database and
-    // never on staging. This row is a genuine, correctly-owned addition
-    // (the real `بیمه شخص ثالث` Service under `بیمه`) — it does not
-    // replace, touch, or reference that old stray row in any way.
     serviceTitle: 'بیمه شخص ثالث',
     title: 'کارت بیمه شخص ثالث',
     cardType: 'CREDIT_CARD',
@@ -408,48 +489,147 @@ async function main() {
     process.exit(1);
   }
 
-  console.log('Populating Category slug...');
+  console.log('Hiding legacy (non-prototype-backed) categories...');
+  for (const name of LEGACY_CATEGORIES_TO_HIDE) {
+    const category = await prisma.category.findFirst({ where: { name } });
+    if (!category) {
+      console.log(`  [skip, not found] ${name}`);
+      continue;
+    }
+    if (!category.active) {
+      console.log(`  [skip, already hidden] ${name}`);
+      continue;
+    }
+    await prisma.category.update({ where: { id: category.id }, data: { active: false, updatedBy: admin.id } });
+    console.log(`  [hidden] ${name}`);
+  }
+
+  console.log('\nPopulating Category slug/media (existing categories)...');
   for (const pop of CATEGORY_POPULATIONS) {
     const category = await prisma.category.findFirst({ where: { name: pop.categoryName } });
     if (!category) {
       console.warn(`  [skip] Category "${pop.categoryName}" not found — run seed.ts first.`);
       continue;
     }
-    if (category.slug) {
-      console.log(`  [skip, slug already set] ${pop.categoryName}`);
+    if (category.slug && category.mediaAssetId) {
+      console.log(`  [skip, already populated] ${pop.categoryName}`);
       continue;
     }
+    const mediaAssetId = await findOrUploadMedia(mediaService, prisma, pop.imageFile, admin.id);
     await prisma.category.update({
       where: { id: category.id },
-      data: { slug: pop.slug, updatedBy: admin.id },
+      data: {
+        slug: category.slug ?? pop.slug,
+        mediaAssetId: category.mediaAssetId ?? mediaAssetId,
+        updatedBy: admin.id,
+      },
     });
     console.log(`  [populated] ${pop.categoryName} -> slug=${pop.slug}`);
   }
 
-  console.log('\nRepairing Category thumbnails incorrectly assigned a CategoryCard-only image...');
-  // SERVICES ASSET ASSIGNMENT MATRIX (Sep 2026) — an earlier pass of this
-  // script assigned one of the 13 CategoryCard mockups to `Category.
-  // mediaAssetId` too. This clears it — and ONLY it: a Category's
-  // `mediaAssetId` is nulled IF AND ONLY IF it currently points at a
-  // filename in `CATEGORY_CARD_ONLY_IMAGES`. A Category whose thumbnail was
-  // since deliberately set to something else by an Admin (a real, distinct
-  // asset) is never touched — this is a targeted repair of one specific
-  // known-wrong value, never a blanket reset. Idempotent: a Category
-  // already null, or already pointing at a genuine distinct asset, is a
-  // no-op every subsequent run. No MediaAsset row or file is ever deleted —
-  // only the Category's *reference* to it is cleared.
-  const categoriesWithMedia = await prisma.category.findMany({
-    where: { mediaAssetId: { not: null } },
-    include: { mediaAsset: true },
-  });
-  for (const category of categoriesWithMedia) {
-    if (category.mediaAsset && CATEGORY_CARD_ONLY_IMAGES.has(category.mediaAsset.fileName)) {
-      await prisma.category.update({
-        where: { id: category.id },
-        data: { mediaAssetId: null, updatedBy: admin.id },
-      });
-      console.log(`  [repaired] ${category.name} thumbnail cleared (was ${category.mediaAsset.fileName}, a CategoryCard-only image)`);
+  console.log('\nCreating new prototype-backed categories...');
+  for (const cat of NEW_CATEGORIES) {
+    const existing = await prisma.category.findFirst({ where: { name: cat.categoryName } });
+    if (existing) {
+      console.log(`  [skip, already exists] ${cat.categoryName}`);
+      continue;
     }
+    const mediaAssetId = await findOrUploadMedia(mediaService, prisma, cat.imageFile, admin.id);
+    await prisma.category.create({
+      data: {
+        name: cat.categoryName,
+        description: cat.description,
+        keywords: cat.keywords,
+        slug: cat.slug,
+        mediaAssetId,
+        active: true,
+        createdBy: admin.id,
+        updatedBy: admin.id,
+      },
+    });
+    console.log(`  [created] ${cat.categoryName} -> slug=${cat.slug}`);
+  }
+
+  console.log('\nCreating the موتور سیکلت Service (no real Service pre-exists for it)...');
+  {
+    const motorCategory = await prisma.category.findFirst({ where: { name: MOTOR_SERVICE.categoryName } });
+    if (!motorCategory) {
+      console.warn(`  [skip] Category "${MOTOR_SERVICE.categoryName}" not found.`);
+    } else {
+      const existingService = await prisma.service.findFirst({
+        where: { categoryId: motorCategory.id, title: MOTOR_SERVICE.title },
+      });
+      if (existingService) {
+        console.log(`  [skip, already exists] ${MOTOR_SERVICE.title}`);
+      } else {
+        await prisma.service.create({
+          data: {
+            categoryId: motorCategory.id,
+            title: MOTOR_SERVICE.title,
+            groupLabel: MOTOR_SERVICE.groupLabel,
+            subtitle: MOTOR_SERVICE.subtitle,
+            badge: MOTOR_SERVICE.badge,
+            icon: MOTOR_SERVICE.icon,
+            availableMethods: [],
+            benefits: [],
+            galleryKeys: [],
+            faq: [],
+            tags: [],
+            active: true,
+            createdBy: admin.id,
+            updatedBy: admin.id,
+          },
+        });
+        console.log(`  [created] ${MOTOR_SERVICE.title}`);
+      }
+    }
+  }
+
+  console.log('\nRe-parenting Services onto their own new prototype-backed Category...');
+  for (const move of SERVICE_REPARENTING) {
+    const fromCategory = await prisma.category.findFirst({ where: { name: move.fromCategoryName } });
+    const toCategory = await prisma.category.findFirst({ where: { name: move.toCategoryName } });
+    if (!fromCategory || !toCategory) {
+      console.warn(`  [skip] Category "${move.fromCategoryName}" or "${move.toCategoryName}" not found.`);
+      continue;
+    }
+    const service = await prisma.service.findFirst({ where: { title: move.serviceTitle, categoryId: toCategory.id } });
+    if (service) {
+      console.log(`  [skip, already moved] ${move.serviceTitle} -> ${move.toCategoryName}`);
+      continue;
+    }
+    const serviceToMove = await prisma.service.findFirst({ where: { title: move.serviceTitle, categoryId: fromCategory.id } });
+    if (!serviceToMove) {
+      console.warn(`  [skip] Service "${move.serviceTitle}" not found under "${move.fromCategoryName}" (already moved elsewhere, or missing).`);
+      continue;
+    }
+    await prisma.service.update({ where: { id: serviceToMove.id }, data: { categoryId: toCategory.id, updatedBy: admin.id } });
+    console.log(`  [moved] ${move.serviceTitle}: ${move.fromCategoryName} -> ${move.toCategoryName}`);
+  }
+
+  console.log('\nRe-parenting CategoryCards onto their own new prototype-backed Category...');
+  for (const move of CATEGORY_CARD_REPARENTING) {
+    const fromCategory = await prisma.category.findFirst({ where: { name: move.fromCategoryName } });
+    const toCategory = await prisma.category.findFirst({ where: { name: move.toCategoryName } });
+    if (!fromCategory || !toCategory) {
+      console.warn(`  [skip] Category "${move.fromCategoryName}" or "${move.toCategoryName}" not found.`);
+      continue;
+    }
+    const alreadyMoved = await prisma.categoryCard.findFirst({ where: { title: move.title, categoryId: toCategory.id } });
+    if (alreadyMoved) {
+      console.log(`  [skip, already moved] ${move.title} -> ${move.toCategoryName}`);
+      continue;
+    }
+    const cardToMove = await prisma.categoryCard.findFirst({ where: { title: move.title, categoryId: fromCategory.id } });
+    if (!cardToMove) {
+      console.warn(`  [skip] CategoryCard "${move.title}" not found under "${move.fromCategoryName}" (already moved elsewhere, or missing).`);
+      continue;
+    }
+    await prisma.categoryCard.update({
+      where: { id: cardToMove.id },
+      data: { categoryId: toCategory.id, sortOrder: 0, updatedBy: admin.id },
+    });
+    console.log(`  [moved] ${move.title}: ${move.fromCategoryName} -> ${move.toCategoryName}`);
   }
 
   console.log('\nCreating CategoryCards...');
@@ -473,13 +653,6 @@ async function main() {
     });
     if (existing) {
       if (!existing.mediaAssetId) {
-        // SERVICES-R5.26.2 — same backfill-if-missing discipline as the
-        // CardProduct section below: an existing row is otherwise left
-        // untouched (never overwrites Admin-managed content), but a real
-        // gap in the one field this script itself owns (its own default
-        // image) is still worth healing — this exact field is what the
-        // authenticated QA's "every active CategoryCard's image resolves"
-        // check asserts on every row.
         const mediaAssetId = await findOrUploadMedia(mediaService, prisma, cardSeed.imageFile, admin.id);
         await prisma.categoryCard.update({
           where: { id: existing.id },
@@ -520,18 +693,12 @@ async function main() {
       include: { mediaAsset: true },
     });
     if (existing) {
-      // SERVICES ASSET ASSIGNMENT MATRIX repair (Sep 2026) — this row was
-      // previously created (or backfilled) with its sibling CategoryCard's
-      // mockup. Clears it IF AND ONLY IF it's still exactly that known-wrong
-      // value — never invents/backfills a replacement (no CardProduct-
-      // specific asset exists yet), and never touches a row already null or
-      // already pointing at a genuine distinct asset. Scoped EXCLUSIVELY to
-      // the 5 CardProducts this script's own CARD_PRODUCTS array
-      // creates/owns (matched by the same serviceId+title lookup as
-      // always) — the separate, pre-existing, unrelated stray CardProduct
-      // row that happens to reuse the same insurance.jpeg (see the Services
-      // Asset Assignment Matrix report §5/§9) is deliberately never reached
-      // by this loop and is left completely untouched.
+      // Services Asset Assignment Matrix repair (Sep 2026, unaffected by
+      // the Services Catalog Reset) — clears a CardProduct's mediaAssetId
+      // IF AND ONLY IF it's still exactly a CategoryCard-only mockup;
+      // never touches a row already null or already pointing at a
+      // genuine distinct asset; never reaches the pre-existing, unrelated
+      // stray CardProduct row.
       if (existing.mediaAsset && CATEGORY_CARD_ONLY_IMAGES.has(existing.mediaAsset.fileName)) {
         await prisma.cardProduct.update({
           where: { id: existing.id },
@@ -561,19 +728,6 @@ async function main() {
     });
     console.log(`  [created] ${cp.serviceTitle} / ${cp.title}`);
   }
-
-  // The generic "backfill any ACTIVE/PURCHASE CardProduct still missing an
-  // image with a thematic CategoryCard mockup" pass that used to run here
-  // (SERVICES-R5.26.2) has been REMOVED — it was the exact CardProduct-tier
-  // instance of the mis-assignment the Services Asset Assignment Matrix
-  // (Sep 2026) identified, and it is also the mechanism that gave the
-  // pre-existing stray row (`کارت اعتباری بیمه شخص ثالث`, Service
-  // `لوازم نوزاد`) its current `insurance.jpeg`. Removing it stops the
-  // pattern from being reproduced or spread to any future CardProduct; it
-  // does NOT touch that stray row's already-set value — this script has no
-  // authority over data it didn't create, and that row is intentionally
-  // left exactly as it is (a separate, unrelated, already-reported
-  // data-quality issue).
 
   console.log('\nDone.');
   await app.close();
