@@ -37,6 +37,13 @@
  * application context — the same architecture `seed-home-media.ts`
  * established, never a filesystem-path/raw-storage-key shortcut.
  *
+ * R5.26.2 Legacy CardProduct Cleanup (Sep 2026) — also deactivates known
+ * legacy/non-canonical `CardProduct` rows (`status: INACTIVE`, never
+ * deleted) — see `LEGACY_CARD_PRODUCTS_TO_DEACTIVATE`'s own doc comment.
+ * Runs on every deploy (`deploy/staging/deploy.sh`'s `DEFAULT_CATALOG_CMD`,
+ * after `seed.ts`), so this is also where any such staging state belongs —
+ * never a manual DB edit.
+ *
  * Run: `pnpm --filter @biawin/backend seed:default-catalog`
  */
 import { readFileSync } from 'node:fs';
@@ -142,6 +149,37 @@ const LEGACY_CATEGORIES_TO_HIDE: string[] = [
   'موبایل و لپ‌تاپ',
   'کارت هدیه',
   'کودک و نوجوان',
+];
+
+// ---------------------------------------------------------------------------
+// §0b — R5.26.2 Legacy CardProduct Cleanup audit (Sep 2026): a pre-existing,
+// non-canonical CardProduct ("کارت اعتباری بیمه شخص ثالث", under Service
+// "لوازم نوزاد" / Category "کودک و نوجوان" — one of the categories
+// `LEGACY_CATEGORIES_TO_HIDE` above already hides) was created by hand
+// through the real Admin API on 2026-09-09, predates this script's own
+// canonical catalog entirely, and is NOT one of the 5 real `CARD_PRODUCTS`
+// below (see docs/services-r5-26-2-default-catalog-seed-qa-finalization-
+// report.md §10.2 — the genuine 5th canonical entry, "کارت بیمه شخص ثالث"
+// under Service "بیمه شخص ثالث", is a DIFFERENT row and was added
+// specifically so this stray one would never need to be reused or renamed).
+//
+// The Cleanup audit found 4 real, harmless `pending` Orders referencing it
+// (zero payment/fulfillment side effect ever existed), and
+// `Order.cardProductId` is `onDelete: Restrict` — so it can never be safely
+// hard-deleted while those Orders exist. The correct, reversible fix is
+// `status: INACTIVE`, which removes it from every customer-facing/
+// purchasable surface without touching those Orders.
+//
+// Matched by Category+Service+title, never by a hardcoded id — a raw UUID
+// is specific to one local database and would never generalize to staging
+// or any other environment (Prisma ids aren't reproducible across DBs).
+// Same "if it exists" contract as `LEGACY_CATEGORIES_TO_HIDE`: a row not
+// found here (this environment never had it, or it was already handled) is
+// logged and skipped, never fabricated, never re-created, and never has any
+// field but `status` touched.
+// ---------------------------------------------------------------------------
+const LEGACY_CARD_PRODUCTS_TO_DEACTIVATE: { categoryName: string; serviceTitle: string; title: string }[] = [
+  { categoryName: 'کودک و نوجوان', serviceTitle: 'لوازم نوزاد', title: 'کارت اعتباری بیمه شخص ثالث' },
 ];
 
 // ---------------------------------------------------------------------------
@@ -727,6 +765,29 @@ async function main() {
       },
     });
     console.log(`  [created] ${cp.serviceTitle} / ${cp.title}`);
+  }
+
+  console.log('\nDeactivating known legacy/non-canonical CardProducts (never deleted, never fabricated)...');
+  for (const legacy of LEGACY_CARD_PRODUCTS_TO_DEACTIVATE) {
+    const category = await prisma.category.findFirst({ where: { name: legacy.categoryName } });
+    const service = category
+      ? await prisma.service.findFirst({ where: { categoryId: category.id, title: legacy.serviceTitle } })
+      : null;
+    if (!service) {
+      console.log(`  [skip, not found] ${legacy.title} (Service "${legacy.serviceTitle}" under "${legacy.categoryName}" does not exist on this environment)`);
+      continue;
+    }
+    const cardProduct = await prisma.cardProduct.findFirst({ where: { serviceId: service.id, title: legacy.title } });
+    if (!cardProduct) {
+      console.log(`  [skip, not found] ${legacy.title}`);
+      continue;
+    }
+    if (cardProduct.status !== 'ACTIVE') {
+      console.log(`  [skip, already ${cardProduct.status}] ${legacy.title}`);
+      continue;
+    }
+    await prisma.cardProduct.update({ where: { id: cardProduct.id }, data: { status: 'INACTIVE', updatedBy: admin.id } });
+    console.log(`  [deactivated] ${legacy.title} -> INACTIVE`);
   }
 
   console.log('\nDone.');
