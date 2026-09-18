@@ -1,5 +1,6 @@
-import { Badge, Card, color, spacing, typography } from "@biawin/ui";
+import { Card, color, spacing, typography } from "@biawin/ui";
 import type { CategoryCardDto } from "../../lib/services-api";
+import { formatToman } from "../../lib/format";
 
 export interface CategoryCardProps {
   categoryCard: CategoryCardDto;
@@ -7,44 +8,38 @@ export interface CategoryCardProps {
 }
 
 /**
- * SERVICES-R5.21 — Discovery Card: one discovery/marketing tile on a
- * Category Landing page (`/categories/[slug]`). Unlike every other card
- * in this Services module (`ServiceCard`/`CardProductCard`, both stuck
- * with an icon-only fallback because no `imageUrl` resolver exists for
- * their `imageKey`), CategoryCard's `image` is ALREADY a real, resolved
- * URL — the backend resolves `mediaAssetId` via `MediaStorageService`
- * server-side (see `docs/services-r5-21-category-landing-discovery-card-
- * contract.md` §3/§5). Still never fabricates a placeholder when `image`
- * is null — the same "no invented image" discipline as everywhere else.
+ * R5.26.2 prototype card contract — the approved prototype's discovery
+ * card is deliberately just the real photo plus a price, nothing else
+ * (no title, subtitle, bullet list, badge, icon, or CTA text rendered
+ * inside the visual card). This supersedes SERVICES-R5.21/R5.23's richer
+ * "marketing tile" treatment. `categoryCard.title` is kept ONLY as the
+ * button's `aria-label` — real accessibility/navigation need, not visual
+ * content — so a screen-reader user still hears what the card is, per
+ * this stage's own "do not remove navigation/interaction behavior merely
+ * because the visual content is simplified" rule.
  *
- * CategoryCard is a discovery/marketing card, NOT a purchasable product —
- * it carries no price, no CardProduct reference, no purchase CTA. Its
- * only action is navigation to the target Service's own Detail page,
- * where the real CardProduct purchase flow lives.
+ * `image` is already a resolved, real URL (`MediaStorageService`,
+ * server-side) — never fabricates a placeholder when null (same "no
+ * invented image" discipline as everywhere else). `priceAmount` is
+ * READ-ONLY, resolved server-side from the target Service's own single
+ * ACTIVE `CardProduct.priceAmount` (see `CategoryCardDto`'s own doc
+ * comment) — never hardcoded here, never a second price source. `null`
+ * (no purchasable product yet, or ambiguous) renders the same
+ * "قیمت اعلام نشده" empty-state copy `formatCardProductPrice` already
+ * established for `CardProduct` itself, rather than inventing new wording
+ * or hiding the price row inconsistently.
  *
- * SERVICES-R5.23 — visual fidelity pass against the product-owner-
- * provided reference card mockups (`categories/` — reference-only, never
- * read by this component or any other application code, see
- * docs/services-r5-23-services-prototype-fidelity-audit.md §2/§7). The
- * reference cards are dominated by a tall, ~2:3 portrait product photo;
- * this card's image now uses `aspect-ratio: 3/4` (previously a flat fixed
- * `height: 140`) to read as photo-forward the same way, while staying
- * responsive to the grid's own column width instead of a hardcoded pixel
- * height. Deliberately NOT reproduced: the reference cards' own "خدمات"
- * pill (redundant chrome — a Category Landing page's cards are
- * self-evidently service cards from page context alone) and their
- * bottom-right icon circle (`CATEGORY_ICON`, the only real icon set in
- * this app, is a reused/mismatched 6-icon set across 19 categories —
- * see the audit doc's own finding; adding it here would show a wrong
- * icon for most real cards, which is worse than no icon).
+ * CategoryCard is still a discovery/marketing card, NOT a purchasable
+ * product in storage — it carries no CardProduct reference, no purchase
+ * CTA. Its only action remains navigation to the target Service's own
+ * Detail page, where the real CardProduct purchase flow lives.
  */
 export function CategoryCard({ categoryCard, onSelect }: CategoryCardProps) {
-  const highlights = categoryCard.highlights.slice(0, 2);
-
   return (
     <button
       type="button"
       onClick={() => onSelect(categoryCard)}
+      aria-label={categoryCard.title}
       style={{ all: "unset", display: "block", width: "100%", cursor: "pointer" }}
     >
       <Card padded={false} style={{ display: "flex", flexDirection: "column", gap: spacing.xs, height: "100%", overflow: "hidden" }}>
@@ -70,26 +65,9 @@ export function CategoryCard({ categoryCard, onSelect }: CategoryCardProps) {
             🔎
           </div>
         )}
-        <div style={{ display: "flex", flexDirection: "column", gap: spacing.xs, padding: spacing.sm }}>
-          {categoryCard.badge && <Badge tone="info">{categoryCard.badge}</Badge>}
-          <strong style={{ ...typography.body, fontWeight: 700, color: color.ink }}>{categoryCard.title}</strong>
-          {categoryCard.subtitle && (
-            <span style={{ ...typography.caption, fontWeight: 400, color: color.muted }}>{categoryCard.subtitle}</span>
-          )}
-          {highlights.length > 0 && (
-            <ul style={{ margin: 0, padding: 0, listStyle: "none", display: "flex", flexDirection: "column", gap: 4 }}>
-              {highlights.map((h) => (
-                <li key={h} style={{ display: "flex", alignItems: "center", gap: 6, ...typography.caption, color: color.deep }}>
-                  <span aria-hidden="true" style={{ width: 5, height: 5, borderRadius: "50%", background: color.primary, flexShrink: 0 }} />
-                  {h}
-                </li>
-              ))}
-            </ul>
-          )}
-          <span aria-hidden="true" style={{ ...typography.caption, color: color.primary, fontWeight: 700, marginTop: spacing.xs }}>
-            مشاهده خدمت ←
-          </span>
-        </div>
+        <span style={{ ...typography.body, fontWeight: 700, color: color.deep, padding: spacing.sm }}>
+          {categoryCard.priceAmount != null ? formatToman(categoryCard.priceAmount) : "قیمت اعلام نشده"}
+        </span>
       </Card>
     </button>
   );

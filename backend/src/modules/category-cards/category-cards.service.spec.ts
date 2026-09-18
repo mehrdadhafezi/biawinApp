@@ -27,7 +27,11 @@ describe('CategoryCardsService', () => {
   let mediaStorage: { resolvePublicUrl: jest.Mock };
   let auditLog: { record: jest.Mock };
 
-  const targetService = { id: 'svc-1', title: 'کفش' };
+  const targetService = {
+    id: 'svc-1',
+    title: 'کفش',
+    cardProducts: [] as { priceAmount: number | null }[],
+  };
   const category = { id: 'cat-1', name: 'پوشاک' };
   const mediaAsset = { id: 'media-1', key: 'media/photo.webp' };
   const meta = { ip: '127.0.0.1', userAgent: 'jest' };
@@ -138,12 +142,63 @@ describe('CategoryCardsService', () => {
       expect(mediaStorage.resolvePublicUrl).not.toHaveBeenCalled();
     });
 
-    it('the public response never contains a CardProduct-shaped field', async () => {
+    it('the public response never contains a raw CardProduct reference/status field (priceAmount is the one deliberate, READ-ONLY exception — R5.26.2)', async () => {
       prisma.categoryCard.findMany.mockResolvedValue([makeCard()]);
       const result = await service.list(0, 20);
       expect(result.items[0]).not.toHaveProperty('cardProductId');
-      expect(result.items[0]).not.toHaveProperty('priceAmount');
       expect(result.items[0]).not.toHaveProperty('status');
+    });
+
+    describe('priceAmount resolution (R5.26.2 — Admin CardProduct.priceAmount is the ONLY source of truth, never a second persisted field)', () => {
+      it("resolves the target Service's single ACTIVE CardProduct priceAmount", async () => {
+        prisma.categoryCard.findMany.mockResolvedValue([
+          makeCard({
+            targetService: {
+              ...targetService,
+              cardProducts: [{ priceAmount: 10_000_000 }],
+            },
+          }),
+        ]);
+        const result = await service.list(0, 20);
+        expect(result.items[0].priceAmount).toBe(10_000_000);
+      });
+
+      it('resolves null (never fabricated) when the target Service has zero ACTIVE CardProducts', async () => {
+        prisma.categoryCard.findMany.mockResolvedValue([
+          makeCard({ targetService: { ...targetService, cardProducts: [] } }),
+        ]);
+        const result = await service.list(0, 20);
+        expect(result.items[0].priceAmount).toBeNull();
+      });
+
+      it('resolves null when the single ACTIVE CardProduct itself has no priceAmount set yet', async () => {
+        prisma.categoryCard.findMany.mockResolvedValue([
+          makeCard({
+            targetService: {
+              ...targetService,
+              cardProducts: [{ priceAmount: null }],
+            },
+          }),
+        ]);
+        const result = await service.list(0, 20);
+        expect(result.items[0].priceAmount).toBeNull();
+      });
+
+      it('resolves null and never guesses when the target Service has MORE THAN ONE ACTIVE CardProduct (ambiguous — must not choose one arbitrarily)', async () => {
+        prisma.categoryCard.findMany.mockResolvedValue([
+          makeCard({
+            targetService: {
+              ...targetService,
+              cardProducts: [
+                { priceAmount: 1_000_000 },
+                { priceAmount: 2_000_000 },
+              ],
+            },
+          }),
+        ]);
+        const result = await service.list(0, 20);
+        expect(result.items[0].priceAmount).toBeNull();
+      });
     });
   });
 

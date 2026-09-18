@@ -13,6 +13,7 @@ function categoryCard(overrides: Partial<CategoryCardDto> = {}): CategoryCardDto
     image: null,
     highlights: [],
     sortOrder: 0,
+    priceAmount: 10_000_000,
     ...overrides,
   };
 }
@@ -34,12 +35,12 @@ describe("CategoryCardGrid", () => {
     expect(html).toContain("در حال حاضر کارتی برای این دسته‌بندی ثبت نشده است.");
   });
 
-  it("renders real discovery cards when present", () => {
+  it("renders real discovery cards when present (R5.26.2 — image + price card; title survives only as aria-label)", () => {
     const html = renderToStaticMarkup(
       <CategoryCardGrid categoryCards={[categoryCard()]} error={null} onSelect={() => {}} />,
     );
-    expect(html).toContain("کیف و کفش");
-    expect(html).toContain("مشاهده خدمت ←");
+    expect(html).toContain('aria-label="کیف و کفش"');
+    expect(html).toContain("1,000,000 تومان");
   });
 
   it("trusts the server-provided list as already active-only — never re-filters or hides a card the API returned", () => {

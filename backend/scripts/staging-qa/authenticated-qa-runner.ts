@@ -232,6 +232,46 @@ function detail(res: ApiResponse<unknown>): string {
   return `HTTP ${res.status}${res.errorMessage ? ' — ' + res.errorMessage : ''}`;
 }
 
+/**
+ * R5.26.2 QA forensic fix — every `image`/`mediaAssetId`-resolved URL this
+ * script receives from the API is built by `MediaStorageService.
+ * resolvePublicUrl()` from the backend's `PUBLIC_API_ORIGIN` config (a
+ * real public domain on staging, e.g. `https://api-staging.biawin.ir`) —
+ * correct and required for real customers/browsers, but NOT reachable
+ * from inside the `backend` compose-network container this script itself
+ * runs in via `run-authenticated-qa.sh` (the exact same container-egress
+ * limitation already diagnosed and fixed for the admin-login/media-upload
+ * checks — see the "Uploaded media is retrievable via its storage route"
+ * step's own comment, which independently confirmed via a real external
+ * `curl` that the SAME route+domain resolves correctly from a normal
+ * internet client, proving this is a container-network limitation, never
+ * a media-serving defect). This generalizes that already-proven fix to
+ * every other image-resolution check in this file: re-targets the exact
+ * same path onto this script's own `API_ORIGIN` (internal when run via
+ * the deploy pipeline, public if ever run standalone) instead of the
+ * embedded public domain. Never touches `MediaStorageService` or the real
+ * public URL customers/browsers receive — only how THIS test script
+ * verifies it loads.
+ */
+async function fetchMediaViaApiOrigin(imageUrl: string): Promise<Response> {
+  const mediaPath = new URL(imageUrl).pathname;
+  const targetUrl = `${API_ORIGIN}${mediaPath}`;
+  try {
+    return await fetch(targetUrl);
+  } catch (err) {
+    const cause = err instanceof Error && 'cause' in err ? err.cause : undefined;
+    const causeDetail =
+      cause instanceof Error
+        ? `${cause.name}: ${cause.message}`
+        : cause !== undefined
+          ? String(cause)
+          : 'no cause reported';
+    throw new Error(
+      `network request to ${targetUrl} failed before a response was received — ${causeDetail}`,
+    );
+  }
+}
+
 // A 1x1 transparent PNG — minimal, valid, real image bytes (not a renamed
 // text file) so the backend's magic-byte validation genuinely passes.
 const VALID_PNG_1x1 = Buffer.from(
@@ -614,56 +654,24 @@ async function main(): Promise<void> {
       await step(
         'Uploaded media is retrievable via its storage route (checked via API_ORIGIN, not the hardcoded public domain — see comment)',
         async () => {
-          // SERVICES-R1.6 finding: MediaStorageService.resolvePublicUrl()
-          // (backend/src/modules/media/media-storage.service.ts) always
-          // builds an ABSOLUTE URL from the backend's own PUBLIC_API_ORIGIN
-          // config — independent of this script's API_ORIGIN. When this
-          // script runs inside the backend compose-network container (see
-          // deploy/staging/run-authenticated-qa.sh), that public-domain URL
-          // hits the exact same network limitation the admin-login fix
-          // (SERVICES-R1.3) worked around: the container cannot reach its
-          // own public HTTPS domain. External reachability of the SAME
-          // route pattern was independently confirmed this session —
-          // `https://api-staging.biawin.ir/api/v1/media/<nonexistent-file>`
-          // returns a real 404 (not a connection/DNS failure) from a normal
-          // internet client, proving the route+domain resolve correctly;
-          // this is a container egress limitation, not a media/storage
-          // defect. Re-targeting the SAME path onto this script's own
-          // configured API_ORIGIN (internal when run via
-          // run-authenticated-qa.sh, public if ever run standalone) matches
-          // every other request in this script and still proves the file
-          // is genuinely stored and servable end-to-end. Public HTTPS
-          // reachability of the customer-facing path is covered separately
-          // by the browser-qa layer's own real-browser image-loading checks
-          // (Home's `<img>` tags resolve through the real public domain in
-          // every browser-qa run) and was independently curl-verified this
-          // session for the media route pattern specifically.
-          const mediaPath = new URL(disposableMediaUrl!).pathname;
-          const targetUrl = `${API_ORIGIN}${mediaPath}`;
-          let res: Response;
-          try {
-            res = await fetch(targetUrl);
-          } catch (err) {
-            const cause =
-              err instanceof Error && 'cause' in err ? err.cause : undefined;
-            const causeDetail =
-              cause instanceof Error
-                ? `${cause.name}: ${cause.message}`
-                : cause !== undefined
-                  ? String(cause)
-                  : 'no cause reported';
-            throw new Error(
-              `network request to ${targetUrl} failed before a response was received — ${causeDetail}`,
-            );
-          }
+          // SERVICES-R1.6 finding, generalized R5.26.2 into
+          // `fetchMediaViaApiOrigin()` (see that helper's own doc comment
+          // for the full, independently-curl-verified root cause):
+          // `MediaStorageService.resolvePublicUrl()` always builds an
+          // ABSOLUTE URL from the backend's own PUBLIC_API_ORIGIN config —
+          // not reachable from inside this script's own compose-network
+          // container. Public HTTPS reachability of the customer-facing
+          // path is covered separately by the browser-qa layer's own
+          // real-browser image-loading checks.
+          const res = await fetchMediaViaApiOrigin(disposableMediaUrl!);
           assert(
             res.ok,
-            `expected media at ${mediaPath} to be retrievable via API_ORIGIN (${API_ORIGIN}), got HTTP ${res.status}`,
+            `expected media at ${new URL(disposableMediaUrl!).pathname} to be retrievable via API_ORIGIN (${API_ORIGIN}), got HTTP ${res.status}`,
           );
           const ct = res.headers.get('content-type');
           assert(
             !!ct && ct.startsWith('image/'),
-            `expected an image content-type from ${targetUrl}, got ${ct}`,
+            `expected an image content-type from ${API_ORIGIN}${new URL(disposableMediaUrl!).pathname}, got ${ct}`,
           );
         },
       );
@@ -1527,7 +1535,7 @@ async function propagationImageCheck(admin: AdminSession): Promise<void> {
         !!row?.image,
         'expected the public row to have a resolved image URL',
       );
-      const imgRes = await fetch(row!.image!);
+      const imgRes = await fetchMediaViaApiOrigin(row!.image!);
       assert(
         imgRes.ok,
         `expected the new image URL to load, got ${detail(imgRes)}`,
@@ -2083,7 +2091,7 @@ async function servicesR5261DefaultCatalogCheck(): Promise<void> {
           `SERVICES-R5.26.1 CategoryCard "${card.title}" image resolves and target Service belongs to "${category.name}"`,
           async () => {
             assert(!!card.image, `expected CategoryCard "${card.title}" to have a resolved image URL`);
-            const imgRes = await fetch(card.image!);
+            const imgRes = await fetchMediaViaApiOrigin(card.image!);
             assert(imgRes.ok, `expected CategoryCard "${card.title}"'s image to load, got ${detail(imgRes)}`);
             const svc = await apiCall<{ id: string; categoryId: string }>(API_ORIGIN, `/api/v1/services/${card.targetServiceId}`);
             assert(svc.ok, `expected the target Service to resolve, got ${detail(svc)}`);
@@ -2125,13 +2133,23 @@ async function servicesR5261DefaultCatalogCheck(): Promise<void> {
     );
   } else {
     await step(
-      `SERVICES-R5.26.1 CardProduct priceAmount/valueAmount are independently positive and its image resolves (id=${cardProduct.id})`,
+      `SERVICES-R5.26.1 CardProduct priceAmount/valueAmount are independently positive, and its image (if any) resolves (id=${cardProduct.id})`,
       async () => {
         assert(cardProduct.priceAmount! > 0, 'expected a positive priceAmount (what the customer pays)');
         assert(cardProduct.valueAmount! > 0, 'expected a positive valueAmount (the card\'s own displayed worth), independent of priceAmount');
-        assert(!!cardProduct.image, 'expected the CardProduct to have a resolved image URL');
-        const imgRes = await fetch(cardProduct.image!);
-        assert(imgRes.ok, `expected the CardProduct's image to load, got ${detail(imgRes)}`);
+        // R5.26.2 asset-ownership fix — a CardProduct is no longer required
+        // to HAVE an image: the CategoryCard-shaped mockup it used to
+        // borrow was deliberately removed (see CATEGORY_CARD_ONLY_IMAGES in
+        // seed-default-catalog.ts), and no CardProduct-specific asset
+        // exists yet for any real card today. `image: null` is now a real,
+        // expected, honest content state (never fabricated) — same
+        // "optional, never faked" discipline `priceAmount`/`valueAmount`
+        // already follow elsewhere. Only asserted THAT it resolves when
+        // one genuinely is set.
+        if (cardProduct.image) {
+          const imgRes = await fetchMediaViaApiOrigin(cardProduct.image);
+          assert(imgRes.ok, `expected the CardProduct's image to load, got ${detail(imgRes)}`);
+        }
       },
     );
   }
@@ -2148,24 +2166,22 @@ async function servicesR5261DefaultCatalogCheck(): Promise<void> {
  * Entirely dynamic — counts and ids are discovered live, nothing hardcoded.
  */
 /**
- * SERVICES-R5.26.2 (catalog-bootstrap correction pass) — the repository's
- * actual `docs/prototypes/services/categories/` directory is FLAT (14
- * individual image files, confirmed by direct enumeration — no nested
- * per-category subdirectories anywhere under it). The 14 known reference
- * filenames and their real, visually-verified Category ownership are
- * documented in full in `docs/services-r5-26-1-default-catalog-audit.md`
- * §2/§4 — 13 resolve to a real Category/CategoryCard, one (`Motor.jpeg`,
- * موتور سیکلت) is a deliberate, documented exclusion (no real Category/
- * Service exists for it — see that audit's §5). This constant is the same
- * list, kept here so the QA can independently verify the bootstrap
+ * Services Catalog Reset (Sep 2026) — the repository's `docs/prototypes/
+ * services/categories/` directory is FLAT (14 individual image files, no
+ * nested per-category subdirectories). ALL 14, Motor.jpeg included, now
+ * resolve to a real Category/CategoryCard — commit c4bab52 created the
+ * موتور سیکلت Category/Service/CategoryCard specifically for it, per an
+ * explicit, confirmed business decision superseding R5.26.1's original
+ * "Motor.jpeg is a deliberate exclusion" contract (see that commit and
+ * `docs/services-catalog-reset-report.md`). This constant is the same
+ * 14-item list, kept here so the QA can independently verify the bootstrap
  * actually used every expected image and fabricated nothing extra.
  */
 const EXPECTED_PROTOTYPE_IMAGES = [
   'Carpet.jpeg', 'Clothes.jpeg', 'Cosmetics.jpeg', 'Dental.jpeg', 'Digital.jpeg',
-  'Gold.jpeg', 'Home appliances.jpeg', 'Kalakhab.jpeg', 'Perfume.jpeg', 'Shoes.jpeg',
-  'Sofa.jpeg', 'insurance.jpeg', 'tourism.jpeg',
+  'Gold.jpeg', 'Home appliances.jpeg', 'Kalakhab.jpeg', 'Motor.jpeg', 'Perfume.jpeg',
+  'Shoes.jpeg', 'Sofa.jpeg', 'insurance.jpeg', 'tourism.jpeg',
 ] as const;
-const DELIBERATELY_EXCLUDED_PROTOTYPE_IMAGE = 'Motor.jpeg';
 
 async function servicesR5262DefaultCatalogFinalizationCheck(admin: AdminSession | undefined): Promise<void> {
   await step('SERVICES-R5.26.2 real Categories exist', async () => {
@@ -2184,7 +2200,7 @@ async function servicesR5262DefaultCatalogFinalizationCheck(admin: AdminSession 
       const withSlug = res.body.items.filter((c) => !!c.slug);
       for (const c of withSlug) {
         if (!c.image) continue; // a slug with no hero image set yet is a real, valid content state — not asserted against here
-        const imgRes = await fetch(c.image);
+        const imgRes = await fetchMediaViaApiOrigin(c.image);
         assert(imgRes.ok, `expected Category "${c.name}"'s image to load, got ${detail(imgRes)}`);
       }
       return withSlug;
@@ -2215,7 +2231,7 @@ async function servicesR5262DefaultCatalogFinalizationCheck(admin: AdminSession 
       async () => {
         for (const card of activeCategoryCards) {
           assert(!!card.image, `expected CategoryCard "${card.title}" to have a resolved image URL`);
-          const imgRes = await fetch(card.image!);
+          const imgRes = await fetchMediaViaApiOrigin(card.image!);
           assert(imgRes.ok, `expected CategoryCard "${card.title}"'s image to load, got ${detail(imgRes)}`);
           const svc = await apiCall<{ id: string; categoryId: string }>(API_ORIGIN, `/api/v1/services/${card.targetServiceId}`);
           assert(svc.ok, `expected CategoryCard "${card.title}"'s targetService to resolve, got ${detail(svc)}`);
@@ -2282,16 +2298,23 @@ async function servicesR5262DefaultCatalogFinalizationCheck(admin: AdminSession 
     );
   } else {
     await step(
-      `SERVICES-R5.26.2 every real CardProduct is ACTIVE/PURCHASE with a positive price and value, a resolving image, and correct Service/Category ownership (n=${cardProducts.length})`,
+      `SERVICES-R5.26.2 every real CardProduct is ACTIVE/PURCHASE with a positive price and value, its image (if any) resolves, and correct Service/Category ownership (n=${cardProducts.length})`,
       async () => {
         for (const cp of cardProducts) {
           assert(cp.status === 'ACTIVE', `expected CardProduct ${cp.id} to be ACTIVE (public /cards never returns non-ACTIVE anyway — a real invariant check), got ${cp.status}`);
           assert(cp.journeyType === 'PURCHASE', `expected CardProduct ${cp.id} to be journeyType=PURCHASE, got ${cp.journeyType}`);
           assert(typeof cp.priceAmount === 'number' && cp.priceAmount > 0, `expected CardProduct ${cp.id} to have a positive priceAmount, got ${cp.priceAmount}`);
           assert(typeof cp.valueAmount === 'number' && cp.valueAmount > 0, `expected CardProduct ${cp.id} to have a positive valueAmount, got ${cp.valueAmount}`);
-          assert(!!cp.image, `expected CardProduct ${cp.id} to have a resolved image URL`);
-          const imgRes = await fetch(cp.image!);
-          assert(imgRes.ok, `expected CardProduct ${cp.id}'s image to load, got ${detail(imgRes)}`);
+          // R5.26.2 asset-ownership fix — see the SERVICES-R5.26.1 check's
+          // own comment on this exact point: a CardProduct is no longer
+          // required to have an image (the borrowed CategoryCard mockup
+          // was deliberately removed, no CardProduct-specific asset exists
+          // yet) — `null` is a real, honest, expected state now, never
+          // fabricated. Only asserted THAT it resolves when one is set.
+          if (cp.image) {
+            const imgRes = await fetchMediaViaApiOrigin(cp.image);
+            assert(imgRes.ok, `expected CardProduct ${cp.id}'s image to load, got ${detail(imgRes)}`);
+          }
           const svc = await apiCall<{ id: string; categoryId: string }>(API_ORIGIN, `/api/v1/services/${cp.serviceId}`);
           assert(svc.ok, `expected CardProduct ${cp.id}'s serviceId (${cp.serviceId}) to resolve to a real Service, got ${detail(svc)}`);
           const cat = await apiCall<{ id: string }>(API_ORIGIN, `/api/v1/categories/${svc.body.categoryId}`);
@@ -2302,11 +2325,11 @@ async function servicesR5262DefaultCatalogFinalizationCheck(admin: AdminSession 
   }
 
   // --- Prototype-directory bootstrap coverage — proves the catalog was
-  // actually built FROM the real reference images, not from arbitrary
-  // substitutes, and that the one deliberate exclusion (Motor.jpeg) still
-  // holds (never silently created). Needs Admin access to see raw
-  // `mediaAssetId` values (the public API only ever returns resolved image
-  // URLs) — skipped, not failed, without an admin session.
+  // actually built FROM all 14 real reference images (Motor.jpeg included,
+  // per the Services Catalog Reset), not from arbitrary substitutes. Needs
+  // Admin access to see raw `mediaAssetId` values (the public API only
+  // ever returns resolved image URLs) — skipped, not failed, without an
+  // admin session.
   if (!admin) {
     skip('SERVICES-R5.26.2 prototype-image bootstrap coverage', 'no admin session available');
   } else {
@@ -2335,16 +2358,6 @@ async function servicesR5262DefaultCatalogFinalizationCheck(admin: AdminSession 
         for (const fileName of EXPECTED_PROTOTYPE_IMAGES) {
           assert(mediaByFileName?.has(fileName) ?? false, `expected a real MediaAsset for reference image "${fileName}" (the default-catalog bootstrap's own source), found none`);
         }
-      },
-    );
-
-    await step(
-      `SERVICES-R5.26.2 "${DELIBERATELY_EXCLUDED_PROTOTYPE_IMAGE}" stays a documented exclusion, never silently imported`,
-      async () => {
-        assert(
-          !(mediaByFileName?.has(DELIBERATELY_EXCLUDED_PROTOTYPE_IMAGE) ?? false),
-          `expected "${DELIBERATELY_EXCLUDED_PROTOTYPE_IMAGE}" to remain unimported (no real Category/Service exists for it — see docs/services-r5-26-1-default-catalog-audit.md §5); finding a real MediaAsset for it means either a real Category/Service now exists (update this list) or it was fabricated`,
-        );
       },
     );
 

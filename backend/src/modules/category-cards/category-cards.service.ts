@@ -1,5 +1,6 @@
 import {
   Injectable,
+  Logger,
   NotFoundException,
   UnprocessableEntityException,
 } from '@nestjs/common';
@@ -13,13 +14,31 @@ import type { ReorderCategoryCardsDto } from './dto/reorder-category-cards.dto';
 
 type CardWithRelations = CategoryCard & {
   mediaAsset: MediaAsset | null;
-  targetService: { id: string; title: string } | null;
+  targetService: {
+    id: string;
+    title: string;
+    cardProducts: { priceAmount: number | null }[];
+  } | null;
   category: { id: string; name: string } | null;
 };
 
 const ADMIN_INCLUDE = {
   mediaAsset: true,
-  targetService: { select: { id: true, title: true } },
+  targetService: {
+    select: {
+      id: true,
+      title: true,
+      // R5.26.2 price contract — only the customer-visible (`status:
+      // ACTIVE`) CardProducts count when resolving this card's price;
+      // a DRAFT/INACTIVE/EXPIRED sibling a customer will never see must
+      // never make an unambiguous Service look ambiguous. See
+      // `resolvePriceAmount()`'s own doc comment for the 0/1/many rule.
+      cardProducts: {
+        where: { status: 'ACTIVE' },
+        select: { priceAmount: true },
+      },
+    },
+  },
   category: { select: { id: true, name: true } },
 } as const;
 
@@ -33,6 +52,18 @@ export interface CategoryCardPublicResponse {
   image: string | null;
   highlights: unknown;
   sortOrder: number;
+  /**
+   * R5.26.2 price contract — READ-ONLY, resolved server-side from the
+   * target Service's own CardProduct.priceAmount; never a second,
+   * persisted price on CategoryCard itself (the schema's own module
+   * comment: "CategoryCard... carries no price... must NEVER reference
+   * CardProduct directly" — this resolves through the relation at read
+   * time, it does not violate that boundary by storing a duplicate).
+   * `null` when the target Service has zero ACTIVE CardProducts (never
+   * fabricated) or when it has more than one (ambiguous — see
+   * `resolvePriceAmount()`).
+   */
+  priceAmount: number | null;
 }
 
 export interface CategoryCardAdminResponse extends CategoryCardPublicResponse {
@@ -65,6 +96,8 @@ interface SessionMeta {
  */
 @Injectable()
 export class CategoryCardsService {
+  private readonly logger = new Logger(CategoryCardsService.name);
+
   constructor(
     private readonly prisma: PrismaService,
     private readonly mediaStorage: MediaStorageService,
@@ -289,7 +322,38 @@ export class CategoryCardsService {
         : null,
       highlights: card.highlights,
       sortOrder: card.sortOrder,
+      priceAmount: this.resolvePriceAmount(card),
     };
+  }
+
+  /**
+   * R5.26.2 price contract (Admin → DB → API → Customer round trip,
+   * confirmed decision): the target Service's own ACTIVE CardProduct is
+   * the ONLY source of truth for the price this card displays — never a
+   * second, persisted field on CategoryCard.
+   *   - exactly one ACTIVE CardProduct -> its priceAmount (may itself be
+   *     null if the Admin hasn't set one yet — never fabricated).
+   *   - zero ACTIVE CardProducts -> null. Not an error; most CategoryCards
+   *     have no purchasable product yet (see the Services Catalog Reset
+   *     report §6/§9 — e.g. موتور سیکلت).
+   *   - more than one ACTIVE CardProduct -> genuinely ambiguous; per the
+   *     confirmed decision this must "STOP and report the ambiguity, do
+   *     not choose one arbitrarily." A single ambiguous card cannot be
+   *     allowed to fail the whole `/category-cards` list for every other
+   *     card, so this logs a loud warning identifying the exact
+   *     CategoryCard/Service and returns `null` for that card only —
+   *     never silently picks the first/cheapest/newest one. No real
+   *     Service has more than one ACTIVE CardProduct today (confirmed),
+   *     so this branch is not currently reachable in practice.
+   */
+  private resolvePriceAmount(card: CardWithRelations): number | null {
+    const cardProducts = card.targetService?.cardProducts ?? [];
+    if (cardProducts.length === 0) return null;
+    if (cardProducts.length === 1) return cardProducts[0].priceAmount;
+    this.logger.warn(
+      `CategoryCard ${card.id} ("${card.title}") target Service ${card.targetServiceId} has ${cardProducts.length} ACTIVE CardProducts — price is ambiguous, returning null rather than guessing. Resolve this in Admin before this card's price can display.`,
+    );
+    return null;
   }
 
   private toAdminResponse(card: CardWithRelations): CategoryCardAdminResponse {

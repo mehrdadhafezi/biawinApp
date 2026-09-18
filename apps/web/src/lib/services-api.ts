@@ -171,12 +171,20 @@ export const cardProductsApi = {
 
 /**
  * SERVICES-R5.21 — CategoryCard is a discovery/marketing card for the
- * Category Landing route, NOT a purchasable product — it has no price and
- * no relationship to CardProduct at all. It only ever points at a Service
- * (`targetServiceId`); clicking one navigates to that Service's own
- * Detail page, where the real CardProduct purchase flow (R5.16–R5.19)
- * lives. `image` is already a resolved, real URL (or null) — never a raw
- * Storage key needing client-side resolution.
+ * Category Landing route, NOT a purchasable product — it still has no
+ * price of its OWN and no direct relationship to CardProduct in storage.
+ * It only ever points at a Service (`targetServiceId`); clicking one
+ * navigates to that Service's own Detail page, where the real CardProduct
+ * purchase flow (R5.16–R5.19) lives. `image` is already a resolved, real
+ * URL (or null) — never a raw Storage key needing client-side resolution.
+ *
+ * R5.26.2 price contract — `priceAmount` is READ-ONLY, resolved
+ * server-side from the target Service's own single ACTIVE
+ * `CardProduct.priceAmount` (never a second, persisted price field on
+ * CategoryCard — see `CategoryCardsService.resolvePriceAmount()`'s own
+ * doc comment on the backend). `null` when the target Service has zero
+ * ACTIVE CardProducts (no purchasable product yet — never fabricated) or
+ * more than one (ambiguous — never guessed).
  */
 export interface CategoryCardDto {
   id: string;
@@ -188,6 +196,7 @@ export interface CategoryCardDto {
   image: string | null;
   highlights: string[];
   sortOrder: number;
+  priceAmount: number | null;
 }
 
 /**

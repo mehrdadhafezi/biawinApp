@@ -436,6 +436,7 @@ interface CategorySnapshot {
   name: string;
   description: string;
   slug: string | null;
+  active: boolean;
 }
 interface ServiceSnapshot {
   id: string;
@@ -449,7 +450,12 @@ interface CategoryCardSnapshot {
   categoryId: string;
   targetServiceId: string;
   title: string;
+  subtitle: string | null;
+  badge: string | null;
+  highlights: string[];
   image: string | null;
+  /** R5.26.2 — read-only, resolved server-side from the target Service's own CardProduct.priceAmount. */
+  priceAmount: number | null;
 }
 interface CardProductSnapshot {
   id: string;
@@ -861,12 +867,22 @@ async function runServicesModuleChecks(page: Page, issues: PageIssues): Promise<
     list.push(s);
     byCategory.set(s.categoryId, list);
   }
-  const byCount = [...snapshot.categories].sort(
+  // Services Catalog Reset (Sep 2026) — only ACTIVE categories are ever
+  // visible in the /services grid (useServiceCatalog() filters client-side
+  // — see the "بیشتر" step's own comment). Sorting/selecting from the
+  // unfiltered snapshot risked `categoryMany`/`categoryFew` resolving to
+  // one of the 9 now-hidden legacy categories (several of which have real
+  // Services of their own, e.g. اتومبیل's 8) purely by service-count
+  // coincidence — a real, non-deterministic risk (tie-break falls out of
+  // raw API response order), not just a theoretical one. Every category
+  // this flow clicks through by name must be a real, visible tile.
+  const activeSnapshotCategories = snapshot.categories.filter((c) => c.active);
+  const byCount = [...activeSnapshotCategories].sort(
     (a, b) => (byCategory.get(b.id)?.length ?? 0) - (byCategory.get(a.id)?.length ?? 0),
   );
   const categoryMany = byCount[0];
   const categoryFew = [...byCount].reverse().find((c) => (byCategory.get(c.id)?.length ?? 0) > 0) ?? byCount[byCount.length - 1];
-  const categoryAsset = snapshot.categories.find((c) => c.name === 'گردشگری') ?? categoryMany;
+  const categoryAsset = activeSnapshotCategories.find((c) => c.name === 'گردشگری') ?? categoryMany;
   const categoryAssetServices = byCategory.get(categoryAsset.id) ?? [];
 
   await step('Required categories this flow depends on are discoverable in the real catalog (count-agnostic)', async () => {
@@ -907,9 +923,18 @@ async function runServicesModuleChecks(page: Page, issues: PageIssues): Promise<
     // blocks (no <img>) until that fetch's state update lands. Waiting for
     // the first real tile closes that race without weakening the assertion
     // — later steps ("بیشتر") proved the same run's data DID load correctly.
+    // Services Catalog Reset (Sep 2026) — GET /categories returns ALL
+    // Categories (active and hidden alike, confirmed: CategoriesService.
+    // list() has no active filter); useServiceCatalog() filters to
+    // `.active` client-side before CategoryGrid ever renders a tile (see
+    // that hook's own source) — so the real expected/rendered count is
+    // the ACTIVE subset, not the raw snapshot length. The 9 legacy
+    // categories this stage hid are correctly excluded from what should
+    // ever be visible here.
+    const activeCategories = snapshot.categories.filter((c) => c.active);
     await tileIcons.first().waitFor({ timeout: 10000 });
     const count = await tileIcons.count();
-    assert(count === Math.min(11, snapshot.categories.length), `expected ${Math.min(11, snapshot.categories.length)} visible category tiles, got ${count}`);
+    assert(count === Math.min(11, activeCategories.length), `expected ${Math.min(11, activeCategories.length)} visible category tiles, got ${count}`);
   });
 
   await captureScreenshot(page, 'services-list-collapsed-desktop', DESKTOP);
@@ -926,11 +951,14 @@ async function runServicesModuleChecks(page: Page, issues: PageIssues): Promise<
   const moreButton = page.getByRole('button', { name: 'بیشتر', exact: true });
   const hasMore = (await moreButton.count()) > 0;
   if (hasMore) {
-    await step('"بیشتر" reveals all real categories with no duplicates, no layout break', async () => {
+    await step('"بیشتر" reveals all real ACTIVE categories with no duplicates, no layout break', async () => {
       await moreButton.click();
       await page.waitForTimeout(300);
       const count = await tileIcons.count();
-      assert(count === snapshot.categories.length, `expected ${snapshot.categories.length} category tiles after expanding, got ${count}`);
+      // Services Catalog Reset (Sep 2026) — see the collapsed-count step's
+      // own comment above: only the ACTIVE subset is ever rendered.
+      const activeCategories = snapshot.categories.filter((c) => c.active);
+      assert(count === activeCategories.length, `expected ${activeCategories.length} category tiles after expanding, got ${count}`);
       assert((await page.getByRole('button', { name: 'کمتر', exact: true }).count()) === 1, 'expected the toggle button to read "کمتر" once expanded');
       assert(await assertNoHorizontalOverflow(page), 'unexpected horizontal overflow after expanding the category grid');
     });
@@ -947,17 +975,27 @@ async function runServicesModuleChecks(page: Page, issues: PageIssues): Promise<
       await page.getByRole('button', { name: 'کمتر', exact: true }).click();
       await page.waitForTimeout(300);
       const count = await tileIcons.count();
-      assert(count === Math.min(11, snapshot.categories.length), `expected 11 visible category tiles after collapsing, got ${count}`);
+      const activeCategories = snapshot.categories.filter((c) => c.active);
+      assert(count === Math.min(11, activeCategories.length), `expected 11 visible category tiles after collapsing, got ${count}`);
     });
   } else {
-    skip('"بیشتر"/"کمتر" toggle', `only ${snapshot.categories.length} real categories exist — at or under the 11-item default, no toggle rendered`);
+    const activeCategories = snapshot.categories.filter((c) => c.active);
+    skip('"بیشتر"/"کمتر" toggle', `only ${activeCategories.length} real ACTIVE categories exist — at or under the 11-item default, no toggle rendered`);
   }
 
-  await step(`Category flow — select "${categoryAsset.name}" (asset-mapped, accent-themed category)`, async () => {
+  // Services Catalog Reset (Sep 2026) — a category tile click from
+  // /services now goes to /categories/{slug} whenever the category has
+  // one (see apps/web/src/app/services/page.tsx's `handleSelectCategory`)
+  // — گردشگری does. The checks below (search input, method-filter chips)
+  // are specifically about /services/[categoryId]'s OWN, still-real,
+  // still-reachable Service-browse experience (deliberately preserved,
+  // just no longer the first click) — so this now navigates there
+  // directly, the same pattern already used elsewhere in this file for
+  // the identical route (e.g. the mismatched-probe/few-services checks).
+  await step(`Category flow — navigate directly to "${categoryAsset.name}"'s Service-browse page (/services/${categoryAsset.id})`, async () => {
     issues.markNavigationAttempt();
-    await page.getByRole('button', { name: categoryAsset.name, exact: true }).click();
-    await page.waitForURL(new RegExp(`/services/${categoryAsset.id}$`), { timeout: 15000 });
-    await page.waitForLoadState('networkidle');
+    await page.goto(`${CUSTOMER_ORIGIN}/services/${categoryAsset.id}`, { waitUntil: 'networkidle' });
+    assert(new RegExp(`/services/${categoryAsset.id}$`).test(page.url()), `expected to land on /services/${categoryAsset.id}, got ${page.url()}`);
   });
 
   await step('Category View renders real hero (name/description), search input, and 5 real method-filter chips', async () => {
@@ -1433,8 +1471,36 @@ async function runCategoryLandingAndCardProductChecks(page: Page, issues: PageIs
         }
         const { broken } = await assertNoBrokenImages(page);
         assert(broken.length === 0, `broken images on "${category.name}" Category Landing`);
+      });
+
+      // R5.26.2 prototype card contract — image + price only, nothing else
+      // (see apps/web/src/components/services/CategoryCard.tsx's own doc
+      // comment). The title is real but no longer VISIBLE text — it's the
+      // button's own `aria-label` (kept for accessibility/identification
+      // only) — so this checks the accessible name, not page text, and
+      // separately proves the old marketing chrome (subtitle/badge/
+      // highlights/CTA copy) is genuinely gone, not just visually hidden.
+      await step(`CategoryCard "${card.title}" renders as image + price only — no marketing title/subtitle/badge/highlights/CTA text`, async () => {
+        const cardButton = page.getByRole('button', { name: card.title, exact: true });
+        await cardButton.waitFor({ timeout: 10000 });
         const html = await page.content();
-        assert(html.includes(card.title), `expected the real CategoryCard title "${card.title}" to render`);
+        assert(!html.includes('مشاهده خدمت'), 'expected no "مشاهده خدمت ←" CTA text — R5.26.2 removed it from the card');
+        if (card.subtitle) assert(!html.includes(card.subtitle), `expected CategoryCard subtitle "${card.subtitle}" to NOT render — R5.26.2 image+price contract`);
+        if (card.badge) assert(!html.includes(card.badge), `expected CategoryCard badge "${card.badge}" to NOT render — R5.26.2 image+price contract`);
+        for (const h of card.highlights ?? []) {
+          assert(!html.includes(h), `expected CategoryCard highlight "${h}" to NOT render — R5.26.2 image+price contract`);
+        }
+      });
+
+      await step(`CategoryCard "${card.title}" price round-trip: renders the real resolved CardProduct.priceAmount (or the honest empty-price copy if none), never hardcoded/fabricated`, async () => {
+        const cardButton = page.getByRole('button', { name: card.title, exact: true });
+        const cardText = (await cardButton.innerText()).trim();
+        if (card.priceAmount != null) {
+          const expectedToman = Math.floor(card.priceAmount / 10).toLocaleString('en-US');
+          assert(cardText.includes(expectedToman) && cardText.includes('تومان'), `expected the card to render its real resolved price "${expectedToman} تومان" (from the target Service's CardProduct.priceAmount), got "${cardText}"`);
+        } else {
+          assert(cardText.includes('قیمت اعلام نشده'), `expected the honest empty-price copy when priceAmount is null (target Service has zero or ambiguous CardProducts — never fabricated), got "${cardText}"`);
+        }
       });
 
       await step(`CategoryCard click navigates to its real target Service (ownership-enforced, never an unrelated Service)`, async () => {
@@ -1442,18 +1508,15 @@ async function runCategoryLandingAndCardProductChecks(page: Page, issues: PageIs
         // live local stack (not assumed from reading the source): a plain
         // `getByText(card.title, {exact:true})` is genuinely ambiguous
         // whenever a CategoryCard's real title equals its own Category's
-        // name — a real, common case, since this stage's own local content
-        // populated several cards that way (e.g. "مبلمان"). `getByText`
-        // matches ANY text node regardless of role, and `CategoryHero`'s
-        // `<h1>{category.name}</h1>` sits earlier in the DOM than the card,
-        // so `.first()` landed on the non-interactive heading and the click
-        // did nothing — a real Timeout, not a flaky one. `CategoryCard.tsx`
-        // renders the whole card as one real `<button>` (`all:unset`,
-        // still a real interactive element) — scoping to `getByRole
-        // ('button')` excludes the heading entirely, since CategoryHero
-        // renders no buttons at all.
+        // name — a real, common case (e.g. "مبلمان"). `CategoryHero`'s
+        // `<h1>{category.name}</h1>` sits earlier in the DOM than the card.
+        // R5.26.2: the card's title is no longer visible text at all — it's
+        // the button's own `aria-label` — so `getByRole('button', { name:
+        // ..., exact: true })` (Playwright's accessible-name matcher,
+        // which reads `aria-label`) is both the fix for the R5.24 ambiguity
+        // AND the only locator that still works post-R5.26.2.
         issues.markNavigationAttempt();
-        await page.getByRole('button').filter({ hasText: card.title }).first().click();
+        await page.getByRole('button', { name: card.title, exact: true }).click();
         await page.waitForURL(new RegExp(`/services/${category.id}/${card.targetServiceId}$`), { timeout: 15000 });
         await page.waitForLoadState('networkidle');
       });
@@ -1575,14 +1638,25 @@ async function runCategoryLandingAndCardProductChecks(page: Page, issues: PageIs
 /**
  * SERVICES-R1.7 CLOSURE: this isolated sequence now PASSES against real
  * staging — a fresh, minimal-history context proves `/services` -> category
- * -> service -> back -> (same category) -> back -> `/services` all resolve
- * correctly. Classification: QA HISTORY POLLUTION / invalid long-running
- * assertion, NOT an application navigation defect — confirmed, not
- * assumed. No `router.push`/`router.back`/redirect code in
+ * -> [discovery card] -> back -> (same page) -> back -> `/services` all
+ * resolve correctly. Classification: QA HISTORY POLLUTION / invalid
+ * long-running assertion, NOT an application navigation defect —
+ * confirmed, not assumed. No `router.push`/`router.back`/redirect code in
  * apps/web/src/app/services/** or apps/web/src/components/shell/** was
  * changed as a result; none was warranted. This function is now the
  * permanent, authoritative back-navigation test (see the comment on the
  * removed second `goBack()` assertion in `runServicesModuleChecks`).
+ *
+ * R5.26.2 QA forensic fix (Sep 2026) — the middle destination changed from
+ * `/services/{categoryId}` (Service browse grid) to `/categories/{slug}`
+ * (Category Landing, the real CategoryCard discovery-card experience) —
+ * commit c4bab52 made that the canonical first click-through from
+ * `/services` (apps/web/src/app/services/page.tsx's `handleSelectCategory`
+ * now prefers `/categories/${category.slug}` whenever a slug exists). The
+ * history-length/pollution finding below is untouched by that — it was
+ * never about WHICH route the middle page was, only about whether an
+ * extra history entry existed; this function's URL assertions were simply
+ * updated to match the new, approved destination.
  *
  * History of how this was reached, kept for context:
  *
@@ -1654,7 +1728,6 @@ async function runBackNavigationIsolationCheck(browser: Browser): Promise<void> 
   }
   const byCategoryCount = new Map<string, number>();
   for (const s of snapshot.services) byCategoryCount.set(s.categoryId, (byCategoryCount.get(s.categoryId) ?? 0) + 1);
-  const byCategoryId = new Map(snapshot.categories.map((c) => [c.id, c]));
 
   const context = await browser.newContext({ viewport: DESKTOP });
   const page = await context.newPage();
@@ -1740,8 +1813,17 @@ async function runBackNavigationIsolationCheck(browser: Browser): Promise<void> 
       if (text) visibleNames.push(text);
     }
     assert(visibleNames.length > 0, 'expected at least one visible category tile');
-    const match = visibleNames.map((name) => snapshot.categories.find((c) => c.name === name)).find((c) => c && (byCategoryCount.get(c.id) ?? 0) > 0);
-    assert(match !== undefined, `none of the ${visibleNames.length} visible tiles (${visibleNames.join(', ')}) matched a real category with at least one real service`);
+    // Services Catalog Reset (Sep 2026) — clicking a category now routes
+    // to its Category Landing page (`/categories/[slug]`, the canonical
+    // discovery-card experience) only when it HAS a slug (see
+    // apps/web/src/app/services/page.tsx's `handleSelectCategory`); every
+    // one of the 14 real prototype-backed categories has one. Requiring
+    // `slug` here keeps this test exercising the actual canonical route,
+    // not the legacy `/services/{categoryId}` fallback for the (now
+    // hidden, so not even visible in this grid) categories that never got
+    // one.
+    const match = visibleNames.map((name) => snapshot.categories.find((c) => c.name === name)).find((c) => c && !!c.slug && (byCategoryCount.get(c.id) ?? 0) > 0);
+    assert(match !== undefined, `none of the ${visibleNames.length} visible tiles (${visibleNames.join(', ')}) matched a real, slugged category with at least one real service`);
     return match!;
   });
   await recordStep(`0b. selected visible category "${category?.name ?? '(none)'}"`);
@@ -1751,12 +1833,15 @@ async function runBackNavigationIsolationCheck(browser: Browser): Promise<void> 
   }
 
   const categoryUrlBefore = page.url();
-  const categoryOk = await step(`Back-nav isolation — click ONE visible category ("${category.name}", id=${category.id})`, async () => {
+  const categoryOk = await step(`Back-nav isolation — click ONE visible category ("${category.name}", slug=${category.slug})`, async () => {
     const tile = page.getByRole('button', { name: category.name, exact: true });
     await tile.waitFor({ timeout: 10000 });
     issues.markNavigationAttempt();
     await tile.click();
-    await page.waitForURL(new RegExp(`/services/${category.id}$`), { timeout: 15000 });
+    // Services Catalog Reset (Sep 2026) — canonical destination is the
+    // Category Landing page, not /services/{categoryId} (see
+    // apps/web/src/app/services/page.tsx's `handleSelectCategory`).
+    await page.waitForURL(new RegExp(`/categories/${category.slug}$`), { timeout: 15000 });
     await page.waitForLoadState('networkidle');
     assert(page.url() !== categoryUrlBefore, `expected the URL to change after clicking "${category.name}", stayed at ${categoryUrlBefore}`);
     return true;
@@ -1767,45 +1852,48 @@ async function runBackNavigationIsolationCheck(browser: Browser): Promise<void> 
     return;
   }
 
-  // Service is likewise selected from what's actually rendered in the
-  // Category View (never hidden behind a "بیشتر"-style collapse there —
-  // ServiceGrid shows every matching service — but reading the real
-  // rendered card, not assuming array order, keeps this consistent with
-  // the category-selection fix above and with Task 5's "prove the click
-  // actually changed the URL" requirement).
+  // Services Catalog Reset (Sep 2026) — the Category Landing page's
+  // discovery cards are CategoryCard tiles (image + price only, R5.26.2
+  // prototype contract — see apps/web/src/components/services/
+  // CategoryCard.tsx), not the old ServiceGrid's icon+`<strong>`-title
+  // tiles. A CategoryCard's title is no longer visible text — it's the
+  // button's own `aria-label` (kept specifically for this kind of
+  // identification, and for accessibility) — so this reads THAT instead
+  // of a `<strong>` node, but is otherwise the same "read what's actually
+  // rendered, never assume array order" discipline as the category
+  // selection above.
   const serviceUrlBefore = page.url();
-  const serviceLabel = await step('Back-nav isolation — read the first visible service card title', async () => {
-    const card = page.locator('main button').filter({ has: page.locator('strong') }).first();
+  const cardLabel = await step('Back-nav isolation — read the first visible discovery card\'s aria-label', async () => {
+    const card = page.locator('main button[aria-label]').first();
     await card.waitFor({ timeout: 10000 });
-    const title = (await card.locator('strong').innerText()).trim();
-    assert(title.length > 0, 'expected a non-empty service card title');
-    return title;
+    const label = (await card.getAttribute('aria-label'))?.trim() ?? '';
+    assert(label.length > 0, 'expected a non-empty discovery card aria-label');
+    return label;
   });
-  if (!serviceLabel) {
-    await abortInvalid('no visible, clickable service card was found in the selected category', 'Back-nav isolation — goBack #1', 'Back-nav isolation — goBack #2');
+  if (!cardLabel) {
+    await abortInvalid('no visible, clickable discovery card was found on the Category Landing page', 'Back-nav isolation — goBack #1', 'Back-nav isolation — goBack #2');
     return;
   }
-  const matchedService = byCategoryId.has(category.id) ? snapshot.services.find((s) => s.categoryId === category.id && s.title === serviceLabel) : undefined;
 
-  const serviceOk = await step(`Back-nav isolation — click ONE visible service ("${serviceLabel}"${matchedService ? `, id=${matchedService.id}` : ''})`, async () => {
-    const card = page.locator('main button').filter({ has: page.locator('strong') }).first();
+  const serviceOk = await step(`Back-nav isolation — click ONE visible discovery card ("${cardLabel}")`, async () => {
+    const card = page.locator('main button[aria-label]').first();
     issues.markNavigationAttempt();
     await card.click();
     await page.waitForURL(/\/services\/[^/]+\/[^/]+$/, { timeout: 15000 });
     await page.waitForLoadState('networkidle');
-    assert(page.url() !== serviceUrlBefore, `expected the URL to change after clicking "${serviceLabel}", stayed at ${serviceUrlBefore}`);
+    assert(page.url() !== serviceUrlBefore, `expected the URL to change after clicking "${cardLabel}", stayed at ${serviceUrlBefore}`);
     return true;
   });
-  await recordStep(`2. clicked service "${serviceLabel}" (urlBefore=${serviceUrlBefore})`);
+  await recordStep(`2. clicked discovery card "${cardLabel}" (urlBefore=${serviceUrlBefore})`);
   if (serviceOk !== true) {
     await abortInvalid('service click did not succeed — see the service-click failure above; no forward navigation exists to test back from', 'Back-nav isolation — goBack #1', 'Back-nav isolation — goBack #2');
     return;
   }
 
-  await step('Back-nav isolation — goBack #1 returns to the SAME Category View', async () => {
+  await step('Back-nav isolation — goBack #1 returns to the SAME Category Landing page', async () => {
     issues.markNavigationAttempt();
     await page.goBack({ waitUntil: 'networkidle' });
-    assert(new RegExp(`/services/${category.id}$`).test(page.url()), `expected /services/${category.id}, got ${page.url()}`);
+    assert(new RegExp(`/categories/${category.slug}$`).test(page.url()), `expected /categories/${category.slug}, got ${page.url()}`);
   });
   await recordStep('3. after goBack #1');
 

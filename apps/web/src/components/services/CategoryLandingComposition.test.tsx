@@ -32,12 +32,13 @@ function categoryCard(overrides: Partial<CategoryCardDto> = {}): CategoryCardDto
     image: "/media/shoes.webp",
     highlights: ["خدمات متنوع پوشاک", "طرح‌های خرید و پشتیبانی"],
     sortOrder: 0,
+    priceAmount: 10_000_000,
     ...overrides,
   };
 }
 
 describe("Category Landing composition", () => {
-  it("renders the real category hero and its real discovery cards", () => {
+  it("renders the real category hero and its real discovery cards (R5.26.2 — card itself is image + price, title survives as aria-label)", () => {
     const html = renderToStaticMarkup(
       <>
         <CategoryHero category={category} serviceCount={1} />
@@ -47,11 +48,11 @@ describe("Category Landing composition", () => {
 
     expect(html).toContain("پوشاک");
     expect(html).toContain("خرید از برندهای منتخب");
-    expect(html).toContain("کیف و کفش");
-    expect(html).toContain("طرح‌های خرید و پشتیبانی");
+    expect(html).toContain('aria-label="کیف و کفش"');
+    expect(html).toContain("1,000,000 تومان");
   });
 
-  it("never renders a purchase CTA, price, or CardProduct-shaped text anywhere in this composition — CategoryCard is a discovery card, not a purchasable product", () => {
+  it("never renders a purchase CTA or marketing copy (title/subtitle/badge/highlights) inside the discovery card — R5.26.2 prototype contract is image + price only", () => {
     const html = renderToStaticMarkup(
       <>
         <CategoryHero category={category} serviceCount={1} />
@@ -60,7 +61,9 @@ describe("Category Landing composition", () => {
     );
     expect(html).not.toContain("خرید کارت");
     expect(html).not.toContain("خرید این خدمت");
-    expect(html).not.toContain("priceAmount");
+    expect(html).not.toContain("مشاهده خدمت");
+    expect(html).not.toContain("پرفروش");
+    expect(html).not.toContain("طرح‌های خرید و پشتیبانی");
   });
 
   it("renders the honest empty state when a real Category genuinely has no discovery cards yet", () => {

@@ -13,22 +13,24 @@ function categoryCard(overrides: Partial<CategoryCardDto> = {}): CategoryCardDto
     image: "/media/shoes.webp",
     highlights: ["خدمات متنوع پوشاک", "طرح‌های خرید و پشتیبانی"],
     sortOrder: 0,
+    priceAmount: 10_000_000,
     ...overrides,
   };
 }
 
-/** Covers SERVICES-R5.21's explicit Discovery Card requirement: title/subtitle/badge/image/highlights, no purchase CTA, no CardProduct-shaped content. */
-describe("CategoryCard (Discovery Card) rendering", () => {
-  it("renders title, subtitle, badge, highlights, and the real resolved image", () => {
+/** R5.26.2 prototype card contract: image + price only, nothing else visually rendered. */
+describe("CategoryCard (prototype image + price card) rendering", () => {
+  it("renders the real resolved image and the formatted price (Toman, from priceAmount)", () => {
     const html = renderToStaticMarkup(<CategoryCard categoryCard={categoryCard()} onSelect={() => {}} />);
 
-    expect(html).toContain("کیف و کفش");
-    expect(html).toContain("انتخابی برای هر سلیقه");
-    expect(html).toContain("پرفروش");
-    expect(html).toContain("خدمات متنوع پوشاک");
-    expect(html).toContain("طرح‌های خرید و پشتیبانی");
     expect(html).toContain("/media/shoes.webp");
-    expect(html).toContain("مشاهده خدمت ←");
+    expect(html).toContain("1,000,000 تومان"); // 10,000,000 Rial -> 1,000,000 Toman, formatToman()'s real conversion
+  });
+
+  it("renders the empty-price copy, never a fabricated/zero price, when priceAmount is null", () => {
+    const html = renderToStaticMarkup(<CategoryCard categoryCard={categoryCard({ priceAmount: null })} onSelect={() => {}} />);
+    expect(html).toContain("قیمت اعلام نشده");
+    expect(html).not.toContain("تومان");
   });
 
   it("never fabricates an image — falls back to a plain icon block when image is null", () => {
@@ -42,23 +44,18 @@ describe("CategoryCard (Discovery Card) rendering", () => {
     expect(html).not.toContain("height:140px");
   });
 
-  it("caps highlights at 2, even if the API somehow returns more", () => {
-    const html = renderToStaticMarkup(
-      <CategoryCard
-        categoryCard={categoryCard({ highlights: ["یک", "دو", "سه"] })}
-        onSelect={() => {}}
-      />,
-    );
-    expect(html).toContain("یک");
-    expect(html).toContain("دو");
-    expect(html).not.toContain("سه");
+  it("does NOT visually render subtitle, badge, highlights, or CTA text inside the card (R5.26.2 — image + price only; the title survives only as an aria-label, covered by its own test below)", () => {
+    const html = renderToStaticMarkup(<CategoryCard categoryCard={categoryCard()} onSelect={() => {}} />);
+    expect(html).not.toContain("انتخابی برای هر سلیقه");
+    expect(html).not.toContain("پرفروش");
+    expect(html).not.toContain("خدمات متنوع پوشاک");
+    expect(html).not.toContain("طرح‌های خرید و پشتیبانی");
+    expect(html).not.toContain("مشاهده خدمت");
   });
 
-  it("never renders a price, purchase CTA, or any CardProduct-shaped text — it is a discovery card, not a purchasable product", () => {
+  it("still exposes the title as an aria-label, preserving accessibility without visual marketing content", () => {
     const html = renderToStaticMarkup(<CategoryCard categoryCard={categoryCard()} onSelect={() => {}} />);
-    expect(html).not.toContain("خرید کارت");
-    expect(html).not.toContain("تومان");
-    expect(html).not.toContain("priceAmount");
+    expect(html).toContain('aria-label="کیف و کفش"');
   });
 
   it("calls onSelect with the real category card when tapped", () => {
