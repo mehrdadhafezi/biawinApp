@@ -73,7 +73,7 @@ describe('MediaFilesController', () => {
     expect(res.send).toHaveBeenCalledWith(Buffer.from('fake-bytes'));
   });
 
-  it('404s for a filename with no matching active MediaAsset row (missing or soft-deleted)', async () => {
+  it('404s for a filename with no matching active MediaAsset row (missing or soft-deleted), but still sets the cross-origin CORP header on that 404', async () => {
     prisma.mediaAsset.findFirst.mockResolvedValue(null);
     const res = mockResponse();
 
@@ -81,5 +81,13 @@ describe('MediaFilesController', () => {
       NotFoundException,
     );
     expect(storage.getObject).not.toHaveBeenCalled();
+    // The real bug this guards against: without this header on the 404
+    // itself, a real cross-origin <img> load gets blocked by the browser's
+    // CORP enforcement (net::ERR_BLOCKED_BY_RESPONSE.NotSameOrigin) instead
+    // of a plain, honest broken-image 404 — see the class doc comment.
+    expect(res.setHeader).toHaveBeenCalledWith(
+      'Cross-Origin-Resource-Policy',
+      'cross-origin',
+    );
   });
 });
