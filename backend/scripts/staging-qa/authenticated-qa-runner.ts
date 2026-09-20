@@ -2324,6 +2324,43 @@ async function servicesR5262DefaultCatalogFinalizationCheck(admin: AdminSession 
     );
   }
 
+  // --- Category Landing's product list: `GET /cards?categoryId=` scopes a
+  // category to its OWN CardProducts server-side (through each card's
+  // owning Service). The customer journey is Category -> CardProduct, so a
+  // leak here would show one category's card under another.
+  if (cardProducts.length > 0) {
+    await step(
+      `SERVICES-R5.26.2 GET /cards?categoryId= returns exactly each category's own CardProducts — ownership enforced server-side (n=${cardProducts.length})`,
+      async () => {
+        const ownerOf = new Map<string, string>();
+        for (const cp of cardProducts) {
+          const svc = await apiCall<{ categoryId: string }>(API_ORIGIN, `/api/v1/services/${cp.serviceId}`);
+          assert(svc.ok, `expected CardProduct ${cp.id}'s Service to resolve, got ${detail(svc)}`);
+          ownerOf.set(cp.id, svc.body.categoryId);
+        }
+        for (const categoryId of new Set(ownerOf.values())) {
+          const res = await apiCall<{ items: QaCardProductSummary[]; total: number }>(
+            API_ORIGIN,
+            `/api/v1/cards?categoryId=${categoryId}&limit=100`,
+          );
+          assert(res.ok, `expected GET /cards?categoryId=${categoryId} to succeed, got ${detail(res)}`);
+          const expected = cardProducts.filter((cp) => ownerOf.get(cp.id) === categoryId).map((cp) => cp.id).sort();
+          const actual = res.body.items.map((i) => i.id).sort();
+          assert(
+            JSON.stringify(actual) === JSON.stringify(expected) && res.body.total === expected.length,
+            `expected category ${categoryId} to list exactly its own ${expected.length} card(s) ${JSON.stringify(expected)}, got ${JSON.stringify(actual)} (total=${res.body.total})`,
+          );
+        }
+        // A category that owns no card must list none — never fall back to the global list.
+        const none = await apiCall<{ items: QaCardProductSummary[]; total: number }>(
+          API_ORIGIN,
+          '/api/v1/cards?categoryId=00000000-0000-4000-8000-000000000000&limit=100',
+        );
+        assert(none.ok && none.body.items.length === 0 && none.body.total === 0, `expected an unknown category to list no cards, got ${detail(none)}`);
+      },
+    );
+  }
+
   // --- Prototype-directory bootstrap coverage — proves the catalog was
   // actually built FROM all 14 real reference images (Motor.jpeg included,
   // per the Services Catalog Reset), not from arbitrary substitutes. Needs

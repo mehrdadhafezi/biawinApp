@@ -164,47 +164,14 @@ export const merchantsApi = {
  * no client-side active-filtering workaround is needed or added.
  */
 export const cardProductsApi = {
-  listByService: (serviceId: string) =>
-    apiClient.get<Paginated<CardProductDto>>(`/cards?serviceId=${serviceId}&limit=100`, { public: true }),
+  /**
+   * The Category Landing's product list — `GET /cards?categoryId=`, scoped
+   * SERVER-side through each card's owning Service (see
+   * `CardProductsService.list()`), so a category can only ever receive its
+   * own real, ACTIVE CardProducts. Never a global list filtered in the browser.
+   */
+  listByCategory: (categoryId: string) =>
+    apiClient.get<Paginated<CardProductDto>>(`/cards?categoryId=${categoryId}&limit=100`, { public: true }),
   getCardProduct: (id: string) => apiClient.get<CardProductDto>(`/cards/${id}`, { public: true }),
 };
 
-/**
- * SERVICES-R5.21 — CategoryCard is a discovery/marketing card for the
- * Category Landing route, NOT a purchasable product — it still has no
- * price of its OWN and no direct relationship to CardProduct in storage.
- * It only ever points at a Service (`targetServiceId`); clicking one
- * navigates to that Service's own Detail page, where the real CardProduct
- * purchase flow (R5.16–R5.19) lives. `image` is already a resolved, real
- * URL (or null) — never a raw Storage key needing client-side resolution.
- *
- * R5.26.2 price contract — `priceAmount` is READ-ONLY, resolved
- * server-side from the target Service's own single ACTIVE
- * `CardProduct.priceAmount` (never a second, persisted price field on
- * CategoryCard — see `CategoryCardsService.resolvePriceAmount()`'s own
- * doc comment on the backend). `null` when the target Service has zero
- * ACTIVE CardProducts (no purchasable product yet — never fabricated) or
- * more than one (ambiguous — never guessed).
- */
-export interface CategoryCardDto {
-  id: string;
-  categoryId: string;
-  targetServiceId: string;
-  title: string;
-  subtitle: string | null;
-  badge: string | null;
-  image: string | null;
-  highlights: string[];
-  sortOrder: number;
-  priceAmount: number | null;
-}
-
-/**
- * SERVICES-R5.21 — real, public `GET /category-cards?categoryId=X`,
- * already filtered to `active: true` server-side (mirrors
- * `cardProductsApi`'s own "no client-side re-filter needed" discipline).
- */
-export const categoryCardsApi = {
-  listByCategory: (categoryId: string) =>
-    apiClient.get<Paginated<CategoryCardDto>>(`/category-cards?categoryId=${categoryId}&limit=100`, { public: true }),
-};

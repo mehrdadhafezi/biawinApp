@@ -9,4 +9,12 @@ export class ListCardProductsQueryDto extends PaginationQueryDto {
   @IsOptional()
   @IsString()
   serviceId?: string;
+
+  @ApiPropertyOptional({
+    description:
+      "Filter to card products whose owning Service belongs to one Category (the Category Landing's product list).",
+  })
+  @IsOptional()
+  @IsString()
+  categoryId?: string;
 }

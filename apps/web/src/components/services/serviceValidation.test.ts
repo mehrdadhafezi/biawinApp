@@ -1,7 +1,7 @@
 import {
   belongsToCategory,
   cardProductBelongsToService,
-  categoryCardServiceDetailHref,
+  cardProductDetailHref,
   serviceReferencesMerchant,
 } from "./serviceValidation";
 import type { CardProductDto, ServiceDto } from "../../lib/services-api";
@@ -93,16 +93,14 @@ describe("cardProductBelongsToService (SERVICES-R5.18)", () => {
   });
 });
 
-describe("categoryCardServiceDetailHref (SERVICES-R5.21 — navigation)", () => {
-  it("builds the real, existing Service Detail route from the card's own categoryId/targetServiceId", () => {
-    expect(
-      categoryCardServiceDetailHref({ categoryId: "cat-1", targetServiceId: "svc-1" }),
-    ).toBe("/services/cat-1/svc-1");
+describe("cardProductDetailHref (Category Landing navigation)", () => {
+  it("goes STRAIGHT to the CardProduct's own detail route — its owner Service id is a path segment, not a page", () => {
+    expect(cardProductDetailHref("cat-1", { id: "card-9", serviceId: "svc-1" })).toBe("/services/cat-1/svc-1/cards/card-9");
   });
 
-  it("never navigates to a CardProduct or purchase route — CategoryCard is a discovery card, not a purchasable product", () => {
-    const href = categoryCardServiceDetailHref({ categoryId: "cat-1", targetServiceId: "svc-1" });
-    expect(href).not.toContain("/cards/");
-    expect(href.split("/")).toHaveLength(4); // /services/{categoryId}/{serviceId} only, no further segment
+  it("always ends at the CardProduct — never at a Service page or a purchase route (the extra layer this replaced)", () => {
+    const href = cardProductDetailHref("cat-1", { id: "card-9", serviceId: "svc-1" });
+    expect(href.split("/")).toEqual(["", "services", "cat-1", "svc-1", "cards", "card-9"]);
+    expect(href).not.toMatch(/\/services\/[^/]+\/[^/]+$/);
   });
 });

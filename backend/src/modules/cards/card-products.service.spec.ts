@@ -72,6 +72,31 @@ describe('CardProductsService', () => {
       );
     });
 
+    it("filters by the owning Service's Category when categoryId is supplied, without dropping the status filter", async () => {
+      await service.list(0, 20, undefined, 'category-1');
+      expect(prisma.cardProduct.findMany).toHaveBeenCalledWith(
+        expect.objectContaining({
+          where: { status: 'ACTIVE', service: { categoryId: 'category-1' } },
+        }),
+      );
+      expect(prisma.cardProduct.count).toHaveBeenCalledWith({
+        where: { status: 'ACTIVE', service: { categoryId: 'category-1' } },
+      });
+    });
+
+    it('combines serviceId and categoryId when both are supplied', async () => {
+      await service.list(0, 20, 'service-1', 'category-1');
+      expect(prisma.cardProduct.findMany).toHaveBeenCalledWith(
+        expect.objectContaining({
+          where: {
+            status: 'ACTIVE',
+            serviceId: 'service-1',
+            service: { categoryId: 'category-1' },
+          },
+        }),
+      );
+    });
+
     it('throws NotFoundException for a nonexistent or non-ACTIVE card product', async () => {
       prisma.cardProduct.findFirst.mockResolvedValue(null);
       await expect(service.findOneOrThrow('missing')).rejects.toBeInstanceOf(

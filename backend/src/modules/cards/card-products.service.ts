@@ -38,10 +38,20 @@ export class CardProductsService {
     private readonly auditLog: AdminAuditLogService,
   ) {}
 
-  async list(skip: number, take: number, serviceId?: string) {
+  async list(
+    skip: number,
+    take: number,
+    serviceId?: string,
+    categoryId?: string,
+  ) {
+    // `categoryId` is resolved through the CardProduct's own Service — the
+    // ownership relation is enforced by the query itself, never by trusting
+    // a client-side join, so a category can never list another category's
+    // cards.
     const where = {
       status: 'ACTIVE' as const,
       ...(serviceId ? { serviceId } : {}),
+      ...(categoryId ? { service: { categoryId } } : {}),
     };
     const [items, total] = await this.prisma.$transaction([
       this.prisma.cardProduct.findMany({

@@ -1,4 +1,4 @@
-import type { CardProductDto, CategoryCardDto, ServiceDto } from "../../lib/services-api";
+import type { CardProductDto, ServiceDto } from "../../lib/services-api";
 
 /**
  * SERVICES-R3 (§13 "Not Found / Data Integrity") — `GET /services/:id`
@@ -37,17 +37,15 @@ export function cardProductBelongsToService(cardProduct: CardProductDto, service
 }
 
 /**
- * SERVICES-R5.21 — the real navigation target for a CategoryCard click:
- * CategoryCard -> Service Detail, the existing, already-built route (no
- * new route is invented for this destination). Extracted as a pure
- * function, same as every other navigation/relationship rule in this
- * file, so the real click-target computation is directly testable
- * without needing to dispatch a synthetic click through
- * `renderToStaticMarkup` (which this codebase's tests never do — see
- * every `onSelect` test in this module for why).
+ * The click target of a CardProduct on the Category Landing: STRAIGHT to that
+ * CardProduct's detail page. `Service` is an internal entity, not a customer
+ * page, so its id appears only as the card's own owner segment of the
+ * existing `/services/[categoryId]/[serviceId]/cards/[cardProductId]` route
+ * (validated on arrival by `belongsToCategory` + `cardProductBelongsToService`)
+ * — no Service page is visited on the way. Extracted as a pure function,
+ * like every other navigation/relationship rule in this file, so the real
+ * click target is directly testable.
  */
-export function categoryCardServiceDetailHref(
-  categoryCard: Pick<CategoryCardDto, "categoryId" | "targetServiceId">,
-): string {
-  return `/services/${categoryCard.categoryId}/${categoryCard.targetServiceId}`;
+export function cardProductDetailHref(categoryId: string, cardProduct: Pick<CardProductDto, "id" | "serviceId">): string {
+  return `/services/${categoryId}/${cardProduct.serviceId}/cards/${cardProduct.id}`;
 }

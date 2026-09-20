@@ -16,6 +16,7 @@ export class CardProductsController {
       query.skip,
       query.limit,
       query.serviceId,
+      query.categoryId,
     );
   }
 

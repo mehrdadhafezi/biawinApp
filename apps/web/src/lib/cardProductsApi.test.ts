@@ -16,10 +16,10 @@ jest.mock("./api-client", () => ({
 describe("cardProductsApi", () => {
   beforeEach(() => mockGet.mockReset());
 
-  it("listByService calls GET /cards with the real serviceId as a query param, marked public", async () => {
+  it("listByCategory calls GET /cards scoped by the real categoryId — the server scopes it, the browser never filters a global list", async () => {
     mockGet.mockResolvedValue({ items: [], total: 0, page: 1, limit: 100 });
-    await cardProductsApi.listByService("service-1");
-    expect(mockGet).toHaveBeenCalledWith("/cards?serviceId=service-1&limit=100", { public: true });
+    await cardProductsApi.listByCategory("category-1");
+    expect(mockGet).toHaveBeenCalledWith("/cards?categoryId=category-1&limit=100", { public: true });
   });
 
   it("getCardProduct calls GET /cards/:id, marked public", async () => {

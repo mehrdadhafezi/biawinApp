@@ -25,6 +25,35 @@ export const CARD_TYPE_LABEL: Record<CardType, string> = {
 };
 
 /**
+ * Short type names for the Category Landing's filter chips and card-visual
+ * type pill — the prototype's own vocabulary (اقساطی / اعتباری / تخفیفی …),
+ * one word each, mapped from the REAL `CardType` enum (never invented types).
+ */
+export const CARD_TYPE_SHORT_LABEL: Record<CardType, string> = {
+  CREDIT_CARD: "اعتباری",
+  DISCOUNT_CARD: "تخفیفی",
+  SUBSCRIPTION: "اشتراک",
+  VOUCHER: "ووچر",
+  INSTALLMENT_CARD: "اقساطی",
+};
+
+/**
+ * The prototype's four card-visual colorways (`.service-finance-card--
+ * installment|credit|discount|mixed`: blue / near-black / orange / purple).
+ * The real `CardType` enum has five values, so `VOUCHER` and `SUBSCRIPTION`
+ * share the prototype's fourth ("mixed") colorway — a colour choice only,
+ * carrying no meaning of its own.
+ */
+export type CardVisualKind = "installment" | "credit" | "discount" | "mixed";
+export const CARD_VISUAL_KIND: Record<CardType, CardVisualKind> = {
+  INSTALLMENT_CARD: "installment",
+  CREDIT_CARD: "credit",
+  DISCOUNT_CARD: "discount",
+  VOUCHER: "mixed",
+  SUBSCRIPTION: "mixed",
+};
+
+/**
  * SERVICES-R5.19, corrected SERVICES-R5.25 — renders the CardProduct's own
  * displayed commercial value/credit ceiling. Never hardcoded text — always
  * derived from the real `valueAmount`/`valueDisplayType` fields.
@@ -87,7 +116,36 @@ export function formatCardProductPrice(
 }
 
 /**
- * SERVICES-R5.26 — the exact eligibility rule `CardProductPurchaseCTA.tsx`
+ * Card Detail visual-fidelity pass — compact forms of the SAME real fields
+ * for the prototype's small `.detail-hero-stat` tiles, which are sized for
+ * a few words, not `formatCardProductValue`'s full sentence. Still derived
+ * only from `valueAmount`/`valueDisplayType`, never `priceAmount`.
+ *
+ * `null` when `valueAmount` is unset — the caller omits the tile rather
+ * than showing an invented placeholder.
+ */
+export function formatCardProductValueCompact(
+  card: Pick<CardProductDto, "valueAmount">,
+): string | null {
+  return card.valueAmount == null ? null : formatToman(card.valueAmount);
+}
+
+/** The tile's caption — a ceiling ("UP_TO") and an exact worth ("FIXED") are different facts. */
+export function cardProductValueCaption(
+  card: Pick<CardProductDto, "valueDisplayType">,
+): string {
+  return card.valueDisplayType === "UP_TO" ? "سقف اعتبار" : "ارزش کارت";
+}
+
+/** `null` when the card has no validity period — never a fabricated default. */
+export function formatCardProductValidity(
+  card: Pick<CardProductDto, "validityDays">,
+): string | null {
+  return card.validityDays == null ? null : `${card.validityDays} روز`;
+}
+
+/**
+ * SERVICES-R5.26 — the exact eligibility rule the purchase CTA
  * uses to decide between the real Purchase Flow CTA and the disabled one,
  * extracted as a pure function so it can be unit-tested directly (the CTA
  * component itself renders `PurchaseSheet`, which calls `useRouter()` —

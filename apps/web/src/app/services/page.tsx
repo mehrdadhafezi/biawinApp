@@ -29,18 +29,12 @@ export default function ServicesPage() {
   const { categories, error } = useServiceCatalog();
 
   function handleSelectCategory(category: CategoryDto) {
-    // Services Catalog Reset (Sep 2026) — a prototype-backed Category's
-    // own Landing page (CategoryHero + CategoryCardGrid, the real
-    // promotional-card experience) is the intended first click-through,
-    // not /services/[categoryId]'s unrelated full Service-browse grid
-    // (search/filter chips + every real Service as an icon-only tile —
-    // still reachable on its own, just no longer the first click). Falls
-    // back to the pre-existing behavior for any Category with no slug.
-    if (category.slug) {
-      router.push(`/categories/${category.slug}`);
-      return;
-    }
-    router.push(`/services/${category.id}`);
+    // Services Home -> Category Landing, the first of the journey's two
+    // clicks (Category, then CardProduct). A Category with no slug has no
+    // Landing route (Admin has not published one), so there is nowhere
+    // meaningful to go — the old fallback, `/services/[categoryId]`, is now
+    // only a redirect back to a Landing/Home and would just loop.
+    if (category.slug) router.push(`/categories/${category.slug}`);
   }
 
   return (
