@@ -1,56 +1,53 @@
 import { ApiPropertyOptional } from '@nestjs/swagger';
 import { MosaicSlot, MosaicTheme } from '@prisma/client';
+import { IsBoolean, IsEnum, IsUUID } from 'class-validator';
 import {
-  IsBoolean,
-  IsEnum,
-  IsInt,
-  IsOptional,
-  IsString,
-} from 'class-validator';
+  HomeNullableText,
+  HomeNullableUuid,
+  HomeSortOrder,
+  HomeText,
+  HomeOptional,
+} from './home-dto.decorators';
 
 export class UpdateHomeServiceMosaicTileDto {
   @ApiPropertyOptional()
-  @IsOptional()
-  @IsString()
+  @HomeOptional()
+  @IsUUID()
   categoryId?: string;
 
   @ApiPropertyOptional({ nullable: true })
-  @IsOptional()
-  @IsString()
+  @HomeNullableUuid()
   mediaAssetId?: string | null;
 
   @ApiPropertyOptional({ enum: MosaicSlot })
-  @IsOptional()
+  @HomeOptional()
   @IsEnum(MosaicSlot)
   slotType?: MosaicSlot;
 
-  @ApiPropertyOptional()
-  @IsOptional()
-  @IsString()
+  @ApiPropertyOptional({ maxLength: 200 })
+  @HomeOptional()
+  @HomeText(200)
   kicker?: string;
 
-  @ApiPropertyOptional({ nullable: true })
-  @IsOptional()
-  @IsString()
+  @ApiPropertyOptional({ nullable: true, maxLength: 200 })
+  @HomeNullableText(200)
   title?: string | null;
 
-  @ApiPropertyOptional({ nullable: true })
-  @IsOptional()
-  @IsString()
+  @ApiPropertyOptional({ nullable: true, maxLength: 500 })
+  @HomeNullableText(500)
   lead?: string | null;
 
   @ApiPropertyOptional({ enum: MosaicTheme })
-  @IsOptional()
+  @HomeOptional()
   @IsEnum(MosaicTheme)
   theme?: MosaicTheme;
 
-  @ApiPropertyOptional()
-  @IsOptional()
-  @IsInt()
+  @ApiPropertyOptional({ minimum: 0, maximum: 100000 })
+  @HomeSortOrder()
   sortOrder?: number;
 
   @ApiPropertyOptional()
-  @IsOptional()
+  @HomeOptional()
   @IsBoolean()
   active?: boolean;
 }

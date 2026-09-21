@@ -1,6 +1,10 @@
 import { Test, type TestingModule } from '@nestjs/testing';
 import { ConfigService } from '@nestjs/config';
-import { BadRequestException, NotFoundException } from '@nestjs/common';
+import {
+  BadRequestException,
+  ConflictException,
+  NotFoundException,
+} from '@nestjs/common';
 import { PrismaService } from '../../infra/prisma/prisma.service';
 import { AdminAuditLogService } from '../admin-audit-log/admin-audit-log.service';
 import { MediaService } from './media.service';
@@ -19,6 +23,13 @@ describe('MediaService', () => {
       findFirst: jest.Mock;
       update: jest.Mock;
     };
+    homeServiceBanner: { count: jest.Mock };
+    homeServiceMosaicTile: { count: jest.Mock };
+    homeNewsArticle: { count: jest.Mock };
+    category: { count: jest.Mock };
+    categoryCard: { count: jest.Mock };
+    service: { count: jest.Mock };
+    cardProduct: { count: jest.Mock };
     $transaction: jest.Mock;
   };
   let mediaStorage: {
@@ -40,6 +51,13 @@ describe('MediaService', () => {
         findFirst: jest.fn(),
         update: jest.fn(),
       },
+      homeServiceBanner: { count: jest.fn().mockResolvedValue(0) },
+      homeServiceMosaicTile: { count: jest.fn().mockResolvedValue(0) },
+      homeNewsArticle: { count: jest.fn().mockResolvedValue(0) },
+      category: { count: jest.fn().mockResolvedValue(0) },
+      categoryCard: { count: jest.fn().mockResolvedValue(0) },
+      service: { count: jest.fn().mockResolvedValue(0) },
+      cardProduct: { count: jest.fn().mockResolvedValue(0) },
       $transaction: jest.fn((ops: Promise<unknown>[]) => Promise.all(ops)),
     };
     mediaStorage = {
@@ -291,6 +309,93 @@ describe('MediaService', () => {
           resourceId: 'asset-1',
         }),
       );
+    });
+
+    describe('reference guard (Stage 5.16-B, BD-4)', () => {
+      const asset = {
+        id: 'asset-1',
+        fileName: 'photo.png',
+        key: 'media/generated-key.png',
+        mimeType: 'image/png',
+      };
+
+      const referrers: [string, () => jest.Mock][] = [
+        ['a Home banner', () => prisma.homeServiceBanner.count],
+        ['a Home mosaic tile', () => prisma.homeServiceMosaicTile.count],
+        ['a Home news article', () => prisma.homeNewsArticle.count],
+        ['a Category', () => prisma.category.count],
+        ['a CategoryCard', () => prisma.categoryCard.count],
+        ['a Service (main image or gallery)', () => prisma.service.count],
+        ['a CardProduct', () => prisma.cardProduct.count],
+      ];
+
+      it.each(referrers)(
+        'returns 409 and writes nothing when the asset is referenced by %s',
+        async (_label, countMock) => {
+          prisma.mediaAsset.findFirst.mockResolvedValue(asset);
+          countMock().mockResolvedValue(1);
+
+          await expect(
+            service.remove('asset-1', 'admin-1', meta),
+          ).rejects.toThrow(ConflictException);
+
+          expect(prisma.mediaAsset.update).not.toHaveBeenCalled();
+          expect(mediaStorage.remove).not.toHaveBeenCalled();
+          expect(auditLog.record).not.toHaveBeenCalled();
+        },
+      );
+
+      it('checks the Service gallery JSON id list (no FK) for the asset id', async () => {
+        prisma.mediaAsset.findFirst.mockResolvedValue(asset);
+        await service.remove('asset-1', 'admin-1', meta);
+
+        expect(prisma.service.count).toHaveBeenCalledWith({
+          where: { galleryMediaAssetIds: { array_contains: 'asset-1' } },
+        });
+        expect(prisma.service.count).toHaveBeenCalledWith({
+          where: { mediaAssetId: 'asset-1' },
+        });
+      });
+
+      it('the 409 body names which locations reference the asset and never detaches anything', async () => {
+        prisma.mediaAsset.findFirst.mockResolvedValue(asset);
+        prisma.cardProduct.count.mockResolvedValue(2);
+        prisma.homeServiceBanner.count.mockResolvedValue(1);
+
+        const error = await service
+          .remove('asset-1', 'admin-1', meta)
+          .catch((e: unknown) => e);
+
+        expect(error).toBeInstanceOf(ConflictException);
+        expect((error as ConflictException).getResponse()).toEqual(
+          expect.objectContaining({
+            details: { references: { homeServiceBanners: 1, cardProducts: 2 } },
+          }),
+        );
+        // Only the read-only counts ran; no referencing table was written.
+        for (const model of [
+          prisma.homeServiceBanner,
+          prisma.category,
+          prisma.categoryCard,
+          prisma.service,
+          prisma.cardProduct,
+        ]) {
+          expect(Object.keys(model)).toEqual(['count']);
+        }
+        expect(prisma.mediaAsset.update).not.toHaveBeenCalled();
+      });
+
+      it('an unreferenced asset is still soft-deleted exactly as before', async () => {
+        prisma.mediaAsset.findFirst.mockResolvedValue(asset);
+
+        await service.remove('asset-1', 'admin-1', meta);
+
+        expect(prisma.mediaAsset.update).toHaveBeenCalledTimes(1);
+        expect(prisma.mediaAsset.update).toHaveBeenCalledWith({
+          where: { id: 'asset-1' },
+          data: { active: false, deletedAt: expect.any(Date) },
+        });
+      });
     });
 
     it('throws NotFoundException for a missing or already-deleted asset', async () => {

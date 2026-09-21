@@ -3,6 +3,7 @@ import { PrismaService } from '../../infra/prisma/prisma.service';
 import { AdminAuditLogService } from '../admin-audit-log/admin-audit-log.service';
 import { MediaStorageService } from '../media/media-storage.service';
 import { HomeServiceMosaicTilesService } from './home-service-mosaic-tiles.service';
+import { HOME_ORDER_BY } from './home-write.util';
 
 /* eslint-disable @typescript-eslint/no-unsafe-assignment -- `expect.objectContaining(...)` is typed `any` in @types/jest. */
 
@@ -17,6 +18,8 @@ describe('HomeServiceMosaicTilesService', () => {
       update: jest.Mock;
       delete: jest.Mock;
     };
+    category: { findUnique: jest.Mock };
+    mediaAsset: { findFirst: jest.Mock };
     $transaction: jest.Mock;
   };
   let mediaStorage: { resolvePublicUrl: jest.Mock };
@@ -55,6 +58,12 @@ describe('HomeServiceMosaicTilesService', () => {
         update: jest.fn(),
         delete: jest.fn(),
       },
+      category: {
+        findUnique: jest.fn().mockResolvedValue({ id: 'cat-1' }),
+      },
+      mediaAsset: {
+        findFirst: jest.fn().mockResolvedValue({ id: 'media-1' }),
+      },
       $transaction: jest.fn((ops: Promise<unknown>[]) => Promise.all(ops)),
     };
     mediaStorage = {
@@ -90,7 +99,7 @@ describe('HomeServiceMosaicTilesService', () => {
 
     expect(prisma.homeServiceMosaicTile.findMany).toHaveBeenCalledWith({
       where: { active: true },
-      orderBy: { sortOrder: 'asc' },
+      orderBy: HOME_ORDER_BY,
       include: { category: true, mediaAsset: true },
     });
     expect(result.map((t) => t.slotType)).toEqual(['half', 'wide']);
@@ -128,7 +137,9 @@ describe('HomeServiceMosaicTilesService', () => {
   });
 
   it('reorder: updates sortOrder for every entry and records a REORDER audit entry', async () => {
-    prisma.homeServiceMosaicTile.findMany.mockResolvedValue([]);
+    prisma.homeServiceMosaicTile.findMany
+      .mockResolvedValueOnce([{ id: 'tile-1', sortOrder: 0 }])
+      .mockResolvedValue([]);
 
     await service.reorder(
       { items: [{ id: 'tile-1', sortOrder: 3 }] },

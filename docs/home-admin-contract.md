@@ -1,3 +1,31 @@
+> **STATUS — SUPERSEDED IN PART (Stage 5.16-B).** This is the original Stage 5.15
+> *planning* contract. Where it disagrees with the implemented code, **the code is
+> authoritative** (`backend/src/modules/home/**`, `backend/src/modules/media/**`).
+> Known corrections, verified against the code in Stage 5.15/5.16:
+>
+> - **Media field:** Home rows reference the central Media Library through a nullable
+>   `mediaAssetId` FK (→ `media_assets`), **not** a per-table `imageKey` column. The
+>   public response exposes a resolved `image` URL (or `null`).
+> - **No `/image` endpoints exist.** Images are uploaded once via
+>   `POST /api/v1/admin/media/upload` and then attached with `mediaAssetId` on the normal
+>   `POST`/`PUT` of the Home row (`null` clears it).
+> - **Reorder body** is `{ "items": [{ "id": "<uuid>", "sortOrder": <int 0..100000> }] }`
+>   (an object with `items`, not a bare array). It is a **partial** reorder: only the
+>   listed rows change. Strict rules: non-empty, uuid ids, no duplicate ids, no duplicate
+>   positions (400); unknown ids (422). The response is the *public* active list.
+> - **Admin list response** is `{ items, total, skip, take }` (input is `page`/`limit`).
+> - **Only `PUT` (partial merge) exists for updates** — no `PATCH /:id`; the active toggle
+>   is `PUT { "active": boolean }`.
+> - **Auth:** admin routes use `AdminJwtAuthGuard` + `AdminRolesGuard` (reads: any admin;
+>   writes: `SUPER_ADMIN`/`CONTENT_EDITOR`), not the customer `JwtAuthGuard` described in §6/§7.
+> - **Errors (Stage 5.16-B):** 400 malformed, 404 missing, 409 duplicate `cardKey`/`bodySlug`
+>   and media deletion while referenced, 422 unknown category/media/reorder id.
+>
+> Current, code-derived contract: `docs/STAGE-5.15-HOME-ADMIN-CONTRACT-ANALYSIS.md`,
+> `docs/STAGE-5.16-HOME-BACKEND-HARDENING-PLAN.md`,
+> `docs/STAGE-5.16-HOME-BACKEND-HARDENING-RESULT.md`. The text below is kept as the
+> historical planning record.
+
 # Home — Admin Portal Content Contract (Stage 5.15)
 
 Contract-only document. **No migration, no Admin UI, no Customer App change
@@ -315,8 +343,8 @@ GET    /api/v1/admin/home/service-banners
 POST   /api/v1/admin/home/service-banners
 PUT    /api/v1/admin/home/service-banners/:id
 DELETE /api/v1/admin/home/service-banners/:id
-PATCH  /api/v1/admin/home/service-banners/reorder      # body: [{ id, sortOrder }, ...]
-POST   /api/v1/admin/home/service-banners/:id/image    # multipart upload → sets imageKey
+PATCH  /api/v1/admin/home/service-banners/reorder      # IMPLEMENTED body: { items: [{ id, sortOrder }, ...] } (partial reorder)
+# (planned, NEVER built) POST .../:id/image — replaced by the shared POST /api/v1/admin/media/upload + `mediaAssetId`
 
 # identical 6-endpoint shape repeated for:
 #   /admin/home/service-mosaic-tiles

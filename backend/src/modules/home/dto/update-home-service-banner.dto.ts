@@ -1,49 +1,47 @@
 import { ApiPropertyOptional } from '@nestjs/swagger';
 import { BannerTheme } from '@prisma/client';
+import { IsBoolean, IsEnum, IsUUID } from 'class-validator';
 import {
-  IsBoolean,
-  IsEnum,
-  IsInt,
-  IsOptional,
-  IsString,
-} from 'class-validator';
+  HomeNullableUuid,
+  HomeSortOrder,
+  HomeText,
+  HomeOptional,
+} from './home-dto.decorators';
 
 export class UpdateHomeServiceBannerDto {
   @ApiPropertyOptional()
-  @IsOptional()
-  @IsString()
+  @HomeOptional()
+  @IsUUID()
   categoryId?: string;
 
   @ApiPropertyOptional({
     description: 'MediaAsset id. Pass null to clear it.',
     nullable: true,
   })
-  @IsOptional()
-  @IsString()
+  @HomeNullableUuid()
   mediaAssetId?: string | null;
 
-  @ApiPropertyOptional()
-  @IsOptional()
-  @IsString()
+  @ApiPropertyOptional({ maxLength: 200 })
+  @HomeOptional()
+  @HomeText(200)
   kicker?: string;
 
   @ApiPropertyOptional({ enum: BannerTheme })
-  @IsOptional()
+  @HomeOptional()
   @IsEnum(BannerTheme)
   theme?: BannerTheme;
 
   @ApiPropertyOptional()
-  @IsOptional()
+  @HomeOptional()
   @IsBoolean()
   wide?: boolean;
 
-  @ApiPropertyOptional()
-  @IsOptional()
-  @IsInt()
+  @ApiPropertyOptional({ minimum: 0, maximum: 100000 })
+  @HomeSortOrder()
   sortOrder?: number;
 
   @ApiPropertyOptional()
-  @IsOptional()
+  @HomeOptional()
   @IsBoolean()
   active?: boolean;
 }

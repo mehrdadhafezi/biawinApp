@@ -3,6 +3,7 @@ import { NotFoundException } from '@nestjs/common';
 import { PrismaService } from '../../infra/prisma/prisma.service';
 import { AdminAuditLogService } from '../admin-audit-log/admin-audit-log.service';
 import { HomeHeroCardsService } from './home-hero-cards.service';
+import { HOME_ORDER_BY } from './home-write.util';
 
 /* eslint-disable @typescript-eslint/no-unsafe-assignment -- `expect.objectContaining(...)` is typed `any` in @types/jest. */
 
@@ -74,7 +75,7 @@ describe('HomeHeroCardsService', () => {
 
     expect(prisma.homeHeroCard.findMany).toHaveBeenCalledWith({
       where: { active: true },
-      orderBy: { sortOrder: 'asc' },
+      orderBy: HOME_ORDER_BY,
     });
     expect(result).toEqual([
       {

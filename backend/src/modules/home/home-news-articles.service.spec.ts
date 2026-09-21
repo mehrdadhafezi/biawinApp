@@ -3,6 +3,7 @@ import { PrismaService } from '../../infra/prisma/prisma.service';
 import { AdminAuditLogService } from '../admin-audit-log/admin-audit-log.service';
 import { MediaStorageService } from '../media/media-storage.service';
 import { HomeNewsArticlesService } from './home-news-articles.service';
+import { HOME_ORDER_BY } from './home-write.util';
 
 describe('HomeNewsArticlesService', () => {
   let service: HomeNewsArticlesService;
@@ -79,7 +80,7 @@ describe('HomeNewsArticlesService', () => {
 
     expect(prisma.homeNewsArticle.findMany).toHaveBeenCalledWith({
       where: { active: true },
-      orderBy: { sortOrder: 'asc' },
+      orderBy: HOME_ORDER_BY,
       include: { mediaAsset: true },
     });
     expect(result).toEqual([

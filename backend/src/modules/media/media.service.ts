@@ -1,5 +1,6 @@
 import {
   BadRequestException,
+  ConflictException,
   Injectable,
   NotFoundException,
 } from '@nestjs/common';
@@ -155,15 +156,21 @@ export class MediaService {
   }
 
   /**
-   * Soft delete only (`active: false` + `deletedAt`) — this stage's delete
-   * safety mechanism. Nothing references `MediaAsset.id` yet (Home/News
-   * media isn't wired up this stage), so there's no live-content-breakage
-   * risk to check for today; the row and the underlying storage object
-   * both survive, so a mistaken delete is recoverable by a direct DB fix
-   * without needing the original file back. A hard delete (removing the
-   * storage object) is intentionally not built here — add it once a real
-   * "empty trash" flow exists, backed by an actual usage check once some
-   * content type references this table.
+   * Soft delete only (`active: false` + `deletedAt`) — the storage object
+   * survives, so a mistaken delete is recoverable by a direct DB fix.
+   *
+   * Stage 5.16-B (BD-4): an asset that is REFERENCED anywhere is never
+   * deleted — 409, nothing written. The reference is never detached,
+   * rewritten or replaced (a soft delete would otherwise 404 the file for
+   * every referrer at once: Home, Category, CategoryCard, Service, Card).
+   * Every location that can hold a MediaAsset id is checked: the 7
+   * `mediaAssetId` FK columns plus `Service.galleryMediaAssetIds` (a JSON id
+   * array with no FK). The check is read-only.
+   *
+   * Known limit: the check and the update are two statements, so an
+   * admin attaching the asset to content in the same instant could slip
+   * through; the new Home write path also requires an ACTIVE asset, and the
+   * delete is a recoverable soft delete.
    */
   async remove(
     id: string,
@@ -171,6 +178,16 @@ export class MediaService {
     meta: SessionMeta,
   ): Promise<{ id: string }> {
     const asset = await this.findActiveOrThrow(id);
+
+    const references = await this.countReferences(id);
+    const total = Object.values(references).reduce((sum, n) => sum + n, 0);
+    if (total > 0) {
+      throw new ConflictException({
+        message:
+          'این رسانه در حال استفاده است و قابل حذف نیست. ابتدا آن را از محتوای مربوطه جدا کنید.',
+        details: { references },
+      });
+    }
 
     await this.prisma.mediaAsset.update({
       where: { id },
@@ -192,6 +209,44 @@ export class MediaService {
     });
 
     return { id };
+  }
+
+  /** Read-only usage count per referencing location (only non-zero entries are returned). */
+  private async countReferences(id: string): Promise<Record<string, number>> {
+    const [
+      homeServiceBanners,
+      homeServiceMosaicTiles,
+      homeNewsArticles,
+      categories,
+      categoryCards,
+      services,
+      serviceGalleries,
+      cardProducts,
+    ] = await Promise.all([
+      this.prisma.homeServiceBanner.count({ where: { mediaAssetId: id } }),
+      this.prisma.homeServiceMosaicTile.count({ where: { mediaAssetId: id } }),
+      this.prisma.homeNewsArticle.count({ where: { mediaAssetId: id } }),
+      this.prisma.category.count({ where: { mediaAssetId: id } }),
+      this.prisma.categoryCard.count({ where: { mediaAssetId: id } }),
+      this.prisma.service.count({ where: { mediaAssetId: id } }),
+      this.prisma.service.count({
+        where: { galleryMediaAssetIds: { array_contains: id } },
+      }),
+      this.prisma.cardProduct.count({ where: { mediaAssetId: id } }),
+    ]);
+    const counts = {
+      homeServiceBanners,
+      homeServiceMosaicTiles,
+      homeNewsArticles,
+      categories,
+      categoryCards,
+      services,
+      serviceGalleries,
+      cardProducts,
+    };
+    return Object.fromEntries(
+      Object.entries(counts).filter(([, count]) => count > 0),
+    );
   }
 
   private async findActiveOrThrow(id: string): Promise<MediaAsset> {

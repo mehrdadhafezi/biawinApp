@@ -1,47 +1,46 @@
 import { ApiProperty, ApiPropertyOptional } from '@nestjs/swagger';
 import { BannerTheme } from '@prisma/client';
+import { IsBoolean, IsEnum, IsUUID } from 'class-validator';
 import {
-  IsBoolean,
-  IsEnum,
-  IsInt,
-  IsOptional,
-  IsString,
-} from 'class-validator';
+  HomeNullableUuid,
+  HomeSortOrder,
+  HomeText,
+  HomeOptional,
+} from './home-dto.decorators';
 
 export class CreateHomeServiceBannerDto {
   @ApiProperty()
-  @IsString()
+  @IsUUID()
   categoryId: string;
 
   @ApiPropertyOptional({
+    nullable: true,
     description:
-      'MediaAsset id. Unset renders no image, matching the same not-yet-uploaded state OrbitItem allows.',
+      'MediaAsset id (must exist and not be soft-deleted). Unset/null renders no image, matching the same not-yet-uploaded state OrbitItem allows.',
   })
-  @IsOptional()
-  @IsString()
-  mediaAssetId?: string;
+  @HomeNullableUuid()
+  mediaAssetId?: string | null;
 
-  @ApiProperty()
-  @IsString()
+  @ApiProperty({ maxLength: 200 })
+  @HomeText(200)
   kicker: string;
 
   @ApiPropertyOptional({ enum: BannerTheme, default: BannerTheme.auto })
-  @IsOptional()
+  @HomeOptional()
   @IsEnum(BannerTheme)
   theme?: BannerTheme;
 
   @ApiPropertyOptional({ default: false })
-  @IsOptional()
+  @HomeOptional()
   @IsBoolean()
   wide?: boolean;
 
-  @ApiPropertyOptional({ default: 0 })
-  @IsOptional()
-  @IsInt()
+  @ApiPropertyOptional({ default: 0, minimum: 0, maximum: 100000 })
+  @HomeSortOrder()
   sortOrder?: number;
 
   @ApiPropertyOptional({ default: true })
-  @IsOptional()
+  @HomeOptional()
   @IsBoolean()
   active?: boolean;
 }

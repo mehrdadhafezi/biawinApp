@@ -4,6 +4,7 @@ import {
   Delete,
   Get,
   Param,
+  ParseUUIDPipe,
   Patch,
   Post,
   Put,
@@ -49,7 +50,7 @@ export class HomeServiceBannersAdminController {
   }
 
   @Get(':id')
-  findOne(@Param('id') id: string) {
+  findOne(@Param('id', ParseUUIDPipe) id: string) {
     return this.serviceBannersService.findOneAdmin(id);
   }
 
@@ -70,7 +71,7 @@ export class HomeServiceBannersAdminController {
   @AdminRoles(AdminRole.SUPER_ADMIN, AdminRole.CONTENT_EDITOR)
   @Put(':id')
   update(
-    @Param('id') id: string,
+    @Param('id', ParseUUIDPipe) id: string,
     @Body() dto: UpdateHomeServiceBannerDto,
     @CurrentAdminUser() admin: AuthenticatedAdminUser,
     @Req() req: Request,
@@ -86,7 +87,7 @@ export class HomeServiceBannersAdminController {
   @AdminRoles(AdminRole.SUPER_ADMIN, AdminRole.CONTENT_EDITOR)
   @Delete(':id')
   remove(
-    @Param('id') id: string,
+    @Param('id', ParseUUIDPipe) id: string,
     @CurrentAdminUser() admin: AuthenticatedAdminUser,
     @Req() req: Request,
   ) {

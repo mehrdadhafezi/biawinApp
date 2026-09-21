@@ -7,6 +7,13 @@ import type { CreateHomeServiceBannerDto } from './dto/create-home-service-banne
 import type { ReorderHomeItemsDto } from './dto/reorder-home-items.dto';
 import type { UpdateHomeServiceBannerDto } from './dto/update-home-service-banner.dto';
 import { resolveMediaUrl } from './home-media.util';
+import {
+  HOME_ORDER_BY,
+  assertCategoryExists,
+  assertMediaAssetUsable,
+  loadReorderBeforeState,
+  rethrowHomeWriteError,
+} from './home-write.util';
 
 type BannerWithRelations = HomeServiceBanner & {
   category: Category;
@@ -38,6 +45,19 @@ interface SessionMeta {
   userAgent?: string;
 }
 
+/** Audit snapshot (Stage 5.16-B): every editable column; `kicker`/`active` keep their historical keys. */
+function snapshot(banner: HomeServiceBanner) {
+  return {
+    categoryId: banner.categoryId,
+    mediaAssetId: banner.mediaAssetId,
+    kicker: banner.kicker,
+    theme: banner.theme,
+    wide: banner.wide,
+    sortOrder: banner.sortOrder,
+    active: banner.active,
+  };
+}
+
 /**
  * `خدمات منتخب بیاوین` — `categoryId` is a real FK (never the
  * `categoryName === category.name` string match `docs/home-admin-
@@ -48,6 +68,11 @@ interface SessionMeta {
  * Home API contract if possible" (`ServiceBannerTile.categoryName` in
  * `apps/web/src/components/home/home.mock.ts`) without reintroducing the
  * fragile pattern that produced it.
+ *
+ * Stage 5.16-B: public rows are still filtered by the Home row's own
+ * `active` ONLY — an inactive Category does NOT hide its banner (BD-1,
+ * compatibility decision: a live staging banner depends on it). A
+ * soft-deleted MediaAsset yields `image: null` (BD-2), never a dead URL.
  */
 @Injectable()
 export class HomeServiceBannersService {
@@ -60,7 +85,7 @@ export class HomeServiceBannersService {
   async listPublic(): Promise<HomeServiceBannerPublicResponse[]> {
     const items = await this.prisma.homeServiceBanner.findMany({
       where: { active: true },
-      orderBy: { sortOrder: 'asc' },
+      orderBy: HOME_ORDER_BY,
       include: { category: true, mediaAsset: true },
     });
     return items.map((item) => this.toPublicResponse(item));
@@ -71,7 +96,7 @@ export class HomeServiceBannersService {
       this.prisma.homeServiceBanner.findMany({
         skip,
         take,
-        orderBy: { sortOrder: 'asc' },
+        orderBy: HOME_ORDER_BY,
         include: { category: true, mediaAsset: true },
       }),
       this.prisma.homeServiceBanner.count(),
@@ -93,16 +118,23 @@ export class HomeServiceBannersService {
     adminUserId: string,
     meta: SessionMeta,
   ): Promise<HomeServiceBannerAdminResponse> {
-    const banner = await this.prisma.homeServiceBanner.create({
-      data: { ...dto, createdBy: adminUserId, updatedBy: adminUserId },
-      include: { category: true, mediaAsset: true },
-    });
+    await assertCategoryExists(this.prisma, dto.categoryId);
+    await assertMediaAssetUsable(this.prisma, dto.mediaAssetId);
+    let banner: BannerWithRelations;
+    try {
+      banner = await this.prisma.homeServiceBanner.create({
+        data: { ...dto, createdBy: adminUserId, updatedBy: adminUserId },
+        include: { category: true, mediaAsset: true },
+      });
+    } catch (err) {
+      rethrowHomeWriteError(err);
+    }
     await this.auditLog.record({
       adminUserId,
       action: 'CREATE',
       resourceType: 'HomeServiceBanner',
       resourceId: banner.id,
-      afterJson: { categoryId: banner.categoryId, kicker: banner.kicker },
+      afterJson: snapshot(banner),
       ip: meta.ip,
       userAgent: meta.userAgent,
     });
@@ -116,61 +148,84 @@ export class HomeServiceBannersService {
     meta: SessionMeta,
   ): Promise<HomeServiceBannerAdminResponse> {
     const before = await this.findOrThrow(id);
-    const banner = await this.prisma.homeServiceBanner.update({
-      where: { id },
-      data: { ...dto, updatedBy: adminUserId },
-      include: { category: true, mediaAsset: true },
-    });
+    await assertCategoryExists(this.prisma, dto.categoryId);
+    await assertMediaAssetUsable(this.prisma, dto.mediaAssetId);
+    let banner: BannerWithRelations;
+    try {
+      banner = await this.prisma.homeServiceBanner.update({
+        where: { id },
+        data: { ...dto, updatedBy: adminUserId },
+        include: { category: true, mediaAsset: true },
+      });
+    } catch (err) {
+      rethrowHomeWriteError(err);
+    }
     await this.auditLog.record({
       adminUserId,
       action: 'UPDATE',
       resourceType: 'HomeServiceBanner',
       resourceId: id,
-      beforeJson: { kicker: before.kicker, active: before.active },
-      afterJson: { kicker: banner.kicker, active: banner.active },
+      beforeJson: snapshot(before),
+      afterJson: snapshot(banner),
       ip: meta.ip,
       userAgent: meta.userAgent,
     });
     return this.toAdminResponse(banner);
   }
 
-  /** Hard delete — same reasoning as `HomeHeroCardsService.remove()`. */
+  /** Hard delete — same reasoning as `HomeHeroCardsService.remove()`. Never touches the referenced MediaAsset. */
   async remove(
     id: string,
     adminUserId: string,
     meta: SessionMeta,
   ): Promise<{ id: string }> {
     const before = await this.findOrThrow(id);
-    await this.prisma.homeServiceBanner.delete({ where: { id } });
+    try {
+      await this.prisma.homeServiceBanner.delete({ where: { id } });
+    } catch (err) {
+      rethrowHomeWriteError(err);
+    }
     await this.auditLog.record({
       adminUserId,
       action: 'DELETE',
       resourceType: 'HomeServiceBanner',
       resourceId: id,
-      beforeJson: { categoryId: before.categoryId, kicker: before.kicker },
+      beforeJson: snapshot(before),
       ip: meta.ip,
       userAgent: meta.userAgent,
     });
     return { id };
   }
 
+  /** PARTIAL reorder (BD-3): only the listed rows change. Unknown ids → 422 before any write. */
   async reorder(
     dto: ReorderHomeItemsDto,
     adminUserId: string,
     meta: SessionMeta,
   ) {
-    await this.prisma.$transaction(
-      dto.items.map((entry) =>
-        this.prisma.homeServiceBanner.update({
-          where: { id: entry.id },
-          data: { sortOrder: entry.sortOrder, updatedBy: adminUserId },
-        }),
-      ),
+    const beforeItems = await loadReorderBeforeState(dto.items, (ids) =>
+      this.prisma.homeServiceBanner.findMany({
+        where: { id: { in: ids } },
+        select: { id: true, sortOrder: true },
+      }),
     );
+    try {
+      await this.prisma.$transaction(
+        dto.items.map((entry) =>
+          this.prisma.homeServiceBanner.update({
+            where: { id: entry.id },
+            data: { sortOrder: entry.sortOrder, updatedBy: adminUserId },
+          }),
+        ),
+      );
+    } catch (err) {
+      rethrowHomeWriteError(err);
+    }
     await this.auditLog.record({
       adminUserId,
       action: 'REORDER',
       resourceType: 'HomeServiceBanner',
+      beforeJson: { items: beforeItems },
       afterJson: { items: dto.items },
       ip: meta.ip,
       userAgent: meta.userAgent,

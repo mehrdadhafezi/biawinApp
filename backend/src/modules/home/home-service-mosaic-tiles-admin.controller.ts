@@ -4,6 +4,7 @@ import {
   Delete,
   Get,
   Param,
+  ParseUUIDPipe,
   Patch,
   Post,
   Put,
@@ -46,7 +47,7 @@ export class HomeServiceMosaicTilesAdminController {
   }
 
   @Get(':id')
-  findOne(@Param('id') id: string) {
+  findOne(@Param('id', ParseUUIDPipe) id: string) {
     return this.mosaicTilesService.findOneAdmin(id);
   }
 
@@ -67,7 +68,7 @@ export class HomeServiceMosaicTilesAdminController {
   @AdminRoles(AdminRole.SUPER_ADMIN, AdminRole.CONTENT_EDITOR)
   @Put(':id')
   update(
-    @Param('id') id: string,
+    @Param('id', ParseUUIDPipe) id: string,
     @Body() dto: UpdateHomeServiceMosaicTileDto,
     @CurrentAdminUser() admin: AuthenticatedAdminUser,
     @Req() req: Request,
@@ -83,7 +84,7 @@ export class HomeServiceMosaicTilesAdminController {
   @AdminRoles(AdminRole.SUPER_ADMIN, AdminRole.CONTENT_EDITOR)
   @Delete(':id')
   remove(
-    @Param('id') id: string,
+    @Param('id', ParseUUIDPipe) id: string,
     @CurrentAdminUser() admin: AuthenticatedAdminUser,
     @Req() req: Request,
   ) {

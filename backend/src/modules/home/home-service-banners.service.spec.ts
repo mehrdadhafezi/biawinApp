@@ -4,6 +4,7 @@ import { PrismaService } from '../../infra/prisma/prisma.service';
 import { AdminAuditLogService } from '../admin-audit-log/admin-audit-log.service';
 import { MediaStorageService } from '../media/media-storage.service';
 import { HomeServiceBannersService } from './home-service-banners.service';
+import { HOME_ORDER_BY } from './home-write.util';
 
 /* eslint-disable @typescript-eslint/no-unsafe-assignment -- `expect.objectContaining(...)` is typed `any` in @types/jest; every use below is a plain Jest assertion helper (same rationale as modules/admin-auth/admin-auth.service.spec.ts). */
 
@@ -19,6 +20,8 @@ describe('HomeServiceBannersService', () => {
       update: jest.Mock;
       delete: jest.Mock;
     };
+    category: { findUnique: jest.Mock };
+    mediaAsset: { findFirst: jest.Mock };
     $transaction: jest.Mock;
   };
   let mediaStorage: { resolvePublicUrl: jest.Mock };
@@ -59,6 +62,12 @@ describe('HomeServiceBannersService', () => {
         create: jest.fn(),
         update: jest.fn(),
         delete: jest.fn(),
+      },
+      category: {
+        findUnique: jest.fn().mockResolvedValue({ id: 'cat-1' }),
+      },
+      mediaAsset: {
+        findFirst: jest.fn().mockResolvedValue({ id: 'media-1' }),
       },
       $transaction: jest.fn((ops: Promise<unknown>[]) => Promise.all(ops)),
     };
@@ -108,7 +117,7 @@ describe('HomeServiceBannersService', () => {
 
       expect(prisma.homeServiceBanner.findMany).toHaveBeenCalledWith({
         where: { active: true },
-        orderBy: { sortOrder: 'asc' },
+        orderBy: HOME_ORDER_BY,
         include: { category: true, mediaAsset: true },
       });
     });
@@ -239,7 +248,13 @@ describe('HomeServiceBannersService', () => {
 
   describe('reorder — "Ordering works" + "Audit records created"', () => {
     it('updates sortOrder for every entry in one transaction and records a REORDER audit entry', async () => {
-      prisma.homeServiceBanner.findMany.mockResolvedValue([]);
+      // 1st call: the existence pre-check (Stage 5.16-B); 2nd: listPublic().
+      prisma.homeServiceBanner.findMany
+        .mockResolvedValueOnce([
+          { id: 'banner-1', sortOrder: 0 },
+          { id: 'banner-2', sortOrder: 1 },
+        ])
+        .mockResolvedValue([]);
 
       await service.reorder(
         {

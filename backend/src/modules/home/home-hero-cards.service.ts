@@ -1,10 +1,20 @@
-import { Injectable, NotFoundException } from '@nestjs/common';
+import {
+  ConflictException,
+  Injectable,
+  NotFoundException,
+} from '@nestjs/common';
 import type { HomeHeroCard } from '@prisma/client';
 import { PrismaService } from '../../infra/prisma/prisma.service';
 import { AdminAuditLogService } from '../admin-audit-log/admin-audit-log.service';
 import type { CreateHomeHeroCardDto } from './dto/create-home-hero-card.dto';
 import type { ReorderHomeItemsDto } from './dto/reorder-home-items.dto';
 import type { UpdateHomeHeroCardDto } from './dto/update-home-hero-card.dto';
+import {
+  DUPLICATE_CARD_KEY_MESSAGE,
+  HOME_ORDER_BY,
+  loadReorderBeforeState,
+  rethrowHomeWriteError,
+} from './home-write.util';
 
 export interface HomeHeroCardPublicResponse {
   id: string;
@@ -32,6 +42,26 @@ interface SessionMeta {
 }
 
 /**
+ * Audit snapshot (Stage 5.16-B): every editable column, so an UPDATE/DELETE
+ * row records what actually changed. `title`/`active` stay first-class keys
+ * exactly as older audit rows recorded them, so readers of historical rows
+ * keep working (new rows are a superset).
+ */
+function snapshot(card: HomeHeroCard) {
+  return {
+    cardKey: card.cardKey,
+    label: card.label,
+    title: card.title,
+    subtitle: card.subtitle,
+    displayNumber: card.displayNumber,
+    ownerLabel: card.ownerLabel,
+    colorPreset: card.colorPreset,
+    sortOrder: card.sortOrder,
+    active: card.active,
+  };
+}
+
+/**
  * `کارت‌های بیاوین` — the simplest of the 4 Home CMS resources (no
  * Category/MediaAsset relation, just the 3 fixed marketing cards). Kept as
  * its own small service rather than folded into a generic one, per
@@ -49,7 +79,7 @@ export class HomeHeroCardsService {
   async listPublic(): Promise<HomeHeroCardPublicResponse[]> {
     const items = await this.prisma.homeHeroCard.findMany({
       where: { active: true },
-      orderBy: { sortOrder: 'asc' },
+      orderBy: HOME_ORDER_BY,
     });
     return items.map((item) => this.toPublicResponse(item));
   }
@@ -59,7 +89,7 @@ export class HomeHeroCardsService {
       this.prisma.homeHeroCard.findMany({
         skip,
         take,
-        orderBy: { sortOrder: 'asc' },
+        orderBy: HOME_ORDER_BY,
       }),
       this.prisma.homeHeroCard.count(),
     ]);
@@ -80,15 +110,21 @@ export class HomeHeroCardsService {
     adminUserId: string,
     meta: SessionMeta,
   ): Promise<HomeHeroCardAdminResponse> {
-    const card = await this.prisma.homeHeroCard.create({
-      data: { ...dto, createdBy: adminUserId, updatedBy: adminUserId },
-    });
+    await this.assertCardKeyFree(dto.cardKey);
+    let card: HomeHeroCard;
+    try {
+      card = await this.prisma.homeHeroCard.create({
+        data: { ...dto, createdBy: adminUserId, updatedBy: adminUserId },
+      });
+    } catch (err) {
+      rethrowHomeWriteError(err);
+    }
     await this.auditLog.record({
       adminUserId,
       action: 'CREATE',
       resourceType: 'HomeHeroCard',
       resourceId: card.id,
-      afterJson: { cardKey: card.cardKey, title: card.title },
+      afterJson: snapshot(card),
       ip: meta.ip,
       userAgent: meta.userAgent,
     });
@@ -102,17 +138,25 @@ export class HomeHeroCardsService {
     meta: SessionMeta,
   ): Promise<HomeHeroCardAdminResponse> {
     const before = await this.findOrThrow(id);
-    const card = await this.prisma.homeHeroCard.update({
-      where: { id },
-      data: { ...dto, updatedBy: adminUserId },
-    });
+    if (dto.cardKey !== undefined && dto.cardKey !== before.cardKey) {
+      await this.assertCardKeyFree(dto.cardKey);
+    }
+    let card: HomeHeroCard;
+    try {
+      card = await this.prisma.homeHeroCard.update({
+        where: { id },
+        data: { ...dto, updatedBy: adminUserId },
+      });
+    } catch (err) {
+      rethrowHomeWriteError(err);
+    }
     await this.auditLog.record({
       adminUserId,
       action: 'UPDATE',
       resourceType: 'HomeHeroCard',
       resourceId: id,
-      beforeJson: { title: before.title, active: before.active },
-      afterJson: { title: card.title, active: card.active },
+      beforeJson: snapshot(before),
+      afterJson: snapshot(card),
       ip: meta.ip,
       userAgent: meta.userAgent,
     });
@@ -132,41 +176,66 @@ export class HomeHeroCardsService {
     meta: SessionMeta,
   ): Promise<{ id: string }> {
     const before = await this.findOrThrow(id);
-    await this.prisma.homeHeroCard.delete({ where: { id } });
+    try {
+      await this.prisma.homeHeroCard.delete({ where: { id } });
+    } catch (err) {
+      rethrowHomeWriteError(err);
+    }
     await this.auditLog.record({
       adminUserId,
       action: 'DELETE',
       resourceType: 'HomeHeroCard',
       resourceId: id,
-      beforeJson: { cardKey: before.cardKey, title: before.title },
+      beforeJson: snapshot(before),
       ip: meta.ip,
       userAgent: meta.userAgent,
     });
     return { id };
   }
 
+  /** PARTIAL reorder (BD-3): only the listed rows change. Unknown ids → 422 before any write. */
   async reorder(
     dto: ReorderHomeItemsDto,
     adminUserId: string,
     meta: SessionMeta,
   ) {
-    await this.prisma.$transaction(
-      dto.items.map((entry) =>
-        this.prisma.homeHeroCard.update({
-          where: { id: entry.id },
-          data: { sortOrder: entry.sortOrder, updatedBy: adminUserId },
-        }),
-      ),
+    const beforeItems = await loadReorderBeforeState(dto.items, (ids) =>
+      this.prisma.homeHeroCard.findMany({
+        where: { id: { in: ids } },
+        select: { id: true, sortOrder: true },
+      }),
     );
+    try {
+      await this.prisma.$transaction(
+        dto.items.map((entry) =>
+          this.prisma.homeHeroCard.update({
+            where: { id: entry.id },
+            data: { sortOrder: entry.sortOrder, updatedBy: adminUserId },
+          }),
+        ),
+      );
+    } catch (err) {
+      rethrowHomeWriteError(err);
+    }
     await this.auditLog.record({
       adminUserId,
       action: 'REORDER',
       resourceType: 'HomeHeroCard',
+      beforeJson: { items: beforeItems },
       afterJson: { items: dto.items },
       ip: meta.ip,
       userAgent: meta.userAgent,
     });
     return this.listPublic();
+  }
+
+  /** `cardKey` is `@unique` (3-value enum): pre-check gives a clean 409; the `P2002` catch covers the concurrent-write race. */
+  private async assertCardKeyFree(cardKey: string): Promise<void> {
+    const existing = await this.prisma.homeHeroCard.findUnique({
+      where: { cardKey: cardKey as HomeHeroCard['cardKey'] },
+      select: { id: true },
+    });
+    if (existing) throw new ConflictException(DUPLICATE_CARD_KEY_MESSAGE);
   }
 
   private async findOrThrow(id: string): Promise<HomeHeroCard> {
