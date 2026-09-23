@@ -152,6 +152,25 @@ function registerCleanup(name: string, run: () => Promise<void>): void {
   cleanupTasks.push({ name, run });
 }
 
+async function runCleanup(): Promise<void> {
+  // Run in reverse registration order so dependent fixtures are removed first.
+  let failed = false;
+  for (const task of [...cleanupTasks].reverse()) {
+    try {
+      await task.run();
+      record(`Cleanup: ${task.name}`, 'PASS');
+    } catch (err) {
+      failed = true;
+      record(
+        `Cleanup: ${task.name}`,
+        'FAIL',
+        err instanceof Error ? err.message : String(err),
+      );
+    }
+  }
+  if (failed) throw new Error('One or more registered cleanup tasks failed');
+}
+
 // ---------------------------------------------------------------------------
 // HTTP helpers (same envelope-unwrapping contract as authenticated-qa-runner.ts)
 // ---------------------------------------------------------------------------
