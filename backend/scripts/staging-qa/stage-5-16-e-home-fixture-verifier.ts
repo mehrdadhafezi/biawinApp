@@ -733,8 +733,8 @@ async function main(): Promise<void> {
     });
     await step(
       'TEST 10: unknown reorder ID -> 422, nothing written',
-      if (!news1Id) throw new Error('News #1 fixture was not created; unknown reorder-ID test cannot run safely');
       async () => {
+        if (!news1Id) throw new Error('News #1 fixture was not created; unknown reorder-ID test cannot run safely');
         const res = await apiCall('/api/v1/admin/home/news-articles/reorder', {
           method: 'PATCH',
           token: admin!.accessToken,
@@ -762,8 +762,8 @@ async function main(): Promise<void> {
     // =====================================================================
     await step(
       'TEST 11: valid partial reorder (News #1 <-> News #2), then restore original order',
-      if (!news1Id || !news2Id) throw new Error('News #1/#2 fixture was not created; valid partial reorder test cannot run safely');
       async () => {
+        if (!news1Id || !news2Id) throw new Error('News #1/#2 fixture was not created; valid partial reorder test cannot run safely');
         const swap = await apiCall('/api/v1/admin/home/news-articles/reorder', {
           method: 'PATCH',
           token: admin!.accessToken,
@@ -927,8 +927,8 @@ async function main(): Promise<void> {
 
     await step(
       'TEST 12: public GET /home/news-articles shows the QA row with image: null, HTTP 200, row present',
-      if (!news3Id || !mediaCId) throw new Error('News #3 or media C fixture was not created; soft-deleted-media public test cannot run safely');
       async () => {
+        if (!news3Id || !mediaCId) throw new Error('News #3 or media C fixture was not created; soft-deleted-media public test cannot run safely');
         const res = await apiCall<{ id: string; image: string | null }[]>(
           '/api/v1/home/news-articles',
         );
@@ -954,8 +954,8 @@ async function main(): Promise<void> {
     // =====================================================================
     await step(
       'TEST 13: delete QA media A while referenced by News #1 -> 409, reference intact, nothing detached',
-      if (!news1Id || !mediaAId) throw new Error('News #1 or media A fixture was not created; referenced-media delete test cannot run safely');
       async () => {
+        if (!news1Id || !mediaAId) throw new Error('News #1 or media A fixture was not created; referenced-media delete test cannot run safely');
         const res = await apiCall(`/api/v1/admin/media/${mediaAId}`, {
           method: 'DELETE',
           token: admin!.accessToken,
