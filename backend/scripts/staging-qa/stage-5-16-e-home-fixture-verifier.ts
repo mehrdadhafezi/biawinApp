@@ -97,6 +97,8 @@ const RUN_ID = new Date().toISOString().replace(/[:.]/g, '-');
 // Required prefix (task §4) plus a per-run unique suffix so concurrent runs
 // (or a re-run after a partial failure) never collide.
 const QA_TAG = `stage516e_qa_${Date.now()}_${randomBytes(3).toString('hex')}`;
+// bodySlug has a stricter contract: lowercase letters/digits and single hyphens only.
+const QA_SLUG = QA_TAG.replace(/_/g, '-').toLowerCase();
 
 const prisma = new PrismaClient();
 
@@ -538,7 +540,7 @@ async function main(): Promise<void> {
     }
 
     let news1Id: string | undefined;
-    const news1Slug = `${QA_TAG}-news1`;
+    const news1Slug = `${QA_SLUG}-news1`;
     await step(
       'Fixture: create QA News #1 (inactive, references media A)',
       async () => {
@@ -631,7 +633,7 @@ async function main(): Promise<void> {
             kicker: QA_TAG,
             title: QA_TAG,
             lead: QA_TAG,
-            bodySlug: `${QA_TAG}-unknownmedia`,
+            bodySlug: `${QA_SLUG}-unknownmedia`,
             mediaAssetId: NONEXISTENT_MEDIA,
             active: false,
           }),
@@ -657,7 +659,7 @@ async function main(): Promise<void> {
               kicker: QA_TAG,
               title: QA_TAG,
               lead: QA_TAG,
-              bodySlug: `${QA_TAG}-news2`,
+              bodySlug: `${QA_SLUG}-news2`,
               sortOrder: 99998,
               active: false,
             }),
@@ -838,6 +840,16 @@ async function main(): Promise<void> {
         );
         assert(res.ok, `media C upload failed: ${detail(res)}`);
         mediaCId = res.body.id;
+        registerCleanup(`delete QA media C (${mediaCId})`, async () => {
+          const res = await apiCall(`/api/v1/admin/media/${mediaCId}`, {
+            method: 'DELETE',
+            token: admin!.accessToken,
+          });
+          assert(
+            res.ok || res.status === 404 || res.status === 409,
+            `cleanup: delete QA media C failed: ${detail(res)}`,
+          );
+        });
       },
     );
     await step(
@@ -852,7 +864,7 @@ async function main(): Promise<void> {
     );
 
     let news3Id: string | undefined;
-    const news3Slug = `${QA_TAG}-news3`;
+    const news3Slug = `${QA_SLUG}-news3`;
     await step(
       'Fixture: create QA News #3 (ACTIVE — must appear on the public endpoint for this one test)',
       async () => {
@@ -889,15 +901,23 @@ async function main(): Promise<void> {
       });
     }
 
-    await step(
-      'DELIBERATE direct-Prisma step (see file header §4): repoint QA News #3 (fixture, own row) at QA media C (fixture, own asset, already soft-deleted) — simulates a legacy dead reference the API itself can no longer create',
-      async () => {
-        await prisma.homeNewsArticle.update({
-          where: { id: news3Id },
-          data: { mediaAssetId: mediaCId },
-        });
-      },
-    );
+    if (news3Id && mediaCId) {
+      await step(
+        'DELIBERATE direct-Prisma step (see file header §4): repoint QA News #3 (fixture, own row) at QA media C (fixture, own asset, already soft-deleted) — simulates a legacy dead reference the API itself can no longer create',
+        async () => {
+          await prisma.homeNewsArticle.update({
+            where: { id: news3Id },
+            data: { mediaAssetId: mediaCId },
+          });
+        },
+      );
+    } else {
+      record(
+        'DELIBERATE direct-Prisma step (see file header §4): repoint QA News #3',
+        'FAIL',
+        'skipped safely because News #3 or media C fixture was not created successfully',
+      );
+    }
 
     await step(
       'TEST 12: public GET /home/news-articles shows the QA row with image: null, HTTP 200, row present',
@@ -980,6 +1000,20 @@ async function main(): Promise<void> {
             where: { fileName: { contains: QA_TAG } },
           }),
         ]);
+        if (news + media > 0) {
+          const [newsRows, mediaRows] = await Promise.all([
+            prisma.homeNewsArticle.findMany({
+              where: { OR: [{ category: QA_TAG }, { kicker: QA_TAG }, { title: QA_TAG }] },
+              select: { id: true, bodySlug: true, title: true },
+            }),
+            prisma.mediaAsset.findMany({
+              where: { fileName: { contains: QA_TAG } },
+              select: { id: true, fileName: true, active: true },
+            }),
+          ]);
+          console.log(`[stage-5.16-e] remaining QA News: ${JSON.stringify(newsRows)}`);
+          console.log(`[stage-5.16-e] remaining QA media: ${JSON.stringify(mediaRows)}`);
+        }
         return news + media;
       },
     );
@@ -998,121 +1032,3 @@ async function main(): Promise<void> {
       );
       if (afterChecksums) {
         writeChecksumFile('stage-5.16-e-after.txt', afterChecksums);
-        const comparison = compareChecksums(beforeChecksums, afterChecksums);
-        for (const row of comparison) {
-          record(
-            `Image integrity: ${row.table} BEFORE == AFTER`,
-            row.match ? 'PASS' : 'FAIL',
-            row.match ? '' : `before=${row.before} after=${row.after}`,
-          );
-        }
-      } else {
-        record(
-          'Image integrity: BEFORE == AFTER (all protected tables)',
-          'FAIL',
-          'could not compute the AFTER checksums at all — treat as a checksum mismatch, not a pass',
-        );
-      }
-    }
-
-    if (beforeCounts) {
-      const afterCounts = await step(
-        'AFTER: public Home GET counts back to baseline',
-        () => fetchHomeCounts('AFTER'),
-      );
-      if (afterCounts) {
-        const stable =
-          afterCounts.hero === beforeCounts.hero &&
-          afterCounts.banners === beforeCounts.banners &&
-          afterCounts.mosaic === beforeCounts.mosaic &&
-          afterCounts.news === beforeCounts.news;
-        record(
-          'Public Home GET counts returned exactly to the pre-fixture baseline',
-          stable ? 'PASS' : 'FAIL',
-          stable
-            ? ''
-            : `before=${JSON.stringify(beforeCounts)} after=${JSON.stringify(afterCounts)}`,
-        );
-      }
-    }
-  }
-}
-
-async function runCleanup(): Promise<void> {
-  console.log(
-    `[stage-5.16-e] running ${cleanupTasks.length} cleanup task(s)...`,
-  );
-  for (const task of [...cleanupTasks].reverse()) {
-    try {
-      await task.run();
-      console.log(`[stage-5.16-e] cleanup OK: ${task.name}`);
-    } catch (err) {
-      record(
-        `CLEANUP: ${task.name}`,
-        'FAIL',
-        err instanceof Error ? err.message : String(err),
-      );
-    }
-  }
-}
-
-async function finish(fatal: Error | null): Promise<void> {
-  await prisma.$disconnect().catch(() => {});
-
-  const passCount = results.filter((r) => r.status === 'PASS').length;
-  const failCount = results.filter((r) => r.status === 'FAIL').length;
-  const blockedCount = results.filter((r) => r.status === 'BLOCKED').length;
-
-  mkdirSync(REPORT_DIR, { recursive: true });
-  const humanPath = `${REPORT_DIR}/stage-5-16-e-report-${RUN_ID}.txt`;
-  const jsonPath = `${REPORT_DIR}/stage-5-16-e-report-${RUN_ID}.json`;
-
-  const lines: string[] = [];
-  lines.push(
-    `Stage 5.16-E authenticated API fixture verification — ${new Date().toISOString()}`,
-  );
-  lines.push(`Run tag: ${QA_TAG}`);
-  lines.push(`API origin: ${API_ORIGIN}`);
-  lines.push('');
-  for (const r of results)
-    lines.push(
-      `${r.status.padEnd(8)} ${r.name}${r.detail ? '  — ' + redact(r.detail) : ''}`,
-    );
-  lines.push('');
-  lines.push(
-    `Totals: ${passCount} PASS, ${failCount} FAIL, ${blockedCount} BLOCKED`,
-  );
-  if (fatal) lines.push(`Fatal error: ${redact(fatal.message)}`);
-  const humanReport = lines.join('\n');
-
-  writeFileSync(humanPath, humanReport, 'utf8');
-  writeFileSync(
-    jsonPath,
-    JSON.stringify(
-      {
-        runTag: QA_TAG,
-        timestamp: new Date().toISOString(),
-        results,
-        fatal: fatal?.message ?? null,
-      },
-      null,
-      2,
-    ),
-    'utf8',
-  );
-
-  console.log('');
-  console.log(humanReport);
-  console.log('');
-  console.log(`[stage-5.16-e] report written to: ${humanPath}`);
-  console.log(`[stage-5.16-e] machine-readable report: ${jsonPath}`);
-
-  const failed = failCount > 0 || blockedCount > 0 || !!fatal;
-  process.exitCode = failed ? 1 : 0;
-}
-
-main()
-  .then(() => finish(null))
-  .catch((err: unknown) =>
-    finish(err instanceof Error ? err : new Error(String(err))),
-  );
