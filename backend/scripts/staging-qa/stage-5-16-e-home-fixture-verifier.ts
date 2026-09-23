@@ -583,6 +583,8 @@ async function main(): Promise<void> {
     // =====================================================================
     await step(
       'TEST 3: duplicate bodySlug (reusing News #1’s slug) -> 409, nothing written',
+      // This test depends on the News #1 fixture. Never continue with an undefined fixture ID/slug.
+      if (!news1Id) throw new Error('News #1 fixture was not created; duplicate bodySlug test cannot run safely');
       async () => {
         const res = await apiCall('/api/v1/admin/home/news-articles', {
           method: 'POST',
@@ -702,6 +704,7 @@ async function main(): Promise<void> {
       assertStatus(res, 400, 'malformed reorder uuid');
     });
     await step('TEST 8: duplicate reorder ID -> 400', async () => {
+      if (!news1Id) throw new Error('News #1 fixture was not created; duplicate reorder-ID test cannot run safely');
       const res = await apiCall('/api/v1/admin/home/news-articles/reorder', {
         method: 'PATCH',
         token: admin!.accessToken,
@@ -715,6 +718,7 @@ async function main(): Promise<void> {
       assertStatus(res, 400, 'duplicate reorder id');
     });
     await step('TEST 9: duplicate reorder position -> 400', async () => {
+      if (!news1Id || !news2Id) throw new Error('News #1/#2 fixture was not created; duplicate reorder-position test cannot run safely');
       const res = await apiCall('/api/v1/admin/home/news-articles/reorder', {
         method: 'PATCH',
         token: admin!.accessToken,
@@ -729,6 +733,7 @@ async function main(): Promise<void> {
     });
     await step(
       'TEST 10: unknown reorder ID -> 422, nothing written',
+      if (!news1Id) throw new Error('News #1 fixture was not created; unknown reorder-ID test cannot run safely');
       async () => {
         const res = await apiCall('/api/v1/admin/home/news-articles/reorder', {
           method: 'PATCH',
@@ -757,6 +762,7 @@ async function main(): Promise<void> {
     // =====================================================================
     await step(
       'TEST 11: valid partial reorder (News #1 <-> News #2), then restore original order',
+      if (!news1Id || !news2Id) throw new Error('News #1/#2 fixture was not created; valid partial reorder test cannot run safely');
       async () => {
         const swap = await apiCall('/api/v1/admin/home/news-articles/reorder', {
           method: 'PATCH',
@@ -921,6 +927,7 @@ async function main(): Promise<void> {
 
     await step(
       'TEST 12: public GET /home/news-articles shows the QA row with image: null, HTTP 200, row present',
+      if (!news3Id || !mediaCId) throw new Error('News #3 or media C fixture was not created; soft-deleted-media public test cannot run safely');
       async () => {
         const res = await apiCall<{ id: string; image: string | null }[]>(
           '/api/v1/home/news-articles',
@@ -947,6 +954,7 @@ async function main(): Promise<void> {
     // =====================================================================
     await step(
       'TEST 13: delete QA media A while referenced by News #1 -> 409, reference intact, nothing detached',
+      if (!news1Id || !mediaAId) throw new Error('News #1 or media A fixture was not created; referenced-media delete test cannot run safely');
       async () => {
         const res = await apiCall(`/api/v1/admin/media/${mediaAId}`, {
           method: 'DELETE',
@@ -998,37 +1006,3 @@ async function main(): Promise<void> {
           }),
           prisma.mediaAsset.count({
             where: { fileName: { contains: QA_TAG } },
-          }),
-        ]);
-        if (news + media > 0) {
-          const [newsRows, mediaRows] = await Promise.all([
-            prisma.homeNewsArticle.findMany({
-              where: { OR: [{ category: QA_TAG }, { kicker: QA_TAG }, { title: QA_TAG }] },
-              select: { id: true, bodySlug: true, title: true },
-            }),
-            prisma.mediaAsset.findMany({
-              where: { fileName: { contains: QA_TAG } },
-              select: { id: true, fileName: true, active: true },
-            }),
-          ]);
-          console.log(`[stage-5.16-e] remaining QA News: ${JSON.stringify(newsRows)}`);
-          console.log(`[stage-5.16-e] remaining QA media: ${JSON.stringify(mediaRows)}`);
-        }
-        return news + media;
-      },
-    );
-    if (afterFixtureCount !== undefined) {
-      record(
-        'Remaining QA fixture count = 0',
-        afterFixtureCount === 0 ? 'PASS' : 'FAIL',
-        `${afterFixtureCount} row(s) still present`,
-      );
-    }
-
-    if (beforeChecksums) {
-      const afterChecksums = await step(
-        'AFTER: compute protected-table checksums',
-        computeProtectedChecksums,
-      );
-      if (afterChecksums) {
-        writeChecksumFile('stage-5.16-e-after.txt', afterChecksums);
