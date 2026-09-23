@@ -583,9 +583,9 @@ async function main(): Promise<void> {
     // =====================================================================
     await step(
       'TEST 3: duplicate bodySlug (reusing News #1’s slug) -> 409, nothing written',
-      // This test depends on the News #1 fixture. Never continue with an undefined fixture ID/slug.
-      if (!news1Id) throw new Error('News #1 fixture was not created; duplicate bodySlug test cannot run safely');
       async () => {
+        // Never continue with an undefined fixture ID/slug.
+        if (!news1Id) throw new Error('News #1 fixture was not created; duplicate bodySlug test cannot run safely');
         const res = await apiCall('/api/v1/admin/home/news-articles', {
           method: 'POST',
           token: admin!.accessToken,
@@ -998,11 +998,3 @@ async function main(): Promise<void> {
     const afterFixtureCount = await step(
       'Post-cleanup: 0 rows remain anywhere containing the QA tag',
       async () => {
-        const [news, media] = await Promise.all([
-          prisma.homeNewsArticle.count({
-            where: {
-              OR: [{ category: QA_TAG }, { kicker: QA_TAG }, { title: QA_TAG }],
-            },
-          }),
-          prisma.mediaAsset.count({
-            where: { fileName: { contains: QA_TAG } },
