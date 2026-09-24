@@ -1017,3 +1017,125 @@ async function main(): Promise<void> {
     const afterFixtureCount = await step(
       'Post-cleanup: 0 rows remain anywhere containing the QA tag',
       async () => {
+      const fixtureIds = [mediaAId, mediaCId, news1Id, news2Id, news3Id].filter(
+        (id): id is string => Boolean(id),
+      );
+      if (fixtureIds.length === 0) return 0;
+      const placeholders = fixtureIds.map((_, i) => '$' + (i + 1)).join(',');
+      const rows = await prisma.$queryRawUnsafe<Array<{ count: number }>>(
+        'SELECT ((SELECT COUNT(*) FROM home_news_articles WHERE id IN (' + placeholders + ')) + ' +
+        '(SELECT COUNT(*) FROM media_assets WHERE id IN (' + placeholders + ')))::int AS count',
+        ...fixtureIds,
+      );
+      const count = Number(rows[0]?.count ?? 0);
+      if (count !== 0) {
+        throw new Error('fixture rows remain after cleanup: ' + fixtureIds.join(', '));
+      }
+      return count;
+    },
+  );
+
+    const cleanupFailed = results.some(
+      (r) => r.status === 'FAIL' && r.name.startsWith('Cleanup:'),
+    );
+    if (cleanupFailed) {
+      record(
+        'Cleanup aggregate',
+        'FAIL',
+        'one or more registered fixture cleanup operations failed',
+      );
+    }
+
+    const afterChecksums = await step(
+      'AFTER: compute protected-table checksums',
+      computeProtectedChecksums,
+    );
+    if (afterChecksums) {
+      writeChecksumFile('stage-5.16-e-after.txt', afterChecksums);
+    }
+
+    const checksumComparison = afterChecksums && beforeChecksums
+      ? compareChecksums(beforeChecksums, afterChecksums)
+      : [];
+    const checksumMismatch = checksumComparison.filter((x) => !x.match);
+    if (checksumComparison.length === 5 && checksumMismatch.length === 0) {
+      record('Protected-table checksums BEFORE == AFTER', 'PASS');
+    } else {
+      record(
+        'Protected-table checksums BEFORE == AFTER',
+        'FAIL',
+        checksumMismatch.length
+          ? checksumMismatch.map((x) => x.table + ': BEFORE ' + x.before + ', AFTER ' + x.after).join('; ')
+          : 'could not compute both checksum snapshots',
+      );
+    }
+
+    const afterCounts = await step(
+      'AFTER: public Home GET counts restored to BEFORE baseline',
+      () => fetchHomeCounts('AFTER'),
+    );
+    if (beforeCounts && afterCounts) {
+      const same =
+        beforeCounts.hero === afterCounts.hero &&
+        beforeCounts.banners === afterCounts.banners &&
+        beforeCounts.mosaic === afterCounts.mosaic &&
+        beforeCounts.news === afterCounts.news;
+      if (same) {
+        record('Public Home baseline restored', 'PASS');
+      } else {
+        record(
+          'Public Home baseline restored',
+          'FAIL',
+          'BEFORE=' + JSON.stringify(beforeCounts) + ' AFTER=' + JSON.stringify(afterCounts),
+        );
+      }
+    }
+
+    const failures = results.filter((r) => r.status === 'FAIL');
+    const blocked = results.filter((r) => r.status === 'BLOCKED');
+    const passed = results.filter((r) => r.status === 'PASS');
+    const report = {
+      stage: '5.16-E',
+      runId: RUN_ID,
+      qaTag: QA_TAG,
+      apiOrigin: API_ORIGIN,
+      summary: { passed: passed.length, failed: failures.length, blocked: blocked.length },
+      results: results.map((r) => ({ ...r, detail: redact(r.detail) })),
+      checksumComparison,
+      beforeCounts: beforeCounts ?? null,
+      afterCounts: afterCounts ?? null,
+      fixtureCleanup: { remaining: afterFixtureCount ?? null, cleanupFailed },
+    };
+    mkdirSync(REPORT_DIR, { recursive: true });
+    writeFileSync(
+      REPORT_DIR + '/stage-5-16-e-report-' + RUN_ID + '.json',
+      JSON.stringify(report, null, 2) + '\n',
+      'utf8',
+    );
+    writeFileSync(
+      REPORT_DIR + '/stage-5-16-e-report-' + RUN_ID + '.txt',
+      [
+        'Stage 5.16-E — Authenticated API Fixture Verification',
+        'Run ID: ' + RUN_ID,
+        'QA tag: ' + QA_TAG,
+        'API origin: ' + API_ORIGIN,
+        '',
+        'PASS: ' + passed.length,
+        'FAIL: ' + failures.length,
+        'BLOCKED: ' + blocked.length,
+        'Fixture remaining: ' + (afterFixtureCount ?? 'unknown'),
+        'Cleanup aggregate: ' + (cleanupFailed ? 'FAIL' : 'PASS'),
+        'Protected checksums: ' + (checksumMismatch.length === 0 && checksumComparison.length === 5 ? 'BEFORE == AFTER' : 'MISMATCH/INCOMPLETE'),
+        'Public Home baseline: ' + (beforeCounts && afterCounts && JSON.stringify(beforeCounts) === JSON.stringify(afterCounts) ? 'RESTORED' : 'MISMATCH/INCOMPLETE'),
+        '',
+        ...results.map((r) => '[' + r.status + '] ' + r.name + (r.detail ? ' — ' + redact(r.detail) : '')),
+      ].join('\n') + '\n',
+      'utf8',
+    );
+  }
+}
+
+main().catch((error) => {
+  console.error('[stage-5.16-e] fatal:', redact(error instanceof Error ? error.message : String(error)));
+  process.exit(1);
+});
