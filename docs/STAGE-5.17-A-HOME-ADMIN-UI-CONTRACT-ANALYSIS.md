@@ -13,7 +13,7 @@ Existing Home Admin UI vs. the Stage 5.16-verified backend contract: Hero Cards,
 
 ## 2. Files / routes inspected
 
-**Routes (10 Home screens + 1 overview + Media = 12 pages)** — `find app -name page.tsx`:
+**Routes (13 Home pages + /media = 14 pages)** — `find app -name page.tsx`:
 
 | Route | File |
 |---|---|
