@@ -113,7 +113,7 @@ Classes: **R** real backend on QA rows only · **S** backend response stubbed in
 | ERR-01 | Row deleted elsewhere: toggle → Persian 404 message and the list refetches | R | SUPER_ADMIN | newsStale | — |
 | ERR-02 | Row deleted elsewhere: delete → dialog closes, message shown, list refetches | R | SUPER_ADMIN | newsStale2 | — |
 | ERR-03 | 500 shows only the generic Persian message (stubbed response containing internal text) | S | SUPER_ADMIN | — | — |
-| ERR-04 | Malformed UUID edit route (`/home/news/not-a-uuid`) shows a Persian-prefixed 400 message, no crash | O | SUPER_ADMIN | — | — |
+| ERR-04 | Malformed UUID edit route (`/home/news/not-a-uuid`) shows an alert (the backend message — edit pages show it raw), no crash, no internal details | O | SUPER_ADMIN | — | — |
 | REO-01 | Reorder payload captured and aborted: whole displayed list, unique uuids, positions 0..n-1, no empty/duplicate | P | SUPER_ADMIN | newsReorderA, newsReorderB | — |
 | REO-02 | Valid reorder of two QA rows, list refreshes, order restored | R | SUPER_ADMIN | newsReorderA, newsReorderB | **REORDER_METADATA_TOUCH** |
 | REO-03 | Unknown-id reorder 422 (stubbed): Persian message with count, list refetched | S | SUPER_ADMIN | newsReorderA | — |
@@ -182,7 +182,7 @@ All client-side rules mirror the 5.16 DTOs (`HOME_LIMITS`, `BODY_SLUG_PATTERN`).
 ## 13. Error handling
 | Status | How it is verified | Expected UI |
 |---|---|---|
-| 400 | ERR-04 (real: `/home/news/not-a-uuid`) | Persian-prefixed message ("اطلاعات واردشده معتبر نیست: …"), no crash |
+| 400 | ERR-04 (real: `/home/news/not-a-uuid`) | alert visible with the backend message (edit-page load errors are not prefixed), no crash, no internal details (corrected in Stage 5.17-D) |
 | 404 | ERR-01/02, MED-07 (real, row/asset removed elsewhere) | Persian message + "ممکن است در جای دیگری حذف شده باشد", **list refetched**, dialog closed |
 | 409 | NEWS-03 (real slug), MED-06 (real in-use), HERO-03 (stub) | Persian specific message; in-use lists references |
 | 422 | BAN-06, NEWS-06, REO-03 (stubbed) | Persian message; reorder shows the unknown-id count and refetches |

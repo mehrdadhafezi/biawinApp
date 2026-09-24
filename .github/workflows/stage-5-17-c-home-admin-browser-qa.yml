@@ -1,0 +1,105 @@
+name: Stage 5.17-C — Home Admin Browser QA
+
+# Manual only (workflow_dispatch) — never on push/PR/schedule. Runs the executable Home
+# Admin Browser QA implemented in Stage 5.17-D (docs/STAGE-5.17-D-HOME-ADMIN-BROWSER-QA-
+# IMPLEMENTATION-RESULT.md) against the ALREADY-DEPLOYED staging environment.
+#
+# It does NOT deploy, does NOT restart the running backend/web/admin containers, and does
+# NOT invoke authenticated-qa-runner.ts / run-authenticated-qa.sh. It only calls
+# deploy/staging/run-stage-5-17-c-browser-qa.sh on the server (setup -> baseline -> fixtures
+# -> browser tests -> cleanup -> leftover check -> checksum AFTER -> Home baseline AFTER ->
+# verdict; cleanup always runs). Exit code 0 only when every required test passed.
+#
+# Reuses the SAME 4 repository secrets as deploy-staging.yml (STAGING_SSH_HOST / _PORT /
+# _USER / _PRIVATE_KEY). ADMIN_SEED_EMAIL/ADMIN_SEED_PASSWORD are NOT GitHub secrets: they
+# stay in the server's own deploy/staging/.env.staging and never reach this workflow.
+#
+# The report artifact is uploaded even when the run fails. If SSH itself fails, a controlled
+# failure report is produced instead of an empty artifact.
+on:
+  workflow_dispatch:
+    inputs:
+      allow_reorder_metadata_touch:
+        description: "Allow the UI reorder to send the whole list (touches real rows' updatedAt/updatedBy; ids/order/active/media are verified restored). Off => REO-02 is BLOCKED and the verdict cannot be PASS."
+        type: boolean
+        default: false
+      provision_temporary_roles:
+        description: "Create temporary SUPPORT_VIEWER + CONTENT_EDITOR admins for RBAC-01..04 (deleted at cleanup; audit rows remain). Off => RBAC tests are BLOCKED and the verdict cannot be PASS."
+        type: boolean
+        default: false
+
+jobs:
+  browser-qa:
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+    steps:
+      - name: Guard — required secrets present
+        run: |
+          missing=0
+          for v in STAGING_SSH_HOST STAGING_SSH_PORT STAGING_SSH_USER STAGING_SSH_PRIVATE_KEY; do
+            if [ -z "${!v:-}" ]; then
+              echo "::error::Missing repository secret: $v"
+              missing=1
+            fi
+          done
+          [ "$missing" -eq 0 ] || exit 1
+        env:
+          STAGING_SSH_HOST: ${{ secrets.STAGING_SSH_HOST }}
+          STAGING_SSH_PORT: ${{ secrets.STAGING_SSH_PORT }}
+          STAGING_SSH_USER: ${{ secrets.STAGING_SSH_USER }}
+          STAGING_SSH_PRIVATE_KEY: ${{ secrets.STAGING_SSH_PRIVATE_KEY }}
+
+      - name: Install SSH key
+        uses: webfactory/ssh-agent@v0.9.0
+        with:
+          ssh-private-key: ${{ secrets.STAGING_SSH_PRIVATE_KEY }}
+
+      - name: Update server checkout (source tree only — does not restart any running container)
+        run: |
+          mkdir -p ~/.ssh
+          ssh-keyscan -p "${{ secrets.STAGING_SSH_PORT }}" "${{ secrets.STAGING_SSH_HOST }}" >> ~/.ssh/known_hosts
+          ssh -p "${{ secrets.STAGING_SSH_PORT }}" "${{ secrets.STAGING_SSH_USER }}@${{ secrets.STAGING_SSH_HOST }}" \
+            "cd /srv/biawin-staging && git fetch origin main && git checkout main && git reset --hard origin/main && git rev-parse HEAD"
+
+      - name: Run Home Admin Browser QA (setup, browser tests, cleanup, verification)
+        env:
+          ALLOW_REORDER: ${{ inputs.allow_reorder_metadata_touch }}
+          PROVISION_ROLES: ${{ inputs.provision_temporary_roles }}
+        run: |
+          # Only the literal strings 'true'/'false' are ever forwarded.
+          reorder=false; [ "$ALLOW_REORDER" = "true" ] && reorder=true
+          roles=false;   [ "$PROVISION_ROLES" = "true" ] && roles=true
+          ssh -p "${{ secrets.STAGING_SSH_PORT }}" "${{ secrets.STAGING_SSH_USER }}@${{ secrets.STAGING_SSH_HOST }}" \
+            "cd /srv/biawin-staging && STAGE517C_ALLOW_REORDER_METADATA_TOUCH=$reorder STAGE517C_PROVISION_ROLES=$roles ./deploy/staging/run-stage-5-17-c-browser-qa.sh"
+
+      - name: Fetch sanitized report artifact from the server
+        if: always()
+        run: |
+          mkdir -p stage-5-17-c-artifacts
+          scp -r -P "${{ secrets.STAGING_SSH_PORT }}" \
+            "${{ secrets.STAGING_SSH_USER }}@${{ secrets.STAGING_SSH_HOST }}:/tmp/stage-5-17-c/artifact/." \
+            stage-5-17-c-artifacts/ || echo "::warning::the report artifact could not be fetched (SSH/scp failure or no report was written)"
+
+      - name: Controlled failure report (only when no report could be fetched)
+        if: always()
+        run: |
+          if [ ! -f stage-5-17-c-artifacts/stage-5-17-c-report.txt ]; then
+            {
+              echo "Stage 5.17-C Home Admin Browser QA — CONTROLLED FAILURE REPORT"
+              echo "Run: ${{ github.run_id }} / attempt ${{ github.run_attempt }}   Commit: ${{ github.sha }}"
+              echo "VERDICT: FAIL (no report was produced on the server, or it could not be fetched over SSH)"
+              echo "Tests: not evaluated. Cleanup/leftover status: UNKNOWN — inspect /tmp/stage-5-17-c on the server before trusting staging data."
+              echo "Stage 5.17 is NOT closed by this run."
+            } > stage-5-17-c-artifacts/CONTROLLED-FAILURE.txt
+          fi
+
+      # Everything uploaded was redacted on the server (JWTs, bearer tokens, the admin password,
+      # DB URLs). state.json / roles.json / raw snapshots are never copied into the artifact.
+      - name: Upload sanitized Browser QA report
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: stage-5-17-c-home-admin-browser-qa-report
+          path: stage-5-17-c-artifacts/
+          retention-days: 30
+          if-no-files-found: warn

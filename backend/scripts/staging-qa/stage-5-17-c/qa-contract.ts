@@ -880,7 +880,7 @@ export const QA_TESTS: readonly QaTestSpec[] = [
     id: 'ERR-04',
     area: 'errors',
     title:
-      'Malformed UUID edit route (/home/news/not-a-uuid) shows a Persian-prefixed 400 message, no crash',
+      'Malformed UUID edit route (/home/news/not-a-uuid) shows an alert (the backend message), no crash, no internal details',
     klass: 'O',
     role: 'SUPER_ADMIN',
     fixtures: [],

@@ -1,0 +1,25 @@
+# Stage 5.17-D — Home Admin Browser QA verifier image.
+#
+# Same base image and the same pinned Playwright (1.48.2) as ./Dockerfile — no new
+# framework. The build context is NOT this directory: the wrapper
+# (deploy/staging/run-stage-5-17-c-browser-qa.sh) assembles a temporary context so the
+# verifier is compiled against the REAL, unit-tested
+# backend/scripts/staging-qa/stage-5-17-c/qa-contract.ts + qa-orchestration.ts (the
+# committed files next to verifier.ts are typecheck shims that re-export from the
+# backend path, which does not exist inside a Docker context).
+#
+# Context layout (built by the wrapper):
+#   package.json, package-lock.json, tsconfig.stage-5-17-c.json, Dockerfile.stage-5-17-c
+#   stage-5-17-c/{verifier.ts, qa-contract.ts, qa-orchestration.ts}
+
+FROM mcr.microsoft.com/playwright:v1.48.2-jammy
+
+WORKDIR /qa
+
+COPY package.json package-lock.json tsconfig.stage-5-17-c.json ./
+RUN npm ci
+
+COPY stage-5-17-c ./stage-5-17-c
+
+# Type-checking is done at commit time (see the Stage 5.17-D gates); the runtime transpiles only.
+CMD ["npx", "ts-node", "--transpile-only", "--project", "tsconfig.stage-5-17-c.json", "stage-5-17-c/verifier.ts"]
