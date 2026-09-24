@@ -1012,7 +1012,15 @@ async function main(): Promise<void> {
     // Cleanup (mandatory — runs in `finally` below regardless of the above)
     // =====================================================================
   } finally {
-    await runCleanup();
+    try {
+      await runCleanup();
+    } catch (err) {
+      record(
+        'Cleanup aggregate',
+        'FAIL',
+        err instanceof Error ? err.message : String(err),
+      );
+    }
 
     const afterFixtureCount = await step(
       'Post-cleanup: 0 rows remain anywhere containing the QA tag',
