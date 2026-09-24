@@ -8,6 +8,8 @@ import { HomeFormShell } from "../components/HomeFormShell";
 import { CategorySelect } from "../components/CategorySelect";
 import { MediaPickerField } from "../components/MediaPickerField";
 import { plainFieldStyles } from "../components/formStyles";
+import { clearMedia, initMediaField, mediaPayloadValue, selectMedia } from "../mediaField";
+import { HOME_LIMITS, summarizeErrors, validateServiceMosaic, type MosaicField } from "../validation";
 import type { HomeServiceMosaicTileAdmin, HomeServiceMosaicTileInput, MosaicSlot, MosaicTheme } from "../types";
 
 const SLOT_LABEL: Record<MosaicSlot, string> = { half: "نیمه (کوچک)", wide: "عریض (بزرگ)" };
@@ -35,16 +37,22 @@ export function ServiceMosaicForm({ mode, initial, readOnly, backHref, onSaved }
   const [lead, setLead] = useState(initial?.lead ?? "");
   const [theme, setTheme] = useState<MosaicTheme>(initial?.theme ?? "home");
   const [active, setActive] = useState(initial?.active ?? true);
-  const [mediaAssetId, setMediaAssetId] = useState<string | null>(initial?.mediaAssetId ?? null);
+  // Stage 5.17-B: an unavailable (soft-deleted) original reference is never re-submitted unless explicitly resolved - see mediaField.ts.
+  const [media, setMedia] = useState(() => initMediaField(initial));
   const [previewUrl, setPreviewUrl] = useState<string | null>(initial?.image ?? null);
 
   const [submitting, setSubmitting] = useState(false);
   const [errorMessage, setErrorMessage] = useState<string | null>(null);
+  const [fieldErrors, setFieldErrors] = useState<Partial<Record<MosaicField, string>>>({});
 
   async function handleSubmit(event: FormEvent) {
     event.preventDefault();
-    if (!categoryId) {
-      setErrorMessage("انتخاب دسته‌بندی الزامی است.");
+    const mediaAssetId = mediaPayloadValue(media);
+    const errors = validateServiceMosaic({ categoryId, kicker: kicker.trim(), title, lead, mediaAssetId });
+    setFieldErrors(errors);
+    const summary = summarizeErrors(errors);
+    if (summary) {
+      setErrorMessage(summary);
       return;
     }
     setSubmitting(true);
@@ -54,9 +62,10 @@ export function ServiceMosaicForm({ mode, initial, readOnly, backHref, onSaved }
       categoryId,
       mediaAssetId,
       slotType,
-      kicker,
-      title: title || null,
-      lead: lead || null,
+      kicker: kicker.trim(),
+      // BD-5: title/lead stay optional for every slot type; blank -> null.
+      title: title.trim() || null,
+      lead: lead.trim() || null,
       theme,
       active,
     };
@@ -82,8 +91,8 @@ export function ServiceMosaicForm({ mode, initial, readOnly, backHref, onSaved }
       errorMessage={errorMessage}
       readOnly={readOnly}
     >
-      <FormField label="دسته‌بندی" required>
-        <CategorySelect value={categoryId} onChange={setCategoryId} required disabled={readOnly} />
+      <FormField label="دسته‌بندی" required error={fieldErrors.categoryId}>
+        <CategorySelect value={categoryId} onChange={setCategoryId} required disabled={readOnly} currentLabel={initial?.categoryName} />
       </FormField>
 
       <FormField label="نوع جایگاه" required>
@@ -96,16 +105,16 @@ export function ServiceMosaicForm({ mode, initial, readOnly, backHref, onSaved }
         </select>
       </FormField>
 
-      <FormField label="متن کوتاه (kicker)" required>
-        <input value={kicker} onChange={(e) => setKicker(e.target.value)} required className="biawin-plain-input" />
+      <FormField label="متن کوتاه (kicker)" required error={fieldErrors.kicker}>
+        <input value={kicker} onChange={(e) => setKicker(e.target.value)} required maxLength={HOME_LIMITS.mosaic.kicker} className="biawin-plain-input" />
       </FormField>
 
-      <FormField label="عنوان" hint="فقط برای کاشی‌های «عریض» استفاده می‌شود.">
-        <input value={title} onChange={(e) => setTitle(e.target.value)} className="biawin-plain-input" />
+      <FormField label="عنوان" hint="فقط برای کاشی‌های «عریض» استفاده می‌شود." error={fieldErrors.title}>
+        <input value={title} onChange={(e) => setTitle(e.target.value)} maxLength={HOME_LIMITS.mosaic.title} className="biawin-plain-input" />
       </FormField>
 
-      <FormField label="توضیح" hint="فقط برای کاشی‌های «عریض» استفاده می‌شود.">
-        <textarea value={lead} onChange={(e) => setLead(e.target.value)} className="biawin-plain-textarea" />
+      <FormField label="توضیح" hint="فقط برای کاشی‌های «عریض» استفاده می‌شود." error={fieldErrors.lead}>
+        <textarea value={lead} onChange={(e) => setLead(e.target.value)} maxLength={HOME_LIMITS.mosaic.lead} className="biawin-plain-textarea" />
       </FormField>
 
       <FormField label="تم بصری">
@@ -120,11 +129,12 @@ export function ServiceMosaicForm({ mode, initial, readOnly, backHref, onSaved }
 
       <MediaPickerField
         label="تصویر کاشی"
-        value={mediaAssetId}
+        value={media.value}
         previewUrl={previewUrl}
         disabled={readOnly}
+        unavailable={media.unavailable && !media.resolved}
         onChange={(id, url) => {
-          setMediaAssetId(id);
+          setMedia(id ? selectMedia(id) : clearMedia());
           setPreviewUrl(url);
         }}
       />

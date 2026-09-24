@@ -13,11 +13,13 @@ export interface HomeFormShellProps {
   /** `SUPPORT_VIEWER` reaching an edit URL directly — fields render disabled, no submit control. Backend still enforces this independently. */
   readOnly?: boolean;
   submitLabel?: string;
+  /** Disables submit without a request (e.g. Hero create when no key is left). */
+  submitDisabled?: boolean;
   children: ReactNode;
 }
 
 /** Shared surrounding chrome (title/back, error banner, submit+cancel with disabled-while-submitting) for every Home resource's create/edit form. */
-export function HomeFormShell({ title, backHref, onSubmit, submitting, errorMessage, readOnly, submitLabel, children }: HomeFormShellProps) {
+export function HomeFormShell({ title, backHref, onSubmit, submitting, errorMessage, readOnly, submitLabel, submitDisabled, children }: HomeFormShellProps) {
   return (
     <div style={{ fontFamily: font.family, maxWidth: 640 }}>
       <h1 style={{ margin: 0, fontSize: 22, fontWeight: 800, color: color.deep }}>{title}</h1>
@@ -46,7 +48,7 @@ export function HomeFormShell({ title, backHref, onSubmit, submitting, errorMess
             </Button>
           </Link>
           {!readOnly && (
-            <Button type="submit" disabled={submitting}>
+            <Button type="submit" disabled={submitting || submitDisabled}>
               {submitting ? "در حال ذخیره…" : (submitLabel ?? "ذخیره")}
             </Button>
           )}

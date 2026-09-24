@@ -14,6 +14,8 @@ export class ApiError extends Error {
     message: string,
     public readonly code: string,
     public readonly status: number,
+    /** Structured, non-secret error details from the backend envelope (`error.details`), e.g. `{ references }` on a media-delete 409 or `{ unknownIds }` on a reorder 422. `undefined` when the backend sent none. */
+    public readonly details?: unknown,
   ) {
     super(message);
     this.name = "ApiError";
@@ -26,7 +28,7 @@ interface SuccessBody<T> {
 }
 interface ErrorBody {
   success: false;
-  error: { code: string; message: string };
+  error: { code: string; message: string; details?: unknown };
 }
 
 let refreshPromise: Promise<boolean> | null = null;
@@ -84,7 +86,7 @@ async function handleResponse<T>(
 
   const body = (await res.json()) as SuccessBody<T> | ErrorBody;
   if (!body.success) {
-    throw new ApiError(body.error.message, body.error.code, res.status);
+    throw new ApiError(body.error.message, body.error.code, res.status, body.error.details);
   }
   return body.data;
 }

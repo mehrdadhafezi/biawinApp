@@ -45,6 +45,8 @@ export function NewsListContent() {
       setItems((current) => current?.map((entry) => (entry.id === item.id ? result.item : entry)) ?? null);
     } else {
       setActionError(result.message);
+      // The record changed/was deleted elsewhere: never leave the list stale.
+      if (result.stale) void load();
     }
     setTogglingId(null);
   }
@@ -59,6 +61,7 @@ export function NewsListContent() {
       setItems(result.items);
     } else {
       setActionError(result.message);
+      if (result.stale) void load();
     }
     setReorderBusy(false);
   }
@@ -71,6 +74,12 @@ export function NewsListContent() {
     if (result.success) {
       setItems((current) => current?.filter((entry) => entry.id !== deleteTarget.id) ?? null);
       setDeleteTarget(null);
+    } else if (result.stale) {
+      // Already deleted elsewhere: close the dialog, say so, and reconcile the list.
+      setDeleteTarget(null);
+      setDeleteError(null);
+      setActionError(result.message);
+      void load();
     } else {
       setDeleteError(result.message);
     }

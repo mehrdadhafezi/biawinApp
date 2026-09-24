@@ -7,6 +7,10 @@ interface FakeItem {
   active: boolean;
 }
 
+// Reorder payloads are validated client-side (Stage 5.17-B) exactly like the backend DTO, so their ids must be real uuids.
+const A = "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa";
+const B = "bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb";
+
 function makeItem(id: string, sortOrder: number, active = true): FakeItem {
   return { id, sortOrder, active };
 }
@@ -48,7 +52,7 @@ describe("performSave", () => {
 
     const result = await performSave("create", null, {}, { create });
 
-    expect(result).toEqual({ success: false, message: "دسته‌بندی نامعتبر است." });
+    expect(result).toEqual({ success: false, message: "دسته‌بندی نامعتبر است.", stale: false });
   });
 
   it("falls back to a generic Persian message for a non-ApiError failure (e.g. network error)", async () => {
@@ -56,7 +60,7 @@ describe("performSave", () => {
 
     const result = await performSave("create", null, {}, { create });
 
-    expect(result).toEqual({ success: false, message: "ذخیره‌سازی با خطا مواجه شد." });
+    expect(result).toEqual({ success: false, message: "ذخیره‌سازی با خطا مواجه شد.", stale: false });
   });
 });
 
@@ -76,19 +80,19 @@ describe("performToggleActive", () => {
 
     const result = await performToggleActive("item-1", false, { update });
 
-    expect(result).toEqual({ success: false, message: "Forbidden resource" });
+    expect(result).toEqual({ success: false, message: "شما دسترسی لازم برای این عملیات را ندارید.", stale: false });
   });
 });
 
 describe("performReorder", () => {
   it("reorders then re-fetches the admin list, returning the refreshed items", async () => {
-    const refreshedItems = [makeItem("b", 0), makeItem("a", 1)];
+    const refreshedItems = [makeItem(B, 0), makeItem(A, 1)];
     const reorder = jest.fn().mockResolvedValue(undefined);
     const list = jest.fn().mockResolvedValue({ items: refreshedItems });
 
-    const result = await performReorder([{ id: "b", sortOrder: 0 }, { id: "a", sortOrder: 1 }], { reorder, list });
+    const result = await performReorder([{ id: B, sortOrder: 0 }, { id: A, sortOrder: 1 }], { reorder, list });
 
-    expect(reorder).toHaveBeenCalledWith([{ id: "b", sortOrder: 0 }, { id: "a", sortOrder: 1 }]);
+    expect(reorder).toHaveBeenCalledWith([{ id: B, sortOrder: 0 }, { id: A, sortOrder: 1 }]);
     expect(list).toHaveBeenCalled();
     expect(result).toEqual({ success: true, items: refreshedItems });
   });
@@ -97,8 +101,9 @@ describe("performReorder", () => {
     const reorder = jest.fn().mockRejectedValue(new ApiError("تغییر ترتیب با خطا مواجه شد.", "INTERNAL_ERROR", 500));
     const list = jest.fn();
 
-    const result = await performReorder([{ id: "a", sortOrder: 0 }], { reorder, list });
+    const result = await performReorder([{ id: A, sortOrder: 0 }], { reorder, list });
 
+    expect(reorder).toHaveBeenCalledTimes(1);
     expect(result.success).toBe(false);
     expect(list).not.toHaveBeenCalled();
   });
@@ -107,9 +112,9 @@ describe("performReorder", () => {
     const reorder = jest.fn().mockResolvedValue(undefined);
     const list = jest.fn().mockRejectedValue(new Error("network down"));
 
-    const result = await performReorder([{ id: "a", sortOrder: 0 }], { reorder, list });
+    const result = await performReorder([{ id: A, sortOrder: 0 }], { reorder, list });
 
-    expect(result).toEqual({ success: false, message: "تغییر ترتیب با خطا مواجه شد." });
+    expect(result).toEqual({ success: false, message: "تغییر ترتیب با خطا مواجه شد.", stale: false });
   });
 });
 
@@ -123,7 +128,7 @@ describe("performRemove", () => {
   it("surfaces a backend failure message rather than throwing", async () => {
     const remove = jest.fn().mockRejectedValue(new ApiError("امکان حذف وجود ندارد.", "BAD_REQUEST", 400));
     const result = await performRemove("item-1", { remove });
-    expect(result).toEqual({ success: false, message: "امکان حذف وجود ندارد." });
+    expect(result).toEqual({ success: false, message: "امکان حذف وجود ندارد.", stale: false });
   });
 });
 

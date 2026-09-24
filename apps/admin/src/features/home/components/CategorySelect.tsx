@@ -4,6 +4,7 @@ import { useEffect, useState } from "react";
 import { color, font } from "@biawin/ui";
 import { ApiError } from "../../../lib/api-client";
 import { categoriesApi } from "../api/categories-api";
+import { buildCategoryOptions } from "../categoryOptions";
 import type { CategoryOption } from "../types";
 
 export interface CategorySelectProps {
@@ -11,27 +12,32 @@ export interface CategorySelectProps {
   onChange: (categoryId: string) => void;
   disabled?: boolean;
   required?: boolean;
+  /** The row's own `categoryName`, used as the label when the selected id isn't in the fetched list. */
+  currentLabel?: string | null;
 }
 
 /**
  * Displays `Category.name`, submits `Category.id` — never the reverse. This
  * is the exact distinction Stage 5.19's backend report calls out as fixing
  * the Stage 5.14.1 bug class (a banner rendered against the wrong category
- * because it matched on display name). Only active categories are offered;
- * an inactive category already assigned to existing content (via a
- * `categoryId` that no longer appears here) is preserved as-is by simply
- * not being touched unless the admin explicitly changes the selection.
+ * because it matched on display name).
+ *
+ * Stage 5.17-B: active categories are offered, and a category the row
+ * ALREADY references stays visible and selected even if it is inactive
+ * (labelled "(غیرفعال)", see `buildCategoryOptions`) instead of the select
+ * showing a placeholder while the state secretly holds the real id. Display
+ * only — the id is never rewritten and the category is never activated here.
  */
-export function CategorySelect({ value, onChange, disabled, required }: CategorySelectProps) {
-  const [options, setOptions] = useState<CategoryOption[] | null>(null);
+export function CategorySelect({ value, onChange, disabled, required, currentLabel }: CategorySelectProps) {
+  const [all, setAll] = useState<CategoryOption[] | null>(null);
   const [errorMessage, setErrorMessage] = useState<string | null>(null);
 
   useEffect(() => {
     let cancelled = false;
     categoriesApi
-      .listActive()
+      .listAll()
       .then((items) => {
-        if (!cancelled) setOptions(items);
+        if (!cancelled) setAll(items);
       })
       .catch((error: unknown) => {
         if (!cancelled) {
@@ -42,6 +48,8 @@ export function CategorySelect({ value, onChange, disabled, required }: Category
       cancelled = true;
     };
   }, []);
+
+  const options = all === null ? null : buildCategoryOptions(all, value, currentLabel);
 
   return (
     <div className="biawin-category-select">
@@ -56,7 +64,7 @@ export function CategorySelect({ value, onChange, disabled, required }: Category
         </option>
         {options?.map((category) => (
           <option key={category.id} value={category.id}>
-            {category.name}
+            {category.label}
           </option>
         ))}
       </select>

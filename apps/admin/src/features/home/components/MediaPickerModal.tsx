@@ -6,7 +6,9 @@ import type { MediaAsset } from "@biawin/types";
 import { Modal, color, font } from "@biawin/ui";
 import { ApiError } from "../../../lib/api-client";
 import { mediaApi } from "../../../lib/media/media-api";
+import { MEDIA_PAGE_SIZE, clampPage, totalPages } from "../../../lib/media/mediaPagination";
 import { MediaUploadForm } from "../../../components/media/MediaUploadForm";
+import { MediaPager } from "../../../components/media/MediaPager";
 
 export interface MediaPickerModalProps {
   open: boolean;
@@ -24,16 +26,27 @@ export interface MediaPickerModalProps {
  */
 export function MediaPickerModal({ open, onClose, onSelect }: MediaPickerModalProps) {
   const [items, setItems] = useState<MediaAsset[] | null>(null);
+  const [page, setPage] = useState(1);
+  const [total, setTotal] = useState(0);
+  const [loading, setLoading] = useState(false);
   const [errorMessage, setErrorMessage] = useState<string | null>(null);
   const [showUpload, setShowUpload] = useState(false);
 
-  const load = useCallback(async () => {
+  // Stage 5.17-B: pages through the library (`total`) instead of showing only the first 50 assets.
+  const load = useCallback(async (requested: number) => {
     setErrorMessage(null);
+    setLoading(true);
     try {
-      const result = await mediaApi.list();
+      let result = await mediaApi.list(requested, MEDIA_PAGE_SIZE);
+      const target = clampPage(requested, result.total, MEDIA_PAGE_SIZE);
+      if (target !== requested) result = await mediaApi.list(target, MEDIA_PAGE_SIZE);
       setItems(result.items);
+      setTotal(result.total);
+      setPage(target);
     } catch (error) {
       setErrorMessage(error instanceof ApiError ? error.message : "دریافت رسانه‌ها با خطا مواجه شد.");
+    } finally {
+      setLoading(false);
     }
   }, []);
 
@@ -44,7 +57,7 @@ export function MediaPickerModal({ open, onClose, onSelect }: MediaPickerModalPr
     // (Stage 5.18).
     // eslint-disable-next-line react-hooks/set-state-in-effect
     setShowUpload(false);
-    void load();
+    void load(1);
   }, [open, load]);
 
   function handleUploaded(asset: MediaAsset) {
@@ -108,6 +121,14 @@ export function MediaPickerModal({ open, onClose, onSelect }: MediaPickerModalPr
                 ))}
               </ul>
             )}
+            <MediaPager
+              page={page}
+              totalPages={totalPages(total, MEDIA_PAGE_SIZE)}
+              total={total}
+              busy={loading}
+              onPrev={() => void load(page - 1)}
+              onNext={() => void load(page + 1)}
+            />
           </>
         )}
       </div>

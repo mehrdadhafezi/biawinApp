@@ -8,6 +8,8 @@ import { HomeFormShell } from "../components/HomeFormShell";
 import { CategorySelect } from "../components/CategorySelect";
 import { MediaPickerField } from "../components/MediaPickerField";
 import { plainFieldStyles } from "../components/formStyles";
+import { clearMedia, initMediaField, mediaPayloadValue, selectMedia } from "../mediaField";
+import { HOME_LIMITS, summarizeErrors, validateServiceBanner, type BannerField } from "../validation";
 import type { BannerTheme, HomeServiceBannerAdmin, HomeServiceBannerInput } from "../types";
 
 const THEME_LABEL: Record<BannerTheme, string> = {
@@ -32,22 +34,29 @@ export function ServiceBannerForm({ mode, initial, readOnly, backHref, onSaved }
   const [theme, setTheme] = useState<BannerTheme>(initial?.theme ?? "auto");
   const [wide, setWide] = useState(initial?.wide ?? false);
   const [active, setActive] = useState(initial?.active ?? true);
-  const [mediaAssetId, setMediaAssetId] = useState<string | null>(initial?.mediaAssetId ?? null);
+  // Stage 5.17-B: an unavailable (soft-deleted) original reference is never re-submitted unless explicitly resolved - see mediaField.ts.
+  const [media, setMedia] = useState(() => initMediaField(initial));
   const [previewUrl, setPreviewUrl] = useState<string | null>(initial?.image ?? null);
 
   const [submitting, setSubmitting] = useState(false);
   const [errorMessage, setErrorMessage] = useState<string | null>(null);
+  const [fieldErrors, setFieldErrors] = useState<Partial<Record<BannerField, string>>>({});
 
   async function handleSubmit(event: FormEvent) {
     event.preventDefault();
-    if (!categoryId) {
-      setErrorMessage("انتخاب دسته‌بندی الزامی است.");
+    const mediaAssetId = mediaPayloadValue(media);
+    const errors = validateServiceBanner({ categoryId, kicker: kicker.trim(), mediaAssetId });
+    setFieldErrors(errors);
+    const summary = summarizeErrors(errors);
+    if (summary) {
+      setErrorMessage(summary);
       return;
     }
     setSubmitting(true);
     setErrorMessage(null);
 
-    const input: HomeServiceBannerInput = { categoryId, mediaAssetId, kicker, theme, wide, active };
+    // `mediaAssetId: undefined` (unresolved unavailable image) is omitted from the JSON body = unchanged.
+    const input: HomeServiceBannerInput = { categoryId, mediaAssetId, kicker: kicker.trim(), theme, wide, active };
     const result = await performSave<HomeServiceBannerInput, HomeServiceBannerAdmin>(mode, initial?.id ?? null, input, {
       create: homeServiceBannerApi.create,
       update: homeServiceBannerApi.update,
@@ -70,12 +79,12 @@ export function ServiceBannerForm({ mode, initial, readOnly, backHref, onSaved }
       errorMessage={errorMessage}
       readOnly={readOnly}
     >
-      <FormField label="دسته‌بندی" required>
-        <CategorySelect value={categoryId} onChange={setCategoryId} required disabled={readOnly} />
+      <FormField label="دسته‌بندی" required error={fieldErrors.categoryId}>
+        <CategorySelect value={categoryId} onChange={setCategoryId} required disabled={readOnly} currentLabel={initial?.categoryName} />
       </FormField>
 
-      <FormField label="متن کوتاه (kicker)" required>
-        <input value={kicker} onChange={(e) => setKicker(e.target.value)} required className="biawin-plain-input" />
+      <FormField label="متن کوتاه (kicker)" required error={fieldErrors.kicker}>
+        <input value={kicker} onChange={(e) => setKicker(e.target.value)} required maxLength={HOME_LIMITS.banner.kicker} className="biawin-plain-input" />
       </FormField>
 
       <FormField label="تم بصری">
@@ -95,11 +104,12 @@ export function ServiceBannerForm({ mode, initial, readOnly, backHref, onSaved }
 
       <MediaPickerField
         label="تصویر بنر"
-        value={mediaAssetId}
+        value={media.value}
         previewUrl={previewUrl}
         disabled={readOnly}
+        unavailable={media.unavailable && !media.resolved}
         onChange={(id, url) => {
-          setMediaAssetId(id);
+          setMedia(id ? selectMedia(id) : clearMedia());
           setPreviewUrl(url);
         }}
       />

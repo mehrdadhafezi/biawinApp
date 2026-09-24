@@ -1,11 +1,19 @@
-import { ApiError } from "../../lib/api-client";
+import { describeHomeError, isStaleRecordError } from "./errors";
 import type { ReorderEntry } from "./types";
+import { validateReorderEntries } from "./validation";
 
-export type ActionResult<T> = { success: true; item: T } | { success: false; message: string };
-export type ListActionResult<T> = { success: true; items: T[] } | { success: false; message: string };
+/**
+ * `stale: true` on a failure means the record(s) this action targeted no
+ * longer exist (404, or a 422 naming unknown ids): the on-screen list is out
+ * of date and the caller must refetch it rather than leave it as is. Local
+ * state is never mutated as if the action had succeeded.
+ */
+export type FailureResult = { success: false; message: string; stale: boolean };
+export type ActionResult<T> = { success: true; item: T } | FailureResult;
+export type ListActionResult<T> = { success: true; items: T[] } | FailureResult;
 
-function messageFor(error: unknown, fallback: string): string {
-  return error instanceof ApiError ? error.message : fallback;
+function failure(error: unknown, fallback: string): FailureResult {
+  return { success: false, message: describeHomeError(error, fallback), stale: isStaleRecordError(error) };
 }
 
 export interface ToggleActiveDeps<TAdmin> {
@@ -29,7 +37,7 @@ export async function performToggleActive<TAdmin>(
     const item = await deps.update(id, { active: nextActive });
     return { success: true, item };
   } catch (error) {
-    return { success: false, message: messageFor(error, "به‌روزرسانی وضعیت با خطا مواجه شد.") };
+    return failure(error, "به‌روزرسانی وضعیت با خطا مواجه شد.");
   }
 }
 
@@ -50,12 +58,16 @@ export async function performReorder<TAdmin>(
   items: ReorderEntry[],
   deps: ReorderDeps<TAdmin>,
 ): Promise<ListActionResult<TAdmin>> {
+  // Client guard mirroring the backend's strict reorder DTO — never send an
+  // empty / duplicate-id / duplicate-position / malformed payload.
+  const invalid = validateReorderEntries(items);
+  if (invalid) return { success: false, message: invalid, stale: false };
   try {
     await deps.reorder(items);
     const refreshed = await deps.list();
     return { success: true, items: refreshed.items };
   } catch (error) {
-    return { success: false, message: messageFor(error, "تغییر ترتیب با خطا مواجه شد.") };
+    return failure(error, "تغییر ترتیب با خطا مواجه شد.");
   }
 }
 
@@ -78,7 +90,7 @@ export async function performSave<TInput, TAdmin>(
         : await deps.update!(id!, input);
     return { success: true, item };
   } catch (error) {
-    return { success: false, message: messageFor(error, "ذخیره‌سازی با خطا مواجه شد.") };
+    return failure(error, "ذخیره‌سازی با خطا مواجه شد.");
   }
 }
 
@@ -86,12 +98,12 @@ export interface RemoveDeps {
   remove: (id: string) => Promise<{ id: string }>;
 }
 
-export async function performRemove(id: string, deps: RemoveDeps): Promise<{ success: true } | { success: false; message: string }> {
+export async function performRemove(id: string, deps: RemoveDeps): Promise<{ success: true } | FailureResult> {
   try {
     await deps.remove(id);
     return { success: true };
   } catch (error) {
-    return { success: false, message: messageFor(error, "حذف با خطا مواجه شد.") };
+    return failure(error, "حذف با خطا مواجه شد.");
   }
 }
 

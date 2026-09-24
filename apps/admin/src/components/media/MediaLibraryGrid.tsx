@@ -1,10 +1,7 @@
 "use client";
 
-import { useState } from "react";
 import type { MediaAsset } from "@biawin/types";
 import { color, font } from "@biawin/ui";
-import { ApiError } from "../../lib/api-client";
-import { mediaApi } from "../../lib/media/media-api";
 
 function formatSize(bytes: number): string {
   if (bytes < 1024) return `${bytes} B`;
@@ -13,46 +10,29 @@ function formatSize(bytes: number): string {
 
 export interface MediaLibraryGridProps {
   items: MediaAsset[];
-  onRemoved: (id: string) => void;
+  /** SUPER_ADMIN / CONTENT_EDITOR only (the backend enforces the same roles). Read-only roles see no delete control. */
+  canManage: boolean;
+  /** Opens the page's confirmation dialog — the grid itself never calls the API. */
+  onRequestDelete: (asset: MediaAsset) => void;
+  /** An asset whose delete request is in flight (disables its button). */
+  deletingId?: string | null;
 }
 
 /**
- * Foundation-level grid only — no filtering/search/folders (out of scope
- * this stage). Preview images use `asset.url`'s static-bridge path
- * (`/media/{filename}`) resolved against the *backend* origin — that
- * reverse-proxy serving step isn't built yet (see
- * `media-storage.service.ts`'s own doc comment; the same gap Orbit's
- * `/orbit/{filename}` bridge has), so a broken-image fallback is expected
- * and handled, not a bug to chase in this stage.
+ * Presentational grid — no filtering/search/folders. Preview images use the
+ * backend-resolved `asset.url`, which points at the public
+ * `GET /api/v1/media/:filename` route (`MediaFilesController`, built in
+ * Stage 5.21); a broken-image fallback (`onError`) still hides an image that
+ * fails to load. Deleting is requested through `onRequestDelete` and
+ * confirmed/handled by the Media page.
  */
-export function MediaLibraryGrid({ items, onRemoved }: MediaLibraryGridProps) {
-  const [deletingId, setDeletingId] = useState<string | null>(null);
-  const [errorMessage, setErrorMessage] = useState<string | null>(null);
-
-  async function handleDelete(id: string) {
-    setDeletingId(id);
-    setErrorMessage(null);
-    try {
-      await mediaApi.remove(id);
-      onRemoved(id);
-    } catch (error) {
-      setErrorMessage(error instanceof ApiError ? error.message : "حذف فایل با خطا مواجه شد.");
-    } finally {
-      setDeletingId(null);
-    }
-  }
-
+export function MediaLibraryGrid({ items, canManage, onRequestDelete, deletingId }: MediaLibraryGridProps) {
   if (items.length === 0) {
     return <p className="biawin-media-empty">هنوز فایلی آپلود نشده است.</p>;
   }
 
   return (
     <div>
-      {errorMessage && (
-        <p role="alert" className="biawin-media-grid-error">
-          {errorMessage}
-        </p>
-      )}
       <ul className="biawin-media-grid">
         {items.map((asset) => (
           <li key={asset.id} className="biawin-media-card">
@@ -73,14 +53,16 @@ export function MediaLibraryGrid({ items, onRemoved }: MediaLibraryGridProps) {
                 {asset.width && asset.height ? `${asset.width}×${asset.height} · ` : ""}
                 {formatSize(asset.sizeBytes)} · {asset.mimeType}
               </span>
-              <button
-                type="button"
-                disabled={deletingId === asset.id}
-                onClick={() => handleDelete(asset.id)}
-                className="biawin-media-card-delete"
-              >
-                {deletingId === asset.id ? "در حال حذف…" : "حذف"}
-              </button>
+              {canManage && (
+                <button
+                  type="button"
+                  disabled={deletingId === asset.id}
+                  onClick={() => onRequestDelete(asset)}
+                  className="biawin-media-card-delete"
+                >
+                  {deletingId === asset.id ? "در حال حذف…" : "حذف"}
+                </button>
+              )}
             </div>
           </li>
         ))}
@@ -88,7 +70,6 @@ export function MediaLibraryGrid({ items, onRemoved }: MediaLibraryGridProps) {
 
       <style>{`
         .biawin-media-empty{font-family:${font.family};font-size:13px;color:${color.muted}}
-        .biawin-media-grid-error{font-family:${font.family};font-size:12px;font-weight:700;color:#c0392b;margin:0 0 12px}
         .biawin-media-grid{list-style:none;margin:0;padding:0;display:grid;grid-template-columns:repeat(auto-fill,minmax(180px,1fr));gap:16px;font-family:${font.family}}
         .biawin-media-card{border:1px solid ${color.line};border-radius:14px;overflow:hidden;background:${color.white}}
         .biawin-media-card-preview{aspect-ratio:1;background:${color.ice};display:flex;align-items:center;justify-content:center}

@@ -13,6 +13,8 @@ export interface MediaPickerFieldProps {
   onChange: (mediaAssetId: string | null, previewUrl: string | null) => void;
   disabled?: boolean;
   hint?: string;
+  /** The ORIGINAL reference points to an asset that no longer exists/is deleted (Stage 5.17-B) — shown explicitly instead of a silent "no image". */
+  unavailable?: boolean;
 }
 
 /**
@@ -24,7 +26,7 @@ export interface MediaPickerFieldProps {
  * 5.20's brief §18, since real static assets haven't been migrated into
  * MediaAsset yet for the seeded content.
  */
-export function MediaPickerField({ label, value, previewUrl, onChange, disabled, hint }: MediaPickerFieldProps) {
+export function MediaPickerField({ label, value, previewUrl, onChange, disabled, hint, unavailable }: MediaPickerFieldProps) {
   const [open, setOpen] = useState(false);
 
   return (
@@ -39,13 +41,22 @@ export function MediaPickerField({ label, value, previewUrl, onChange, disabled,
               event.currentTarget.style.display = "none";
             }}
           />
+        ) : unavailable ? (
+          <span className="biawin-media-picker-field-empty" role="alert">
+            تصویر قبلی در دسترس نیست
+          </span>
         ) : (
           <span className="biawin-media-picker-field-empty">تصویری انتخاب نشده است</span>
         )}
       </div>
+      {unavailable && (
+        <span role="alert" className="biawin-media-picker-field-warning">
+          تصویر قبلی این مورد حذف شده است و در سایت نمایش داده نمی‌شود. تا زمانی که تصویر جایگزین انتخاب نکنید یا مرجع را پاک نکنید، مرجع قبلی بدون تغییر می‌ماند و با ذخیره تغییر نمی‌کند.
+        </span>
+      )}
       <div className="biawin-media-picker-field-actions">
         <button type="button" disabled={disabled} onClick={() => setOpen(true)} className="biawin-media-picker-field-btn">
-          {value ? "تغییر تصویر" : "انتخاب تصویر"}
+          {unavailable ? "انتخاب تصویر جایگزین" : value ? "تغییر تصویر" : "انتخاب تصویر"}
         </button>
         {value && (
           <button
@@ -54,7 +65,7 @@ export function MediaPickerField({ label, value, previewUrl, onChange, disabled,
             onClick={() => onChange(null, null)}
             className="biawin-media-picker-field-btn biawin-media-picker-field-btn--ghost"
           >
-            حذف انتخاب
+            {unavailable ? "پاک‌کردن مرجع تصویر" : "حذف انتخاب"}
           </button>
         )}
       </div>
@@ -75,6 +86,7 @@ export function MediaPickerField({ label, value, previewUrl, onChange, disabled,
         .biawin-media-picker-field-btn{border:1px solid ${color.line};background:${color.white};color:${color.primary};border-radius:10px;padding:8px 14px;font-size:12px;font-weight:700;cursor:pointer;font-family:${font.family}}
         .biawin-media-picker-field-btn:disabled{opacity:.5;cursor:not-allowed}
         .biawin-media-picker-field-btn--ghost{color:#c0392b}
+        .biawin-media-picker-field-warning{font-size:11px;font-weight:700;color:#c0392b;line-height:1.7}
         .biawin-media-picker-field-hint{font-size:11px;font-weight:400;color:${color.muted}}
       `}</style>
     </div>
