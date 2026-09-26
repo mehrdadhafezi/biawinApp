@@ -218,3 +218,70 @@ describe('Stage 5.17-D orchestration helpers', () => {
     expect(report.every((r) => r.mode.length > 0)).toBe(true);
   });
 });
+
+// ---------------------------------------------------------------------------
+// Stage 5.17-E
+// ---------------------------------------------------------------------------
+import { FixtureRegistry } from '../../scripts/staging-qa/stage-5-17-c/qa-contract';
+import {
+  categoryDependency,
+  formatAuditResidue,
+  reorderListIsQaOnly,
+} from '../../scripts/staging-qa/stage-5-17-c/qa-orchestration';
+
+describe('Stage 5.17-E hardening helpers', () => {
+  const cats = (
+    activeId: string | null,
+    inactiveId: string | null,
+  ): Parameters<typeof categoryDependency>[0] => ({
+    activeId,
+    activeName: null,
+    inactiveId,
+    inactiveName: null,
+  });
+
+  it('a missing existing category is a NOT_RUN dependency, present ones are satisfied', () => {
+    expect(categoryDependency(cats(U1, U2), 'active')).toBeNull();
+    expect(categoryDependency(cats(U1, U2), 'inactive')).toBeNull();
+    expect(categoryDependency(cats(null, U2), 'active')).toMatch(
+      /no existing active category/,
+    );
+    expect(categoryDependency(cats(U1, null), 'inactive')).toMatch(
+      /no existing inactive category/,
+    );
+    expect(categoryDependency(cats(U1, null), 'active')).toBeNull();
+  });
+
+  it('reorderListIsQaOnly is false as soon as one real id is listed (or the list is empty)', () => {
+    const qa = new Set([U1, U2]);
+    expect(reorderListIsQaOnly([U1, U2], (id) => qa.has(id)).ok).toBe(true);
+    const mixed = reorderListIsQaOnly([U1, 'real-1'], (id) => qa.has(id));
+    expect(mixed.ok).toBe(false);
+    expect(mixed.realIds).toEqual(['real-1']);
+    expect(reorderListIsQaOnly([], () => true).ok).toBe(false);
+  });
+
+  it('audit residue lines report REMAINING rows and never claim they were cleaned', () => {
+    const lines = formatAuditResidue({
+      temporaryUsersCreated: 2,
+      temporaryUsersDeleted: 2,
+      auditRowsCreatedByTemporaryUsers: 7,
+      auditRowsRemaining: 7,
+    }).join('\n');
+    expect(lines).toContain('created: 2; deleted: 2');
+    expect(lines).toContain('created by temporary QA users: 7');
+    expect(lines).toContain('REMAINING after cleanup: 7');
+    expect(lines).toContain('NOT cleaned');
+  });
+
+  it('cleanup registration is idempotent: registering the same fixture twice keeps one entry and its cleanup state', () => {
+    const reg = new FixtureRegistry();
+    reg.register('m', 'media', U1, 'file');
+    reg.markCleanup('media', U1, 'OK', 'done');
+    const again = reg.register('m', 'media', U1, 'file');
+    expect(reg.all()).toHaveLength(1);
+    expect(again.cleanup).toBe('OK');
+    reg.markCleanup('media', U1, 'OK', 'done'); // a second teardown run is a no-op
+    expect(reg.failedCleanups()).toHaveLength(0);
+  });
+});

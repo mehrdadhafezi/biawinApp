@@ -308,3 +308,50 @@ export function tally(
 export function requiredTestIds(): string[] {
   return QA_TESTS.map((t) => t.id);
 }
+
+// ---------------------------------------------------------------------------
+// Stage 5.17-E — dependency + reorder pre-checks, audit-residue reporting
+// ---------------------------------------------------------------------------
+
+/** A test that needs an EXISTING catalog category is NOT_RUN (never FAIL) when there is none. `null` = satisfied. */
+export function categoryDependency(
+  categories: Manifest['categories'],
+  kind: 'active' | 'inactive',
+): string | null {
+  const id = kind === 'active' ? categories.activeId : categories.inactiveId;
+  return id
+    ? null
+    : `dependency not satisfied — no existing ${kind} category is available (categories are only read, never created)`;
+}
+
+/**
+ * The Admin UI reorder always sends the WHOLE displayed list. Reorder is only
+ * attempted when every listed id is a current-run QA row; otherwise the real
+ * rows it would carry make the request unsafe and the test is BLOCKED
+ * before any request is sent.
+ */
+export function reorderListIsQaOnly(
+  listedIds: readonly string[],
+  isQa: (id: string) => boolean,
+): { ok: boolean; realIds: string[] } {
+  const realIds = listedIds.filter((id) => !isQa(id));
+  return { ok: listedIds.length > 0 && realIds.length === 0, realIds };
+}
+
+export interface AuditResidue {
+  temporaryUsersCreated: number;
+  temporaryUsersDeleted: number;
+  /** Audit rows attributed to the temporary users, counted BEFORE the users were deleted (deletion nulls the actor, it does not delete the rows). */
+  auditRowsCreatedByTemporaryUsers: number;
+  /** Of those, how many still exist after cleanup (measured by row id, not inferred). */
+  auditRowsRemaining: number;
+}
+
+/** Report lines. Remaining audit rows are stated as REMAINING — never as cleaned. */
+export function formatAuditResidue(r: AuditResidue): string[] {
+  return [
+    `Temporary users created: ${r.temporaryUsersCreated}; deleted: ${r.temporaryUsersDeleted}`,
+    `Audit rows created by temporary QA users: ${r.auditRowsCreatedByTemporaryUsers}; REMAINING after cleanup: ${r.auditRowsRemaining} (admin_audit_logs is append-only — these rows are NOT cleaned and their actor is now null)`,
+    'Audit rows written by the seeded admin during fixture operations are not attributed or counted here and also remain.',
+  ];
+}

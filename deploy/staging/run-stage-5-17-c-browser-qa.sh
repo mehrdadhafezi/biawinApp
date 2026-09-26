@@ -71,7 +71,9 @@ control() { # $1 = setup|teardown|verify
 finalize() {
   [ "$FINALIZED" -eq 1 ] && return
   FINALIZED=1
-  trap - EXIT INT TERM
+  # Stage 5.17-E: once cleanup has begun, nothing may interrupt it — ignore further HUP/PIPE/INT/TERM.
+  trap '' HUP PIPE INT TERM
+  trap - EXIT
   [ -n "$TMP_ENVFILE" ] && rm -f "$TMP_ENVFILE"
   [ -n "$TMP_CONTEXT" ] && rm -rf "$TMP_CONTEXT"
   if [ "$SETUP_STARTED" -eq 1 ]; then
@@ -107,6 +109,9 @@ finalize() {
 }
 trap finalize EXIT
 trap 'FINAL_EXIT=130; exit 130' INT TERM
+# A dropped/cancelled SSH session delivers HUP (or PIPE on the next write): both must still reach finalize.
+trap 'FINAL_EXIT=129; exit 129' HUP
+trap 'FINAL_EXIT=141; exit 141' PIPE
 
 mkdir -p "$RUN_DIR"
 find "$RUN_DIR" -mindepth 1 -maxdepth 1 -exec rm -rf {} + 2>/dev/null

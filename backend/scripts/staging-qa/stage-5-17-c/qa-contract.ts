@@ -293,18 +293,47 @@ export function decideMutation(
 
   const reorder = /^\/admin\/home\/([^/]+)\/reorder$/.exec(path);
   if (reorder && HOME_RESOURCES.includes(reorder[1])) {
-    // The Admin UI always sends the WHOLE displayed list, so it touches real rows' updatedAt/updatedBy.
-    return input.allowReorderMetadataTouch
-      ? {
-          allow: true,
-          reason:
-            'reorder explicitly approved (real rows keep id/order/active/media; only updatedAt/updatedBy may change)',
-        }
-      : {
+    if (!input.allowReorderMetadataTouch)
+      return {
+        allow: false,
+        reason:
+          'reorder blocked unless STAGE517C_ALLOW_REORDER_METADATA_TOUCH=true',
+      };
+    // Stage 5.17-E: even with the flag, EVERY id in body.items must be a registered QA row of the
+    // matching resource. A whole-list reorder that contains a real Home row is never allowed.
+    if (method !== 'PATCH')
+      return { allow: false, reason: 'only PATCH is valid on reorder' };
+    const items = (input.body as { items?: unknown } | null | undefined)?.items;
+    if (!Array.isArray(items) || items.length === 0)
+      return {
+        allow: false,
+        reason: 'reorder body has no items (empty or malformed)',
+      };
+    const reorderType: FixtureType =
+      reorder[1] === 'news-articles'
+        ? 'news'
+        : reorder[1] === 'service-banners'
+          ? 'banner'
+          : reorder[1] === 'service-mosaic-tiles'
+            ? 'mosaic'
+            : 'hero';
+    for (const entry of items as Array<{ id?: unknown }>) {
+      const id = entry?.id;
+      if (!isUuid(id))
+        return {
           allow: false,
-          reason:
-            'reorder sends real rows too — blocked unless STAGE517C_ALLOW_REORDER_METADATA_TOUCH=true',
+          reason: 'reorder contains a malformed id',
         };
+      if (!registry.has(reorderType, id))
+        return {
+          allow: false,
+          reason: `reorder contains ${id}, which is not a QA fixture of this run (real Home rows are never reordered)`,
+        };
+    }
+    return {
+      allow: true,
+      reason: 'reorder of current-run QA fixtures only',
+    };
   }
 
   const create = new RegExp(`^/admin/home/(${HOME_RESOURCES.join('|')})$`).exec(
@@ -325,12 +354,15 @@ export function decideMutation(
         typeof v === 'string' &&
         (v.includes(run.tag) || v.startsWith(run.slugPrefix)),
     );
-    // Public exposure guard: a QA row is never created ACTIVE (the forms default to active=true, so a test must untick it).
-    if (body.active === true) {
+    // Public exposure guard (Stage 5.17-E): `active` must be EXPLICITLY false. The backend defaults a missing
+    // `active` to true, which would expose the QA row on the public Home.
+    if (body.active !== false) {
       return {
         allow: false,
         reason:
-          'create with active=true would expose a QA row on the public Home',
+          body.active === true
+            ? 'create with active=true would expose a QA row on the public Home'
+            : 'create without an explicit active=false (the backend default is true)',
       };
     }
     return carriesTag
@@ -357,6 +389,14 @@ export function decideMutation(
       return {
         allow: false,
         reason: `${method} is not a valid Home item mutation`,
+      };
+    if (
+      method === 'PUT' &&
+      (input.body as { active?: unknown } | null | undefined)?.active === true
+    )
+      return {
+        allow: false,
+        reason: 'activating a QA row would expose it on the public Home',
       };
     return registry.has(type, item[2])
       ? { allow: true, reason: `${method} of a QA ${type} row` }
@@ -853,8 +893,8 @@ export const QA_TESTS: readonly QaTestSpec[] = [
     id: 'ERR-01',
     area: 'errors',
     title:
-      'Row deleted elsewhere: toggle -> Persian 404 message and the list refetches',
-    klass: 'R',
+      'Row deleted elsewhere: toggle -> Persian 404 message and the list refetches (the activation PUT is stubbed: a real active=true request is never sent)',
+    klass: 'S',
     role: 'SUPER_ADMIN',
     fixtures: ['newsStale'],
   },
@@ -899,7 +939,8 @@ export const QA_TESTS: readonly QaTestSpec[] = [
   {
     id: 'REO-02',
     area: 'reorder',
-    title: 'Valid reorder of two QA rows, list refreshes, order restored',
+    title:
+      'Valid reorder of two QA rows, list refreshes, order restored (only when the displayed list contains QA rows exclusively; otherwise BLOCKED — real rows are never reordered)',
     klass: 'R',
     role: 'SUPER_ADMIN',
     fixtures: ['newsReorderA', 'newsReorderB'],

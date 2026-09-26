@@ -269,12 +269,14 @@ describe('mutation firewall (decideMutation)', () => {
     expect(
       d('PUT', `/admin/home/hero-cards/${REAL}`, { title: 'x' }).allow,
     ).toBe(false);
-    expect(d('POST', '/admin/home/hero-cards', { label: run.tag }).allow).toBe(
-      true,
-    ); // only a tagged create could ever pass
-    expect(d('POST', '/admin/home/hero-cards', { label: 'real' }).allow).toBe(
-      false,
-    );
+    expect(
+      d('POST', '/admin/home/hero-cards', { label: run.tag, active: false })
+        .allow,
+    ).toBe(true); // only a tagged, explicitly inactive create could ever pass
+    expect(
+      d('POST', '/admin/home/hero-cards', { label: 'real', active: false })
+        .allow,
+    ).toBe(false);
   });
 
   it('create must carry this run’s tag or slug prefix', () => {
@@ -282,31 +284,59 @@ describe('mutation firewall (decideMutation)', () => {
       d('POST', '/admin/home/news-articles', {
         kicker: run.tag,
         bodySlug: null,
+        active: false,
       }).allow,
     ).toBe(true);
     expect(
       d('POST', '/admin/home/news-articles', {
         bodySlug: makeQaBodySlug(run, 'x'),
+        active: false,
       }).allow,
-    ).toBe(true);
-    expect(
-      d('POST', '/admin/home/news-articles', { kicker: 'no tag' }).allow,
-    ).toBe(false);
-    expect(d('POST', '/admin/home/news-articles', undefined).allow).toBe(false);
-    // never create a QA row ACTIVE (would be public)
-    expect(
-      d('POST', '/admin/home/news-articles', { kicker: run.tag, active: true })
-        .allow,
-    ).toBe(false);
-    expect(
-      d('POST', '/admin/home/news-articles', { kicker: run.tag, active: false })
-        .allow,
     ).toBe(true);
     expect(
       d('POST', '/admin/home/news-articles', {
-        kicker: makeQaRun('1700000000000_aaaaaa').tag,
+        kicker: 'no tag',
+        active: false,
       }).allow,
     ).toBe(false);
+    expect(d('POST', '/admin/home/news-articles', undefined).allow).toBe(false);
+    expect(
+      d('POST', '/admin/home/news-articles', {
+        kicker: makeQaRun('1700000000000_aaaaaa').tag,
+        active: false,
+      }).allow,
+    ).toBe(false);
+  });
+
+  it('Stage 5.17-E: create requires an EXPLICIT active=false (missing / true / non-boolean are blocked)', () => {
+    for (const path of [
+      '/admin/home/news-articles',
+      '/admin/home/service-banners',
+      '/admin/home/service-mosaic-tiles',
+    ]) {
+      expect(d('POST', path, { kicker: run.tag, active: false }).allow).toBe(
+        true,
+      );
+      const missing = d('POST', path, { kicker: run.tag });
+      expect(missing.allow).toBe(false);
+      expect(missing.reason).toMatch(/explicit active=false/);
+      expect(d('POST', path, { kicker: run.tag, active: true }).allow).toBe(
+        false,
+      );
+      expect(d('POST', path, { kicker: run.tag, active: null }).allow).toBe(
+        false,
+      );
+      expect(d('POST', path, { kicker: run.tag, active: 'false' }).allow).toBe(
+        false,
+      );
+    }
+  });
+
+  it('Stage 5.17-E: a QA row can never be activated (PUT active=true blocked, active=false / other edits allowed)', () => {
+    const path = `/admin/home/news-articles/${U(1)}`;
+    expect(d('PUT', path, { active: true }).allow).toBe(false);
+    expect(d('PUT', path, { active: false }).allow).toBe(true);
+    expect(d('PUT', path, { title: 'x' }).allow).toBe(true);
   });
 
   it('media: upload allowed; delete only of a QA asset; nothing else', () => {
@@ -316,17 +346,58 @@ describe('mutation firewall (decideMutation)', () => {
     expect(d('PUT', `/admin/media/${U(3)}`).allow).toBe(false);
   });
 
-  it('reorder is blocked unless explicitly approved (the UI sends real rows too)', () => {
-    expect(
-      d('PATCH', '/admin/home/news-articles/reorder', { items: [] }).allow,
-    ).toBe(false);
-    expect(
-      d('PATCH', '/admin/home/news-articles/reorder', { items: [] }, true)
-        .allow,
-    ).toBe(true);
-    expect(
-      d('PATCH', '/admin/home/unknown-resource/reorder', {}, true).allow,
-    ).toBe(false);
+  describe('Stage 5.17-E: reorder only ever touches current-run QA fixtures', () => {
+    const path = '/admin/home/news-articles/reorder';
+    const items = (...ids: string[]) => ({
+      items: ids.map((id, i) => ({ id, sortOrder: i })),
+    });
+
+    it('is blocked without the flag, even for QA ids', () => {
+      expect(d('PATCH', path, items(U(1))).allow).toBe(false);
+    });
+
+    it('PASS: QA fixture ids with the flag', () => {
+      expect(d('PATCH', path, items(U(1)), true).allow).toBe(true);
+    });
+
+    it('FAIL: a real Home id is blocked even with the flag', () => {
+      const r = d('PATCH', path, items(REAL), true);
+      expect(r.allow).toBe(false);
+      expect(r.reason).toMatch(/real Home rows are never reordered/);
+    });
+
+    it('FAIL: mixed QA + real ids are blocked', () => {
+      expect(d('PATCH', path, items(U(1), REAL), true).allow).toBe(false);
+      expect(d('PATCH', path, items(REAL, U(1)), true).allow).toBe(false);
+    });
+
+    it('FAIL: empty / missing items are blocked', () => {
+      expect(d('PATCH', path, { items: [] }, true).allow).toBe(false);
+      expect(d('PATCH', path, {}, true).allow).toBe(false);
+      expect(d('PATCH', path, undefined, true).allow).toBe(false);
+      expect(d('PATCH', path, { items: 'x' }, true).allow).toBe(false);
+    });
+
+    it('FAIL: malformed ids are blocked', () => {
+      for (const id of ['not-a-uuid', '', 5, null, undefined])
+        expect(
+          d('PATCH', path, { items: [{ id, sortOrder: 0 }] }, true).allow,
+        ).toBe(false);
+      expect(d('PATCH', path, { items: [null] }, true).allow).toBe(false);
+    });
+
+    it('FAIL: a QA id of the WRONG resource type is blocked', () => {
+      // U(2) is a registered BANNER; reordering it under news-articles is not a QA news row
+      expect(d('PATCH', path, items(U(2)), true).allow).toBe(false);
+    });
+
+    it('FAIL: only PATCH is valid, and unknown resources stay blocked', () => {
+      expect(d('PUT', path, items(U(1)), true).allow).toBe(false);
+      expect(
+        d('PATCH', '/admin/home/unknown-resource/reorder', items(U(1)), true)
+          .allow,
+      ).toBe(false);
+    });
   });
 
   it('every catalog / unknown mutating endpoint is blocked', () => {

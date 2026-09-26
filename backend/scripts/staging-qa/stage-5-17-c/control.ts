@@ -61,6 +61,8 @@ import {
   RUN_FILES,
   assertValidBodySlug,
   countFirewallViolations,
+  formatAuditResidue,
+  type AuditResidue,
   envFlag,
   heroReport,
   mergeOutcomes,
@@ -189,6 +191,8 @@ async function adminLogin(): Promise<string> {
 interface Extras {
   storageKey?: string;
   bodySlug?: string;
+  /** admin-user only: audit row ids attributed to the temporary user, captured BEFORE it is deleted (deletion nulls the actor). */
+  auditRowIds?: string[];
 }
 interface StateFile {
   run: QaRun;
@@ -1153,8 +1157,22 @@ async function cleanupOne(
           false,
           "refusing: email does not carry this run's slug prefix",
         );
+      // Audit rows attributed to this user are counted (by id) BEFORE deletion: the FK is onDelete SetNull, so the rows
+      // stay but lose their actor. They are never deleted, and the report says they REMAIN.
+      const audit = await prisma.adminAuditLog.findMany({
+        where: { adminUserId: f.id },
+        select: { id: true },
+      });
+      reg.extras[`admin-user:${f.id}`] = {
+        ...reg.extras[`admin-user:${f.id}`],
+        auditRowIds: audit.map((a) => a.id),
+      };
+      reg.save();
       await prisma.adminUser.delete({ where: { id: f.id } });
-      return entry(true, 'temporary admin deleted');
+      return entry(
+        true,
+        `temporary admin deleted (${audit.length} audit row(s) remain, actor now null)`,
+      );
     }
     return entry(true, 'nothing to do');
   } catch (err) {
@@ -1452,6 +1470,29 @@ async function verify(): Promise<number> {
   if (browser?.crashed && verdict.status === 'PASS')
     Object.assign(verdict, { status: 'FAIL', exitCode: 1 });
 
+  const tempUsers = reg
+    ? reg.registry.all().filter((f) => f.type === 'admin-user')
+    : [];
+  const auditIds = tempUsers.flatMap(
+    (f) => reg?.extras[`admin-user:${f.id}`]?.auditRowIds ?? [],
+  );
+  let auditRemaining = auditIds.length; // conservative if the count cannot be taken: assume they all remain
+  try {
+    auditRemaining = auditIds.length
+      ? await prisma.adminAuditLog.count({ where: { id: { in: auditIds } } })
+      : 0;
+  } catch {
+    /* keep the conservative value */
+  }
+  const auditResidue: AuditResidue = {
+    temporaryUsersCreated: tempUsers.length,
+    temporaryUsersDeleted: tempUsers.filter(
+      (f) => !remaining.some((r) => r.type === 'admin_users' && r.id === f.id),
+    ).length,
+    auditRowsCreatedByTemporaryUsers: auditIds.length,
+    auditRowsRemaining: auditRemaining,
+  };
+
   const counts = tally(outcomes);
   const endedAt = new Date().toISOString();
   const report = {
@@ -1497,8 +1538,8 @@ async function verify(): Promise<number> {
       violations: countFirewallViolations(firewall),
       events: firewall.map((e) => ({ ...e, path: templatePath(e.path) })),
     },
-    auditResidue:
-      'admin_audit_logs rows written by fixture operations (and by temporary accounts, if enabled) are append-only and are NOT cleaned; they are not counted as fixtures.',
+    auditResidue,
+    auditResidueLines: formatAuditResidue(auditResidue),
   };
   writeJson(RUN_FILES.reportJson, report);
 
@@ -1565,7 +1606,8 @@ async function verify(): Promise<number> {
       `  BLOCKED [${e.testId}] ${e.method} ${templatePath(e.path)} — ${e.reason}`,
     );
   lines.push('');
-  lines.push(report.auditResidue);
+  lines.push('Audit residue (temporary QA users):');
+  for (const l of report.auditResidueLines) lines.push(`  ${l}`);
   const text = clean(lines.join('\n'));
   writeFileSync(p(RUN_FILES.reportTxt), text + '\n', 'utf8');
   console.log('\n' + text);

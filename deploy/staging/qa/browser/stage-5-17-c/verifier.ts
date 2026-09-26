@@ -43,6 +43,8 @@ import {
 import {
   RUN_FILES,
   analyzeReorderPayload,
+  categoryDependency,
+  reorderListIsQaOnly,
   deriveCapabilities,
   redact,
   screenshotName,
@@ -104,6 +106,12 @@ class Skip extends Error {
   ) {
     super(message);
   }
+}
+
+/** An existing catalog category is a prerequisite, not a subject of the test: missing => NOT_RUN (never FAIL). */
+function needCategory(kind: 'active' | 'inactive'): void {
+  const reason = categoryDependency(manifest.categories, kind);
+  if (reason) throw new Skip('NOT_RUN', reason);
 }
 
 function expect(cond: unknown, message: string): asserts cond {
@@ -657,7 +665,7 @@ async function main(): Promise<number> {
       await submitForm(page);
       await fieldError(page, 'دسته‌بندی').first().waitFor();
       await fieldError(page, 'متن کوتاه (kicker)').first().waitFor();
-      if (cats.activeId) await selectCategory(page, cats.activeId);
+      if (cats.activeId) await selectCategory(page, cats.activeId!); // needCategory("active") guarantees it
       await field(page, 'متن کوتاه (kicker)').fill(taggedText('k').padEnd(201, 'x'));
       await submitForm(page);
       const msg = await fieldError(page, 'متن کوتاه (kicker)').first().innerText();
@@ -667,10 +675,10 @@ async function main(): Promise<number> {
     });
 
     await runTest(spec('BAN-02'), asSuper, async (page) => {
-      expect(cats.activeId, 'no active category exists');
+      needCategory('active');
       await page.goto(`${ADMIN}${RESOURCE_PATH.banner.list}/new`);
       await waitLoaded(page);
-      await selectCategory(page, cats.activeId);
+      await selectCategory(page, cats.activeId!); // needCategory("active") guarantees it
       await field(page, 'متن کوتاه (kicker)').fill(taggedText('bannerUi'));
       await pickMedia(page, fx('mediaB').marker);
       await untickActive(page);
@@ -714,7 +722,7 @@ async function main(): Promise<number> {
     });
 
     await runTest(spec('BAN-05'), asSuper, async (page) => {
-      expect(cats.inactiveId, 'no inactive category exists');
+      needCategory('inactive');
       const real = (await adminList('banner')).find((x) => x.categoryId === cats.inactiveId && !String(x.kicker).includes(run.tag));
       if (!real) throw new Skip('NOT_RUN', 'no real banner references the inactive category — nothing to observe');
       const cap = await captureAndAbort(page, 'PUT', /\/admin\/home\/service-banners\//);
@@ -729,11 +737,11 @@ async function main(): Promise<number> {
     });
 
     await runTest(spec('BAN-06'), asSuper, async (page) => {
-      expect(cats.activeId, 'no active category exists');
+      needCategory('active');
       const cap = await stubError(page, 'POST', /\/admin\/home\/service-banners$/, 422, 'دسته‌بندی انتخاب‌شده معتبر نیست.');
       await page.goto(`${ADMIN}${RESOURCE_PATH.banner.list}/new`);
       await waitLoaded(page);
-      await selectCategory(page, cats.activeId);
+      await selectCategory(page, cats.activeId!); // needCategory("active") guarantees it
       await field(page, 'متن کوتاه (kicker)').fill(taggedText('ban422'));
       await untickActive(page);
       await submitForm(page);
@@ -762,7 +770,7 @@ async function main(): Promise<number> {
 
     // --------------------------------------------------------------- MOSAIC
     await runTest(spec('MOS-01'), asSuper, async (page) => {
-      expect(cats.activeId, 'no active category exists');
+      needCategory('active');
       const make = async (slot: 'half' | 'wide', title: string, lead: string, suffix: string): Promise<any> => {
         await page.goto(`${ADMIN}${RESOURCE_PATH.mosaic.list}/new`);
         await waitLoaded(page);
@@ -783,7 +791,7 @@ async function main(): Promise<number> {
     });
 
     await runTest(spec('MOS-02'), asSuper, async (page) => {
-      expect(cats.activeId, 'no active category exists');
+      needCategory('active');
       const cap = await captureAndAbort(page, 'POST', /\/admin\/home\/service-mosaic-tiles$/);
       await page.goto(`${ADMIN}${RESOURCE_PATH.mosaic.list}/new`);
       await waitLoaded(page);
@@ -791,7 +799,7 @@ async function main(): Promise<number> {
       await submitForm(page);
       await fieldError(page, 'متن کوتاه (kicker)').first().waitFor();
       await fieldError(page, 'دسته‌بندی').first().waitFor();
-      await selectCategory(page, cats.activeId);
+      await selectCategory(page, cats.activeId!); // needCategory("active") guarantees it
       await field(page, 'متن کوتاه (kicker)').fill('k'.repeat(201));
       await field(page, 'عنوان').fill('t'.repeat(201));
       await field(page, 'توضیح').fill('l'.repeat(501));
@@ -1115,10 +1123,15 @@ async function main(): Promise<number> {
       await rowOf(page, n.marker).first().waitFor();
       const gone = await apiJson('DELETE', `/api/v1/admin/home/news-articles/${n.id}`);
       expect(gone.status === 200 || gone.status === 204, `could not delete elsewhere: HTTP ${gone.status}`);
+      // The toggle sends {active:true}; a real activation request is never sent (firewall + safety audit U2), so the
+      // backend's 404 for the already-deleted row is stubbed with the same envelope. The row really is gone (checked below).
+      const cap = await stubError(page, 'PUT', new RegExp(`/admin/home/news-articles/${n.id}$`), 404, 'خبر موردنظر یافت نشد.');
       await rowOf(page, n.marker).locator('button.biawin-active-toggle').click();
       const shown = await expectAlert(page, 'ممکن است در جای دیگری حذف شده باشد');
+      expect(cap.count === 1 && cap.bodies[0]?.active === true, 'the toggle request was not the expected stubbed {active:true} PUT');
       await rowOf(page, n.marker).waitFor({ state: 'detached' });
-      return { shown };
+      expect((await adminGet('news', n.id)).status === 404, 'the row still exists');
+      return { shown, stubbed: true };
     });
 
     await runTest(spec('ERR-02'), asSuper, async (page) => {
@@ -1182,6 +1195,11 @@ async function main(): Promise<number> {
     await runTest(spec('REO-02'), asSuper, async (page) => {
       const a = fx('newsReorderA');
       const b = fx('newsReorderB');
+      // The UI sends the WHOLE list. The firewall (correctly) rejects any reorder containing a real Home row, so this
+      // test only runs when the displayed list holds current-run QA rows exclusively — otherwise it is BLOCKED BEFORE any request.
+      const listed = (await adminList('news')).map((x) => x.id as string);
+      const qaOnly = reorderListIsQaOnly(listed, (id) => registry.has('news', id));
+      if (!qaOnly.ok) throw new Skip('BLOCKED', `the news list contains ${qaOnly.realIds.length} real row(s); a whole-list UI reorder would include them and real Home rows are never reordered`);
       await openList(page, 'news');
       const order = async (): Promise<string[]> => (await adminList('news')).map((x) => x.id as string);
       const before = await order();
@@ -1290,6 +1308,23 @@ async function main(): Promise<number> {
   }
   return crashed ? 1 : 0;
 }
+
+// Stage 5.17-E: a hang-up / termination of this process must still flush the results and close the browser.
+// (Fixture cleanup itself is done by the wrapper's trap, which also handles HUP/PIPE; this only preserves the evidence.)
+let shuttingDown = false;
+for (const signal of ['SIGHUP', 'SIGTERM', 'SIGINT'] as const) {
+  process.on(signal, () => {
+    if (shuttingDown) return;
+    shuttingDown = true;
+    crashed = `terminated by ${signal}`;
+    log(`received ${signal} — writing results and closing the browser`);
+    writeResults();
+    Promise.all(contexts.map((c) => c.close().catch(() => undefined))).finally(() => process.exit(1));
+  });
+}
+process.on('SIGPIPE', () => {
+  /* a closed stdout must not kill the verifier before it writes its results */
+});
 
 main()
   .then((code) => {
