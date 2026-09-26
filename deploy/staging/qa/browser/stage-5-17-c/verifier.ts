@@ -368,6 +368,10 @@ function fieldError(page: Page, label: string): Locator {
 
 async function waitLoaded(page: Page): Promise<void> {
   await page.waitForLoadState('domcontentloaded');
+  // Real-staging finding (5.17-C first run): the route guard renders other content while it validates the session, during which
+  // the "loading…" text does not exist yet — waiting for it to be HIDDEN then returned immediately, before the page had mounted
+  // (pager/rows/forms looked absent). Wait for the page's own heading (or an error alert) to exist FIRST.
+  await page.locator('h1, [role="alert"]').first().waitFor({ timeout: 30_000 });
   await page.getByText('در حال بارگذاری…').first().waitFor({ state: 'hidden', timeout: 30_000 }).catch(() => undefined);
 }
 
@@ -377,7 +381,17 @@ async function openList(page: Page, r: Resource): Promise<void> {
   await page.locator('table.biawin-home-list-table, h1').first().waitFor();
 }
 
-const rowOf = (page: Page, text: string): Locator => page.locator('table.biawin-home-list-table tbody tr', { hasText: text });
+/**
+ * Real-staging finding: a QA tag/marker is NOT unique as a substring (`…newsStale` is a prefix of `…newsStale2`; strict-mode
+ * violation, 2 rows). Rows are therefore located by the fixture ID (the title cell links to `/…/<id>`) when the marker belongs
+ * to a manifest fixture, and otherwise by an EXACT title match — never by a substring of the tag.
+ */
+const rowOf = (page: Page, text: string): Locator => {
+  const rows = page.locator('table.biawin-home-list-table tbody tr');
+  const fixture = manifest.fixtures.find((f) => f.marker === text);
+  if (fixture) return rows.filter({ has: page.locator(`a[href$="/${fixture.id}"]`) });
+  return rows.filter({ has: page.locator('td.biawin-home-list-title', { hasText: new RegExp(`^\\s*${esc(text)}\\s*$`) }) });
+};
 
 async function untickActive(page: Page): Promise<void> {
   const box = page.getByLabel('فعال', { exact: true });
@@ -462,6 +476,9 @@ async function mediaPageLoad(page: Page): Promise<void> {
   await page.goto(`${ADMIN}/media`);
   await waitLoaded(page);
   await page.locator('h1', { hasText: 'کتابخانه رسانه' }).waitFor();
+  // The grid (or its empty state) and the pager render in the same pass, after the list request finished.
+  // Only then is "is there a pager?" a meaningful question (real-staging finding: MED-01 looked too early).
+  await page.locator('li.biawin-media-card, .biawin-media-empty').first().waitFor({ timeout: 30_000 });
 }
 
 /** Finds a media card by file name, paging forward when needed. */
