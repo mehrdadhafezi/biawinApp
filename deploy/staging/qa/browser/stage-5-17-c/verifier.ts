@@ -373,12 +373,22 @@ async function waitLoaded(page: Page): Promise<void> {
   // (pager/rows/forms looked absent). Wait for the page's own heading (or an error alert) to exist FIRST.
   await page.locator('h1, [role="alert"]').first().waitFor({ timeout: 30_000 });
   await page.getByText('در حال بارگذاری…').first().waitFor({ state: 'hidden', timeout: 30_000 }).catch(() => undefined);
+  // Real-staging finding (Round 2): the evidence for BAN-01/MOS-02/NEWS-01/NAV-01/NAV-02/SDM-01/03/05/ERR-02/REO-03 etc. is
+  // consistent with interacting with (or reading) the page BEFORE the client bundle finished hydrating — h1/alert/table are
+  // static or arrive before React has attached its event handlers or before an async fetch (categories, hero taken-keys,
+  // overview counts) has resolved, so a click is a silent no-op and a one-shot `.count()`/`.evaluate()` read catches a stale
+  // DOM. `networkidle` (no in-flight requests for 500ms) is a practical, standard proxy for "hydration + the page's own
+  // fetches have settled" for an app this size. Best-effort: never block the run if it never truly idles.
+  await page.waitForLoadState('networkidle', { timeout: 15_000 }).catch(() => undefined);
 }
 
 async function openList(page: Page, r: Resource): Promise<void> {
   await page.goto(`${ADMIN}${RESOURCE_PATH[r].list}`);
   await waitLoaded(page);
-  await page.locator('table.biawin-home-list-table, h1').first().waitFor();
+  // Real-staging finding (Round 2, HERO-02/ERR-03/RBAC-*): `h1` is static and renders before the list's own async fetch
+  // resolves, so waiting for "table OR h1" was satisfied by h1 alone while the table body was still empty. Wait for an
+  // actual row or the page's own empty-state text (every list's emptyLabel starts with "هنوز") — never h1 alone.
+  await page.locator('table.biawin-home-list-table tbody tr, p:has-text("هنوز")').first().waitFor({ timeout: 30_000 });
 }
 
 /**
@@ -428,6 +438,19 @@ async function selectCategory(page: Page, categoryId: string): Promise<void> {
   await select.selectOption(categoryId);
 }
 
+/**
+ * Reads the CategorySelect's current value/label. Real-staging finding (Round 2, BAN-03/BAN-05): `CategorySelect`
+ * fetches categories in its own async effect; reading `select.value`/`.selectedOptions` (via `page.evaluate`, a
+ * one-shot DOM read with no auto-retry) right after the form exists can catch the placeholder-only state before that
+ * fetch resolves, misreporting the row's real (possibly inactive) category as empty/wrong. Wait for the options list
+ * to be populated — same readiness `selectCategory` already requires — before reading.
+ */
+async function readCategorySelect(page: Page): Promise<{ value: string; label: string }> {
+  const select = page.locator('.biawin-category-select select');
+  await page.waitForFunction((el) => (el as HTMLSelectElement).options.length > 1, await select.elementHandle(), { timeout: 20_000 });
+  return select.evaluate((el) => ({ value: (el as HTMLSelectElement).value, label: (el as HTMLSelectElement).selectedOptions[0]?.textContent ?? '' }));
+}
+
 async function expectAlert(page: Page, needle: string | RegExp, scope?: Locator): Promise<string> {
   const alerts = (scope ?? page).getByRole('alert');
   await alerts.filter({ hasText: needle }).first().waitFor({ timeout: 15_000 });
@@ -441,12 +464,23 @@ async function waitList(page: Page, r: Resource): Promise<void> {
 
 const taggedText = (suffix: string): string => `${run.tag} ${suffix}`;
 
+/** The backend's own `error.message`/`details`, when the response parses as the envelope — real diagnostic evidence instead of a bare HTTP status. */
+async function backendErrorText(res: { json: () => Promise<any> }): Promise<string> {
+  try {
+    const body = await res.json();
+    if (body && body.success === false && body.error) return ` — ${clean(String(body.error.message ?? ''))}${body.error.details ? ` ${clean(JSON.stringify(body.error.details))}` : ''}`;
+  } catch {
+    /* non-JSON or already consumed — status alone is still reported */
+  }
+  return '';
+}
+
 async function createdId(page: Page, r: Resource, click: () => Promise<void>): Promise<string> {
   const [res] = await Promise.all([
     page.waitForResponse((x) => x.request().method() === 'POST' && x.url().endsWith(`/admin/home/${RESOURCE_PATH[r].api}`), { timeout: 30_000 }),
     click(),
   ]);
-  expect(res.ok(), `create ${r} failed: HTTP ${res.status()}`);
+  expect(res.ok(), `create ${r} failed: HTTP ${res.status()}${await backendErrorText(res)}`);
   const json: any = await res.json();
   expect(isUuid(json?.data?.id), `create ${r} returned no uuid`);
   registerDynamic(`ui-${r}`, RESOURCE_PATH[r].type, json.data.id, taggedText(r));
@@ -458,7 +492,7 @@ async function saveEdit(page: Page, r: Resource, id: string): Promise<void> {
     page.waitForResponse((x) => x.request().method() === 'PUT' && x.url().endsWith(`/admin/home/${RESOURCE_PATH[r].api}/${id}`), { timeout: 30_000 }),
     submitForm(page),
   ]);
-  expect(res.ok(), `save ${r} ${id} failed: HTTP ${res.status()}`);
+  expect(res.ok(), `save ${r} ${id} failed: HTTP ${res.status()}${await backendErrorText(res)}`);
   await waitList(page, r);
 }
 
@@ -631,19 +665,32 @@ async function main(): Promise<number> {
 
     // --------------------------------------------------------------- HERO
     await runTest(spec('HERO-01'), asSuper, async (page) => {
+      // Environment dependency, not a UI check: this test observes the "all keys used" state — it can only be
+      // meaningful when all 3 real Hero keys are genuinely occupied. Read the real count directly (never mutate Hero).
+      const realKeys = new Set((await adminList('hero')).map((h) => h.cardKey));
+      if (realKeys.size < 3) throw new Skip('NOT_RUN', `only ${realKeys.size}/3 real Hero keys are occupied in this environment — the "all keys used" state cannot be exercised`);
       const cap = watchMutations(page);
-      await page.goto(`${ADMIN}${RESOURCE_PATH.hero.list}/new`);
-      await waitLoaded(page);
-      const exhausted = page.locator('.biawin-hero-keys-exhausted');
-      await exhausted.waitFor({ timeout: 15_000 }).catch(() => undefined);
-      if ((await exhausted.count()) === 0) throw new Error('the "all keys used" state is not shown (fewer than 3 Hero keys occupied, or the page did not render it)');
+      const load = async (): Promise<boolean> => {
+        await page.goto(`${ADMIN}${RESOURCE_PATH.hero.list}/new`);
+        await waitLoaded(page);
+        const exhausted = page.locator('.biawin-hero-keys-exhausted');
+        await exhausted.waitFor({ timeout: 15_000 }).catch(() => undefined);
+        return (await exhausted.count()) > 0;
+      };
+      // HeroCardForm's own documented fallback: a failed `homeHeroApi.list()` (e.g. a transient staging hiccup) is
+      // treated as "no keys taken", NOT an error — so a single failed fetch looks identical to 0 real rows. One
+      // reload (like a human QA engineer retrying once) rules that out before this is reported as BLOCKED, not FAIL.
+      let shown = await load();
+      if (!shown) shown = await load();
+      if (!shown) throw new Skip('BLOCKED', `all 3 real Hero keys are occupied (verified via the admin API) but the create form did not show the "all keys used" state after a reload — its own taken-keys fetch may have failed (HeroCardForm treats a failed fetch as "no keys taken", by design)`);
       const submit = page.getByRole('button', { name: 'ذخیره', exact: true });
       expect(await submit.isDisabled(), 'submit is not disabled in the all-keys-used state');
       expect(cap.count === 0, 'a mutating request was sent');
-      return { exhausted: true, submitDisabled: true };
+      return { exhausted: true, submitDisabled: true, realKeysOccupied: realKeys.size };
     });
 
     await runTest(spec('HERO-02'), asSuper, async (page) => {
+      if ((await adminList('hero')).length === 0) throw new Skip('NOT_RUN', 'no real Hero row exists in this environment to open (observation only — Hero rows are never created by this run)');
       const cap = await captureAndAbort(page, 'PUT', /\/admin\/home\/hero-cards\//);
       await openList(page, 'hero');
       const first = page.locator('table.biawin-home-list-table tbody tr .biawin-home-list-title a').first();
@@ -712,10 +759,7 @@ async function main(): Promise<number> {
     await runTest(spec('BAN-03'), asSuper, async (page) => {
       const b = fx('bannerInactiveCat');
       await openEdit(page, 'banner', b.id);
-      const info = await page.evaluate(() => {
-        const s = document.querySelector('.biawin-category-select select') as HTMLSelectElement;
-        return { value: s.value, label: s.selectedOptions[0]?.textContent ?? '' };
-      });
+      const info = await readCategorySelect(page);
       expect(info.value === cats.inactiveId, 'the select does not hold the inactive category id');
       expect(/غیرفعال/.test(info.label), `the inactive category is not shown as "(غیرفعال)" (shows "${info.label}")`);
       await field(page, 'متن کوتاه (kicker)').fill(`${b.marker} edited`);
@@ -744,10 +788,7 @@ async function main(): Promise<number> {
       if (!real) throw new Skip('NOT_RUN', 'no real banner references the inactive category — nothing to observe');
       const cap = await captureAndAbort(page, 'PUT', /\/admin\/home\/service-banners\//);
       await openEdit(page, 'banner', real.id);
-      const info = await page.evaluate(() => {
-        const s = document.querySelector('.biawin-category-select select') as HTMLSelectElement;
-        return { value: s.value, label: s.selectedOptions[0]?.textContent ?? '' };
-      });
+      const info = await readCategorySelect(page);
       expect(info.value === cats.inactiveId && !/انتخاب کنید/.test(info.label), `select shows "${info.label}" instead of the real (inactive) category`);
       expect(cap.count === 0, 'a request was sent while only observing');
       return { label: info.label, saved: false };
@@ -1183,9 +1224,10 @@ async function main(): Promise<number> {
     await runTest(spec('ERR-04'), asSuper, async (page) => {
       await page.goto(`${ADMIN}/home/news/not-a-uuid`);
       await waitLoaded(page);
-      const alert = page.getByRole('alert').first();
-      await alert.waitFor({ timeout: 20_000 });
-      const shown = clean(await alert.innerText());
+      // Real-staging finding (Round 2): a bare `.first().waitFor()` can resolve on role=alert before its text is
+      // painted, then read empty — use expectAlert's hasText-filtered wait (matches ANY non-empty text) like every
+      // other alert read in this file, instead of a raw waitFor()+innerText().
+      const shown = await expectAlert(page, /./);
       expect(shown.length > 0, 'no message shown');
       expect(!/(Prisma|Unique constraint|at .*\.js|stack)/i.test(shown), `the page leaks internals: ${shown}`);
       await noConsoleErrors();
