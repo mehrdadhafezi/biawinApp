@@ -285,3 +285,119 @@ describe('Stage 5.17-E hardening helpers', () => {
     expect(reg.failedCleanups()).toHaveLength(0);
   });
 });
+
+// ---------------------------------------------------------------------------
+// Stage 5.17-F
+// ---------------------------------------------------------------------------
+import {
+  checkProvenanceChain,
+  type VerifierProvenanceReport,
+  type WrapperProvenance,
+} from '../../scripts/staging-qa/stage-5-17-c/qa-orchestration';
+
+describe('Stage 5.17-F checkProvenanceChain', () => {
+  const wrapper = (
+    overrides: Partial<WrapperProvenance> = {},
+  ): WrapperProvenance => ({
+    commitSha: 'abc123',
+    workflowSha: 'abc123',
+    sourceHashes: {
+      'verifier.ts': 'h1',
+      'qa-contract.ts': 'h2',
+      'qa-orchestration.ts': 'h3',
+    },
+    builtAt: '2026-01-01T00:00:00Z',
+    ...overrides,
+  });
+  const verifier = (
+    overrides: Partial<VerifierProvenanceReport> = {},
+  ): VerifierProvenanceReport => ({
+    commitSha: 'abc123',
+    workflowSha: 'abc123',
+    declaredHashes: {
+      'verifier.ts': 'h1',
+      'qa-contract.ts': 'h2',
+      'qa-orchestration.ts': 'h3',
+    },
+    computedHashes: {
+      'verifier.ts': 'h1',
+      'qa-contract.ts': 'h2',
+      'qa-orchestration.ts': 'h3',
+    },
+    mismatches: [],
+    ...overrides,
+  });
+
+  it('PASS: every leg of the chain agrees', () => {
+    const result = checkProvenanceChain(wrapper(), verifier(), 'abc123');
+    expect(result.ok).toBe(true);
+    expect(result.reasons).toEqual([]);
+    expect(result.chain).toEqual({
+      workflowSha: 'abc123',
+      serverSha: 'abc123',
+      verifierSha: 'abc123',
+      reportedSha: 'abc123',
+    });
+  });
+
+  it('PASS: a manual run (no workflow SHA) is not penalized for that leg', () => {
+    const result = checkProvenanceChain(
+      wrapper({ workflowSha: '' }),
+      verifier({ workflowSha: '' }),
+      'abc123',
+    );
+    expect(result.ok).toBe(true);
+  });
+
+  it('FAIL: workflow SHA disagrees with server SHA', () => {
+    const result = checkProvenanceChain(
+      wrapper({ workflowSha: 'zzz' }),
+      verifier(),
+      'abc123',
+    );
+    expect(result.ok).toBe(false);
+    expect(result.reasons.some((r) => r.includes('workflow SHA'))).toBe(true);
+  });
+
+  it('FAIL: server SHA disagrees with verifier-reported SHA', () => {
+    const result = checkProvenanceChain(
+      wrapper(),
+      verifier({ commitSha: 'other' }),
+      'abc123',
+    );
+    expect(result.ok).toBe(false);
+    expect(
+      result.reasons.some((r) => r.includes('verifier-reported SHA')),
+    ).toBe(true);
+  });
+
+  it('FAIL: the verifier itself detected a source hash mismatch', () => {
+    const result = checkProvenanceChain(
+      wrapper(),
+      verifier({ mismatches: ['verifier.ts'] }),
+      'abc123',
+    );
+    expect(result.ok).toBe(false);
+    expect(result.reasons.some((r) => r.includes('verifier.ts'))).toBe(true);
+  });
+
+  it('FAIL: the reported SHA in the final report disagrees with the server SHA', () => {
+    const result = checkProvenanceChain(wrapper(), verifier(), 'different-sha');
+    expect(result.ok).toBe(false);
+    expect(result.reasons.some((r) => r.includes('reported SHA'))).toBe(true);
+  });
+
+  it('FAIL: missing wrapper or verifier provenance is reported explicitly, not silently ignored', () => {
+    const noWrapper = checkProvenanceChain(null, verifier(), 'abc123');
+    expect(noWrapper.ok).toBe(false);
+    expect(
+      noWrapper.reasons.some((r) => r.includes('wrapper-provenance.json')),
+    ).toBe(true);
+
+    const noVerifier = checkProvenanceChain(wrapper(), null, 'abc123');
+    expect(noVerifier.ok).toBe(false);
+    expect(noVerifier.reasons.some((r) => r.includes('provenance.json'))).toBe(
+      true,
+    );
+  });
+});

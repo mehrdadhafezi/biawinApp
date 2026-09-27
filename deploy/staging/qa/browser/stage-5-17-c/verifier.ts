@@ -26,7 +26,9 @@
  *     and every string written passes through `redact()`.
  */
 import { chromium, type Browser, type BrowserContext, type Locator, type Page, type Route } from 'playwright';
+import { createHash } from 'node:crypto';
 import { appendFileSync, existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs';
+import { join } from 'node:path';
 import {
   FixtureBag,
   FixtureRegistry,
@@ -51,6 +53,8 @@ import {
   type BrowserOutcome,
   type FirewallEvent,
   type Manifest,
+  type VerifierProvenanceReport,
+  type WrapperProvenance,
 } from './qa-orchestration';
 
 // ---------------------------------------------------------------------------
@@ -602,7 +606,53 @@ const spec = (id: string): QaTestSpec => {
 // main
 // ===========================================================================
 
+// ---------------------------------------------------------------------------
+// Stage 5.17-F — commit provenance: prove this container's own files are what the
+// wrapper intended to ship, BEFORE logging in or creating anything.
+// ---------------------------------------------------------------------------
+
+function sha256File(path: string): string {
+  return createHash('sha256').update(readFileSync(path)).digest('hex');
+}
+
+/** Re-hashes this container's OWN copies of its 3 source files and compares them to what the wrapper declared it built (provenance.json, baked into the image next to this file). */
+function checkOwnProvenance(): VerifierProvenanceReport | null {
+  const path = join(__dirname, 'provenance.json');
+  if (!existsSync(path)) return null;
+  let declared: WrapperProvenance;
+  try {
+    declared = JSON.parse(readFileSync(path, 'utf8')) as WrapperProvenance;
+  } catch {
+    return null;
+  }
+  const files = ['verifier.ts', 'qa-contract.ts', 'qa-orchestration.ts'];
+  const computedHashes: Record<string, string> = {};
+  const mismatches: string[] = [];
+  for (const f of files) {
+    const computed = sha256File(join(__dirname, f));
+    computedHashes[f] = computed;
+    if (declared.sourceHashes[f] !== computed) mismatches.push(f);
+  }
+  return { commitSha: declared.commitSha, workflowSha: declared.workflowSha, declaredHashes: declared.sourceHashes, computedHashes, mismatches };
+}
+
 async function main(): Promise<number> {
+  const provenance = checkOwnProvenance();
+  writeFileSync(`${RUN_DIR}/${RUN_FILES.verifierProvenance}`, clean(JSON.stringify(provenance, null, 2)), 'utf8');
+  if (!provenance) {
+    crashed = 'provenance.json is missing or unreadable in this image — refusing to run (the wrapper did not embed build provenance, or this image predates Stage 5.17-F)';
+    log(`FATAL: ${crashed}`);
+    writeResults();
+    return 1;
+  }
+  if (provenance.mismatches.length > 0) {
+    crashed = `this container's own files do not match what the wrapper built (mismatched: ${provenance.mismatches.join(', ')}) — refusing to run (possible stale Docker cache)`;
+    log(`FATAL: ${crashed}`);
+    writeResults();
+    return 1;
+  }
+  log(`provenance OK — commit ${provenance.commitSha}${provenance.workflowSha ? ` (workflow ${provenance.workflowSha})` : ''}, source hashes verified`);
+
   if (!ADMIN_EMAIL || !ADMIN_PASSWORD) {
     log('no admin credentials in the environment — every test is BLOCKED');
     return 3;

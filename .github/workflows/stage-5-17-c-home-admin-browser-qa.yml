@@ -16,6 +16,11 @@ name: Stage 5.17-C — Home Admin Browser QA
 #
 # The report artifact is uploaded even when the run fails. If SSH itself fails, a controlled
 # failure report is produced instead of an empty artifact.
+#
+# Commit provenance (Stage 5.17-F): this job fails BEFORE running anything on staging if the
+# server checkout it just updated is not at `github.sha` (the commit this workflow dispatched
+# against). `github.sha` is also passed to the wrapper, which independently re-checks the same
+# thing server-side (STAGE517C_WORKFLOW_SHA) and records it in the report.
 on:
   workflow_dispatch:
     inputs:
@@ -55,22 +60,32 @@ jobs:
           ssh-private-key: ${{ secrets.STAGING_SSH_PRIVATE_KEY }}
 
       - name: Update server checkout (source tree only — does not restart any running container)
+        id: server_checkout
         run: |
           mkdir -p ~/.ssh
           ssh-keyscan -p "${{ secrets.STAGING_SSH_PORT }}" "${{ secrets.STAGING_SSH_HOST }}" >> ~/.ssh/known_hosts
-          ssh -p "${{ secrets.STAGING_SSH_PORT }}" "${{ secrets.STAGING_SSH_USER }}@${{ secrets.STAGING_SSH_HOST }}" \
-            "cd /srv/biawin-staging && git fetch origin main && git checkout main && git reset --hard origin/main && git rev-parse HEAD"
+          server_sha="$(ssh -p "${{ secrets.STAGING_SSH_PORT }}" "${{ secrets.STAGING_SSH_USER }}@${{ secrets.STAGING_SSH_HOST }}" \
+            "cd /srv/biawin-staging && git fetch origin main && git checkout main && git reset --hard origin/main && git rev-parse HEAD")"
+          echo "sha=$server_sha" >> "$GITHUB_OUTPUT"
+
+      - name: Guard — server checkout matches the dispatched commit
+        run: |
+          if [ "${{ steps.server_checkout.outputs.sha }}" != "${{ github.sha }}" ]; then
+            echo "::error::PROVENANCE MISMATCH: workflow dispatched against ${{ github.sha }} but the server checkout is at ${{ steps.server_checkout.outputs.sha }} — refusing to run Browser QA."
+            exit 1
+          fi
 
       - name: Run Home Admin Browser QA (setup, browser tests, cleanup, verification)
         env:
           ALLOW_REORDER: ${{ inputs.allow_reorder_metadata_touch }}
           PROVISION_ROLES: ${{ inputs.provision_temporary_roles }}
+          WORKFLOW_SHA: ${{ github.sha }}
         run: |
           # Only the literal strings 'true'/'false' are ever forwarded.
           reorder=false; [ "$ALLOW_REORDER" = "true" ] && reorder=true
           roles=false;   [ "$PROVISION_ROLES" = "true" ] && roles=true
           ssh -p "${{ secrets.STAGING_SSH_PORT }}" "${{ secrets.STAGING_SSH_USER }}@${{ secrets.STAGING_SSH_HOST }}" \
-            "cd /srv/biawin-staging && STAGE517C_ALLOW_REORDER_METADATA_TOUCH=$reorder STAGE517C_PROVISION_ROLES=$roles ./deploy/staging/run-stage-5-17-c-browser-qa.sh"
+            "cd /srv/biawin-staging && STAGE517C_ALLOW_REORDER_METADATA_TOUCH=$reorder STAGE517C_PROVISION_ROLES=$roles STAGE517C_WORKFLOW_SHA=$WORKFLOW_SHA ./deploy/staging/run-stage-5-17-c-browser-qa.sh"
 
       - name: Fetch sanitized report artifact from the server
         if: always()

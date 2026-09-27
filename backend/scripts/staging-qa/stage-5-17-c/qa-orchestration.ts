@@ -42,6 +42,8 @@ export const RUN_FILES = {
   checksumsBefore: 'stage-5.17-c-before.txt',
   checksumsAfter: 'stage-5.17-c-after.txt',
   screenshotsDir: 'screenshots',
+  wrapperProvenance: 'wrapper-provenance.json', // written by run-stage-5-17-c-browser-qa.sh BEFORE the verifier image is built — the server's own account of what it shipped
+  verifierProvenance: 'provenance.json', // written by verifier.ts at startup — the container's own account of what it actually contains
 } as const;
 
 // ---------------------------------------------------------------------------
@@ -354,4 +356,103 @@ export function formatAuditResidue(r: AuditResidue): string[] {
     `Audit rows created by temporary QA users: ${r.auditRowsCreatedByTemporaryUsers}; REMAINING after cleanup: ${r.auditRowsRemaining} (admin_audit_logs is append-only — these rows are NOT cleaned and their actor is now null)`,
     'Audit rows written by the seeded admin during fixture operations are not attributed or counted here and also remain.',
   ];
+}
+
+// ---------------------------------------------------------------------------
+// Stage 5.17-F — commit provenance chain (fail-closed)
+//
+// Four points must agree before a run is trusted:
+//   1. workflow SHA    — what GitHub Actions dispatched against (github.sha)
+//   2. server SHA       — `git rev-parse HEAD` on the server checkout, captured by the
+//                          wrapper BEFORE it copies any file into the Docker build context
+//   3. verifier SHA      — proven, not assumed: the wrapper hashes the exact 3 source files
+//                          it copies into the build context (wrapper-provenance.json); the
+//                          running verifier container independently re-hashes its OWN copies
+//                          of those same files on disk and compares (provenance.json). A
+//                          mismatch here means the image does not contain what the wrapper
+//                          intended to ship (a stale Docker cache layer, a broken copy step).
+//   4. reported SHA       — the commit value written into the final report — must be the
+//                          same string as (2), since both come from the one COMMIT_SHA the
+//                          wrapper computed and threaded through everywhere.
+// ---------------------------------------------------------------------------
+
+export interface WrapperProvenance {
+  commitSha: string;
+  /** Empty string for a manual (non-workflow) run — that leg of the chain is then not checked. */
+  workflowSha: string;
+  sourceHashes: Record<string, string>;
+  builtAt: string;
+}
+
+export interface VerifierProvenanceReport {
+  commitSha: string;
+  workflowSha: string;
+  declaredHashes: Record<string, string>;
+  computedHashes: Record<string, string>;
+  /** File names whose computed hash did not match the declared one — empty means the verifier's own files are proven to match what the wrapper shipped. */
+  mismatches: string[];
+}
+
+export interface ProvenanceChainResult {
+  ok: boolean;
+  reasons: string[];
+  chain: {
+    workflowSha: string;
+    serverSha: string;
+    verifierSha: string;
+    reportedSha: string;
+  };
+}
+
+/**
+ * Cross-checks the four points. `reportedSha` is passed separately (rather than re-read from
+ * the report itself) so this stays a pure function of already-known values — the caller is the
+ * one place that knows what it actually put in the report.
+ */
+export function checkProvenanceChain(
+  wrapper: WrapperProvenance | null,
+  verifier: VerifierProvenanceReport | null,
+  reportedSha: string,
+): ProvenanceChainResult {
+  const reasons: string[] = [];
+  const workflowSha = wrapper?.workflowSha ?? '';
+  const serverSha = wrapper?.commitSha ?? '';
+  const verifierSha = verifier?.commitSha ?? '';
+
+  if (!wrapper) {
+    reasons.push(
+      'wrapper-provenance.json is missing — the server-side commit/hash record was never written (setup did not reach that point, or an older wrapper ran it)',
+    );
+  }
+  if (!verifier) {
+    reasons.push(
+      'provenance.json (from the verifier container) is missing — the browser verifier never ran, or ran before this feature existed',
+    );
+  }
+  if (wrapper && workflowSha && workflowSha !== serverSha) {
+    reasons.push(
+      `workflow SHA (${workflowSha}) != server checkout SHA (${serverSha}) — the server checkout was not updated to the commit the workflow dispatched against`,
+    );
+  }
+  if (wrapper && verifier && serverSha !== verifierSha) {
+    reasons.push(
+      `server checkout SHA (${serverSha}) != verifier-reported SHA (${verifierSha}) — the verifier container was built from a different commit than the server checkout`,
+    );
+  }
+  if (verifier && verifier.mismatches.length > 0) {
+    reasons.push(
+      `verifier source hash mismatch for: ${verifier.mismatches.join(', ')} — the running container's files do not match what the wrapper intended to ship (possible stale Docker cache)`,
+    );
+  }
+  if (serverSha && reportedSha && serverSha !== reportedSha) {
+    reasons.push(
+      `server checkout SHA (${serverSha}) != reported SHA (${reportedSha}) — the final report does not reflect the commit that was actually executed`,
+    );
+  }
+
+  return {
+    ok: reasons.length === 0,
+    reasons,
+    chain: { workflowSha, serverSha, verifierSha, reportedSha },
+  };
 }

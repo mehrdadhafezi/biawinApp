@@ -60,6 +60,7 @@ import {
 import {
   RUN_FILES,
   assertValidBodySlug,
+  checkProvenanceChain,
   countFirewallViolations,
   formatAuditResidue,
   type AuditResidue,
@@ -73,6 +74,8 @@ import {
   type FirewallEvent,
   type Manifest,
   type ManifestFixture,
+  type VerifierProvenanceReport,
+  type WrapperProvenance,
 } from './qa-orchestration';
 
 // ---------------------------------------------------------------------------
@@ -1381,6 +1384,17 @@ async function verify(): Promise<number> {
   const browser = readJson<BrowserResults>(RUN_FILES.browserResults);
   const firewall = readJson<FirewallEvent[]>(RUN_FILES.firewallEvents) ?? [];
   const manifest = readJson<Manifest>(RUN_FILES.manifest);
+  const wrapperProvenance = readJson<WrapperProvenance>(
+    RUN_FILES.wrapperProvenance,
+  );
+  const verifierProvenance = readJson<VerifierProvenanceReport>(
+    RUN_FILES.verifierProvenance,
+  );
+  const provenanceCheck = checkProvenanceChain(
+    wrapperProvenance,
+    verifierProvenance,
+    COMMIT_SHA,
+  );
 
   // ---- AFTER evidence — never skipped because something earlier failed ----
   let after: Snapshot | null = null;
@@ -1469,6 +1483,14 @@ async function verify(): Promise<number> {
     verdict.reasons.push(`browser verifier crashed: ${browser.crashed}`);
   if (browser?.crashed && verdict.status === 'PASS')
     Object.assign(verdict, { status: 'FAIL', exitCode: 1 });
+  // Stage 5.17-F: a broken provenance chain makes every other result untrustworthy —
+  // fails the run regardless of what the 46-test matrix otherwise reports.
+  if (!provenanceCheck.ok) {
+    for (const r of provenanceCheck.reasons)
+      verdict.reasons.push(`provenance: ${r}`);
+    if (verdict.status === 'PASS')
+      Object.assign(verdict, { status: 'FAIL', exitCode: 1 });
+  }
 
   const tempUsers = reg
     ? reg.registry.all().filter((f) => f.type === 'admin-user')
@@ -1500,6 +1522,7 @@ async function verify(): Promise<number> {
     runId: reg?.run.runId ?? null,
     tag: reg?.run.tag ?? null,
     commitSha: COMMIT_SHA,
+    provenance: provenanceCheck,
     startedAt: setupResult?.startedAt ?? null,
     endedAt,
     apiOrigin: manifest?.apiOrigin ?? BROWSER_API_ORIGIN,
@@ -1550,6 +1573,11 @@ async function verify(): Promise<number> {
   );
   lines.push(`Started: ${report.startedAt} | Ended: ${endedAt}`);
   lines.push(`Admin: ${report.adminOrigin} | API: ${report.apiOrigin}`);
+  lines.push(
+    `Commit provenance: workflow=${provenanceCheck.chain.workflowSha || '(manual run)'} server=${provenanceCheck.chain.serverSha || 'unknown'} verifier=${provenanceCheck.chain.verifierSha || 'unknown'} reported=${provenanceCheck.chain.reportedSha} — ${provenanceCheck.ok ? 'OK' : 'MISMATCH'}`,
+  );
+  for (const r of provenanceCheck.reasons)
+    lines.push(`  PROVENANCE ISSUE: ${r}`);
   lines.push(`VERDICT: ${verdict.status} (exit ${verdict.exitCode})`);
   for (const r of verdict.reasons) lines.push(`  - ${r}`);
   lines.push('');

@@ -27,6 +27,14 @@
 # Secrets: ADMIN_SEED_EMAIL/ADMIN_SEED_PASSWORD reach the backend containers via the normal
 # compose env_file and the browser container via a 0600 --env-file (never a CLI argument, never
 # echoed, deleted on exit). Every report is redacted before it is written.
+#
+# Commit provenance (Stage 5.17-F): STAGE517C_WORKFLOW_SHA, when the caller (the GitHub workflow)
+# sets it, is the commit the workflow dispatched against (`github.sha`). This script refuses to
+# run — before touching anything — if the server checkout is not at that exact commit. It also
+# hashes the 3 source files it is about to ship into the verifier image and writes that alongside
+# the commit into wrapper-provenance.json; the verifier independently re-hashes its own copies of
+# those files at startup (provenance.json) and refuses to run if they disagree. `control.js verify`
+# cross-checks both files and prints all of workflow/server/verifier/reported SHA in the report.
 set -uo pipefail
 
 REPO_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
@@ -49,11 +57,20 @@ die() { echo "[stage-5.17-c][ERROR] $*" >&2; exit 1; }
 [ -f "$ENV_FILE" ] || die "$ENV_FILE not found — this must be run on the staging server, from the repo checkout that has the real secrets file."
 
 COMMIT_SHA="$(git -C "$REPO_DIR" rev-parse HEAD 2>/dev/null || echo unknown)"
+WORKFLOW_SHA="${STAGE517C_WORKFLOW_SHA:-}"
 TMP_CONTEXT=""
 TMP_ENVFILE=""
 SETUP_STARTED=0
 FINALIZED=0
 FINAL_EXIT=1
+
+# Fail closed BEFORE any staging resource is touched: if the caller told us which commit the
+# workflow dispatched against and the server checkout disagrees, this run's evidence would be
+# worthless (exactly the confusion Stage 5.17-F was opened to investigate — an artifact reporting
+# an older commit than the one that was meant to be tested).
+if [ -n "$WORKFLOW_SHA" ] && [ "$WORKFLOW_SHA" != "$COMMIT_SHA" ]; then
+  die "PROVENANCE MISMATCH: the workflow dispatched against $WORKFLOW_SHA but this server checkout (/srv/biawin-staging) is at $COMMIT_SHA. Refusing to run — nothing on staging was touched. Re-run the server checkout step (git fetch && git reset --hard origin/main) or re-trigger the workflow."
+fi
 
 control() { # $1 = setup|teardown|verify
   $COMPOSE run --rm \
@@ -90,7 +107,8 @@ finalize() {
   rm -rf "$ARTIFACT_DIR"
   mkdir -p "$ARTIFACT_DIR"
   for f in stage-5-17-c-report.txt stage-5-17-c-report.json stage-5.17-c-before.txt stage-5.17-c-after.txt \
-           remaining-fixtures.json cleanup.json firewall-events.json browser-results.json setup-result.json; do
+           remaining-fixtures.json cleanup.json firewall-events.json browser-results.json setup-result.json \
+           wrapper-provenance.json provenance.json; do
     [ -f "$RUN_DIR/$f" ] && cp "$RUN_DIR/$f" "$ARTIFACT_DIR/$f"
   done
   [ -d "$RUN_DIR/screenshots" ] && cp -r "$RUN_DIR/screenshots" "$ARTIFACT_DIR/screenshots"
@@ -138,6 +156,30 @@ cp "$BROWSER_DIR/stage-5-17-c/verifier.ts" "$TMP_CONTEXT/stage-5-17-c/verifier.t
 # The REAL tested contract replaces the committed typecheck shims — one implementation, no duplicated safety logic.
 cp "$REPO_DIR/backend/scripts/staging-qa/stage-5-17-c/qa-contract.ts" "$TMP_CONTEXT/stage-5-17-c/qa-contract.ts"
 cp "$REPO_DIR/backend/scripts/staging-qa/stage-5-17-c/qa-orchestration.ts" "$TMP_CONTEXT/stage-5-17-c/qa-orchestration.ts"
+
+# Stage 5.17-F — hash exactly the bytes just copied into the build context (not the source tree
+# again, so this also catches a `cp` gone wrong), embed them + the commit into the image itself
+# (provenance.json rides along with the existing `COPY stage-5-17-c ./stage-5-17-c`), and keep a
+# copy on the shared run volume so `control.js verify` can read it without touching the image.
+hash_file() { sha256sum "$1" | cut -d' ' -f1; }
+VERIFIER_TS_HASH="$(hash_file "$TMP_CONTEXT/stage-5-17-c/verifier.ts")"
+QA_CONTRACT_HASH="$(hash_file "$TMP_CONTEXT/stage-5-17-c/qa-contract.ts")"
+QA_ORCH_HASH="$(hash_file "$TMP_CONTEXT/stage-5-17-c/qa-orchestration.ts")"
+cat > "$TMP_CONTEXT/stage-5-17-c/provenance.json" <<JSON
+{
+  "commitSha": "$COMMIT_SHA",
+  "workflowSha": "$WORKFLOW_SHA",
+  "sourceHashes": {
+    "verifier.ts": "$VERIFIER_TS_HASH",
+    "qa-contract.ts": "$QA_CONTRACT_HASH",
+    "qa-orchestration.ts": "$QA_ORCH_HASH"
+  },
+  "builtAt": "$(date -u +%Y-%m-%dT%H:%M:%SZ)"
+}
+JSON
+mkdir -p "$RUN_DIR"
+cp "$TMP_CONTEXT/stage-5-17-c/provenance.json" "$RUN_DIR/wrapper-provenance.json"
+
 docker build -f "$TMP_CONTEXT/Dockerfile.stage-5-17-c" -t biawin-stage-5-17-c-browser-qa:latest "$TMP_CONTEXT" \
   || die "failed to build the verifier image"
 
@@ -151,6 +193,9 @@ if [ "$setup_exit" -eq 0 ]; then
   TMP_ENVFILE="$(mktemp)"
   chmod 600 "$TMP_ENVFILE"
   grep -E '^(ADMIN_SEED_EMAIL|ADMIN_SEED_PASSWORD)=' "$ENV_FILE" > "$TMP_ENVFILE"
+  # No commit/workflow SHA is passed as an env var here on purpose: the verifier's ONLY source of
+  # truth for its own provenance is provenance.json baked into the image at build time (above) —
+  # an env var would be a second, independently-spoofable/driftable channel for the same fact.
   docker run --rm \
     --env-file "$TMP_ENVFILE" \
     -e STAGE517C_RUN_DIR=/run \
