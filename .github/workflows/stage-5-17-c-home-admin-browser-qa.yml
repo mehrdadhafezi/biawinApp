@@ -76,21 +76,26 @@ jobs:
         with:
           ssh-private-key: ${{ secrets.STAGING_SSH_PRIVATE_KEY }}
 
-      - name: Update server checkout (source tree only — does not restart any running container)
-        id: server_checkout
+      # Stage 5.17-H: ONE step, no step output. The remote half (deploy/staging/lib/stage-5-17-c-remote-checkout.sh,
+      # streamed from THIS commit's checkout) updates the server tree and compares its HEAD with github.sha
+      # ON THE SERVER, reporting only through its exit code. Everything git prints ("From github.com/…",
+      # "Already on 'main'", "(use "git pull" …)") is plain job-log output — it is never captured into a
+      # variable or written to $GITHUB_OUTPUT (capturing it there is what broke run 36431345860 with
+      # "Unable to process file command 'output'"). ssh's exit status is the job's status: any failure,
+      # including a checkout at any commit other than github.sha (exit 42), fails the job here.
+      - name: Update server checkout and verify it is at github.sha (source tree only — does not restart any running container)
+        env:
+          WORKFLOW_SHA: ${{ github.sha }}
         run: |
+          set -euo pipefail
+          case "$WORKFLOW_SHA" in
+            *[!0-9a-f]* | "") echo "::error::github.sha is not a lowercase hex commit id"; exit 1 ;;
+          esac
+          [ "${#WORKFLOW_SHA}" -eq 40 ] || { echo "::error::github.sha is not 40 characters"; exit 1; }
           mkdir -p ~/.ssh
           ssh-keyscan -p "${{ secrets.STAGING_SSH_PORT }}" "${{ secrets.STAGING_SSH_HOST }}" >> ~/.ssh/known_hosts
-          server_sha="$(ssh -p "${{ secrets.STAGING_SSH_PORT }}" "${{ secrets.STAGING_SSH_USER }}@${{ secrets.STAGING_SSH_HOST }}" \
-            "cd /srv/biawin-staging && git fetch origin main && git checkout main && git reset --hard origin/main && git rev-parse HEAD")"
-          echo "sha=$server_sha" >> "$GITHUB_OUTPUT"
-
-      - name: Guard — server checkout matches the dispatched commit
-        run: |
-          if [ "${{ steps.server_checkout.outputs.sha }}" != "${{ github.sha }}" ]; then
-            echo "::error::PROVENANCE MISMATCH: workflow dispatched against ${{ github.sha }} but the server checkout is at ${{ steps.server_checkout.outputs.sha }} — refusing to run Browser QA."
-            exit 1
-          fi
+          ssh -p "${{ secrets.STAGING_SSH_PORT }}" "${{ secrets.STAGING_SSH_USER }}@${{ secrets.STAGING_SSH_HOST }}" \
+            "bash -s -- $WORKFLOW_SHA" < deploy/staging/lib/stage-5-17-c-remote-checkout.sh
 
       - name: Run Home Admin Browser QA (setup, browser tests, cleanup, verification)
         env:
