@@ -14,13 +14,18 @@ name: Stage 5.17-C — Home Admin Browser QA
 # _USER / _PRIVATE_KEY). ADMIN_SEED_EMAIL/ADMIN_SEED_PASSWORD are NOT GitHub secrets: they
 # stay in the server's own deploy/staging/.env.staging and never reach this workflow.
 #
-# The report artifact is uploaded even when the run fails. If SSH itself fails, a controlled
-# failure report is produced instead of an empty artifact.
-#
 # Commit provenance (Stage 5.17-F): this job fails BEFORE running anything on staging if the
 # server checkout it just updated is not at `github.sha` (the commit this workflow dispatched
 # against). `github.sha` is also passed to the wrapper, which independently re-checks the same
 # thing server-side (STAGE517C_WORKFLOW_SHA) and records it in the report.
+#
+# Run isolation (Stage 5.17-G): every execution writes to its OWN server directory,
+# /tmp/stage-5-17-c/run-<run_id>-<run_attempt>/, created fresh by the wrapper (a plain mkdir that
+# fails if it exists). This workflow fetches EXACTLY that path — never a shared/fixed one — into a
+# brand-new local directory, and validates the artifact against THIS run's github.run_id/attempt and
+# github.sha (deploy/staging/qa/validate-stage-5-17-c-artifact.js) before anything is uploaded. An
+# artifact that does not provably belong to this execution is NOT uploaded as a result: an
+# INVALID-ARTIFACT.txt explaining why is uploaded instead and the job fails.
 on:
   workflow_dispatch:
     inputs:
@@ -33,11 +38,23 @@ on:
         type: boolean
         default: false
 
+permissions:
+  contents: read
+
 jobs:
   browser-qa:
     runs-on: ubuntu-latest
     timeout-minutes: 60
+    env:
+      # One identity for this execution, used for the server directory, the wrapper, the fetch and the validation.
+      RUN_TOKEN: ${{ github.run_id }}-${{ github.run_attempt }}
     steps:
+      # Only to get the artifact validator that belongs to the dispatched commit (checkout is at github.sha).
+      - name: Checkout (validator script only)
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ github.sha }}
+
       - name: Guard — required secrets present
         run: |
           missing=0
@@ -84,32 +101,57 @@ jobs:
           # Only the literal strings 'true'/'false' are ever forwarded.
           reorder=false; [ "$ALLOW_REORDER" = "true" ] && reorder=true
           roles=false;   [ "$PROVISION_ROLES" = "true" ] && roles=true
+          # `bash <script>` — never `./<script>`: the wrapper must not depend on the file's executable bit,
+          # which `git reset --hard` on the server restores to whatever mode git tracks (it was 100644).
           ssh -p "${{ secrets.STAGING_SSH_PORT }}" "${{ secrets.STAGING_SSH_USER }}@${{ secrets.STAGING_SSH_HOST }}" \
-            "cd /srv/biawin-staging && STAGE517C_ALLOW_REORDER_METADATA_TOUCH=$reorder STAGE517C_PROVISION_ROLES=$roles STAGE517C_WORKFLOW_SHA=$WORKFLOW_SHA ./deploy/staging/run-stage-5-17-c-browser-qa.sh"
+            "cd /srv/biawin-staging && STAGE517C_ALLOW_REORDER_METADATA_TOUCH=$reorder STAGE517C_PROVISION_ROLES=$roles STAGE517C_WORKFLOW_SHA=$WORKFLOW_SHA STAGE517C_WORKFLOW_RUN_ID=$RUN_TOKEN bash ./deploy/staging/run-stage-5-17-c-browser-qa.sh"
 
-      - name: Fetch sanitized report artifact from the server
+      # Exactly THIS run's directory. If the run step failed before creating it, this fails to copy
+      # anything — which is the correct, honest outcome (see the validation step).
+      - name: Fetch this run's artifact from the server
         if: always()
         run: |
-          mkdir -p stage-5-17-c-artifacts
+          rm -rf stage-5-17-c-artifacts-raw stage-5-17-c-artifacts
+          mkdir stage-5-17-c-artifacts-raw stage-5-17-c-artifacts
           scp -r -P "${{ secrets.STAGING_SSH_PORT }}" \
-            "${{ secrets.STAGING_SSH_USER }}@${{ secrets.STAGING_SSH_HOST }}:/tmp/stage-5-17-c/artifact/." \
-            stage-5-17-c-artifacts/ || echo "::warning::the report artifact could not be fetched (SSH/scp failure or no report was written)"
+            "${{ secrets.STAGING_SSH_USER }}@${{ secrets.STAGING_SSH_HOST }}:/tmp/stage-5-17-c/run-${RUN_TOKEN}/artifact/." \
+            stage-5-17-c-artifacts-raw/ || echo "::warning::no artifact could be fetched from /tmp/stage-5-17-c/run-${RUN_TOKEN}/artifact (the wrapper did not get as far as creating it, or SSH/scp failed)"
 
-      - name: Controlled failure report (only when no report could be fetched)
+      - name: Validate the artifact belongs to THIS run before upload
         if: always()
         run: |
-          if [ ! -f stage-5-17-c-artifacts/stage-5-17-c-report.txt ]; then
+          set +e
+          if [ -z "$(ls -A stage-5-17-c-artifacts-raw 2>/dev/null)" ]; then
             {
               echo "Stage 5.17-C Home Admin Browser QA — CONTROLLED FAILURE REPORT"
-              echo "Run: ${{ github.run_id }} / attempt ${{ github.run_attempt }}   Commit: ${{ github.sha }}"
-              echo "VERDICT: FAIL (no report was produced on the server, or it could not be fetched over SSH)"
-              echo "Tests: not evaluated. Cleanup/leftover status: UNKNOWN — inspect /tmp/stage-5-17-c on the server before trusting staging data."
+              echo "Workflow run: ${RUN_TOKEN}   Commit: ${{ github.sha }}"
+              echo "VERDICT: FAIL — no artifact was produced by THIS execution (nothing exists at /tmp/stage-5-17-c/run-${RUN_TOKEN}/artifact on the server)."
+              echo "Nothing from any other run was substituted. Tests: not evaluated. Cleanup/leftover status: UNKNOWN — inspect /tmp/stage-5-17-c/run-${RUN_TOKEN} on the server before trusting staging data."
               echo "Stage 5.17 is NOT closed by this run."
             } > stage-5-17-c-artifacts/CONTROLLED-FAILURE.txt
+            echo "::error::no artifact from this execution"
+            exit 1
           fi
+          node deploy/staging/qa/validate-stage-5-17-c-artifact.js stage-5-17-c-artifacts-raw \
+            --workflow-sha "${{ github.sha }}" --workflow-run-id "${RUN_TOKEN}" > validation-result.json
+          status=$?
+          cat validation-result.json
+          if [ "$status" -eq 0 ]; then
+            cp -r stage-5-17-c-artifacts-raw/. stage-5-17-c-artifacts/
+            echo "artifact validated for workflow run ${RUN_TOKEN} at ${{ github.sha }}"
+            exit 0
+          fi
+          # NOT uploaded as a result: only the reasons are.
+          {
+            echo "INVALID ARTIFACT — this is NOT the result of workflow run ${RUN_TOKEN} (commit ${{ github.sha }})."
+            echo "The files fetched for this run failed validation and were NOT uploaded:"
+            cat validation-result.json
+          } > stage-5-17-c-artifacts/INVALID-ARTIFACT.txt
+          echo "::error::artifact failed run-isolation validation — see INVALID-ARTIFACT.txt"
+          exit 1
 
       # Everything uploaded was redacted on the server (JWTs, bearer tokens, the admin password,
-      # DB URLs). state.json / roles.json / raw snapshots are never copied into the artifact.
+      # DB URLs) and validated above. state.json / roles.json / raw snapshots are never copied.
       - name: Upload sanitized Browser QA report
         if: always()
         uses: actions/upload-artifact@v4

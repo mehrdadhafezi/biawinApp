@@ -43,8 +43,19 @@ ENV_FILE="$REPO_DIR/deploy/staging/.env.staging"
 COMPOSE="docker compose -f $COMPOSE_FILE --env-file $ENV_FILE"
 BROWSER_DIR="$REPO_DIR/deploy/staging/qa/browser"
 
-RUN_DIR="${STAGE517C_REPORT_DIR:-/tmp/stage-5-17-c}"
-ARTIFACT_DIR="$RUN_DIR/artifact"
+# shellcheck source=lib/stage-5-17-c-run-dir.sh
+. "$REPO_DIR/deploy/staging/lib/stage-5-17-c-run-dir.sh"
+
+# Stage 5.17-G — EVERY execution gets its own, freshly created directory (never a shared, reused one).
+# The token is the GitHub run id + attempt when dispatched by the workflow (which fetches exactly that
+# path), otherwise a unique manual token. RUN_DIR stays empty until it has really been created, so
+# `finalize` can never stage an artifact out of — or write inside — a directory this run does not own.
+REPORT_BASE="${STAGE517C_REPORT_BASE:-/tmp/stage-5-17-c}"
+WORKFLOW_RUN_ID="${STAGE517C_WORKFLOW_RUN_ID:-}"
+RUN_TOKEN="$(default_run_token "$WORKFLOW_RUN_ID")"
+RUN_DIR=""
+ARTIFACT_DIR=""
+STARTED_AT="$(date -u +%Y-%m-%dT%H:%M:%SZ)"
 ALLOW_REORDER="${STAGE517C_ALLOW_REORDER_METADATA_TOUCH:-false}"
 PROVISION_ROLES="${STAGE517C_PROVISION_ROLES:-false}"
 ADMIN_ORIGIN="${STAGE517C_ADMIN_ORIGIN:-https://admin-staging.biawin.ir}"
@@ -103,21 +114,43 @@ finalize() {
     log "setup never started — nothing to clean up"
     FINAL_EXIT=1
   fi
-  # Sanitized artifact: reports, checksums, screenshots, results. NEVER state.json / roles.json / before|after.json.
-  rm -rf "$ARTIFACT_DIR"
-  mkdir -p "$ARTIFACT_DIR"
-  for f in stage-5-17-c-report.txt stage-5-17-c-report.json stage-5.17-c-before.txt stage-5.17-c-after.txt \
-           remaining-fixtures.json cleanup.json firewall-events.json browser-results.json setup-result.json \
-           wrapper-provenance.json provenance.json; do
-    [ -f "$RUN_DIR/$f" ] && cp "$RUN_DIR/$f" "$ARTIFACT_DIR/$f"
-  done
-  [ -d "$RUN_DIR/screenshots" ] && cp -r "$RUN_DIR/screenshots" "$ARTIFACT_DIR/screenshots"
-  rm -f "$RUN_DIR/roles.json"
-  echo
-  log "===================================================================="
-  log "Report:       $ARTIFACT_DIR/stage-5-17-c-report.txt"
-  log "Screenshots:  $ARTIFACT_DIR/screenshots/"
-  log "===================================================================="
+  if [ -n "$RUN_DIR" ]; then
+    # Sanitized artifact: reports, checksums, screenshots, results — copied ONLY from this run's own
+    # directory into a directory created here (plain mkdir: it cannot already exist).
+    # NEVER state.json / roles.json / before|after.json.
+    mkdir "$ARTIFACT_DIR" || log "WARNING: could not create $ARTIFACT_DIR"
+    for f in stage-5-17-c-report.txt stage-5-17-c-report.json stage-5.17-c-before.txt stage-5.17-c-after.txt \
+             remaining-fixtures.json cleanup.json firewall-events.json browser-results.json setup-result.json \
+             wrapper-provenance.json provenance.json run-manifest.json; do
+      [ -f "$RUN_DIR/$f" ] && cp "$RUN_DIR/$f" "$ARTIFACT_DIR/$f"
+    done
+    [ -d "$RUN_DIR/screenshots" ] && cp -r "$RUN_DIR/screenshots" "$ARTIFACT_DIR/screenshots"
+    rm -f "$RUN_DIR/roles.json"
+    # The final manifest is written LAST and states, from this execution's own files, which run/commit
+    # the artifact belongs to. The workflow refuses to upload an artifact that disagrees with its own
+    # github.run_id / github.sha / this manifest (see qa/validate-stage-5-17-c-artifact.js).
+    RUNTIME_RUN_ID="$(sed -n 's/.*"runId": *"\([^"]*\)".*/\1/p' "$RUN_DIR/setup-result.json" 2>/dev/null | head -1)"
+    VERIFIER_COMMIT="$(sed -n 's/.*"commitSha": *"\([^"]*\)".*/\1/p' "$RUN_DIR/provenance.json" 2>/dev/null | head -1)"
+    cat > "$ARTIFACT_DIR/artifact-manifest.json" <<JSON
+{
+  "workflowSha": "$WORKFLOW_SHA",
+  "workflowRunId": "$WORKFLOW_RUN_ID",
+  "serverSha": "$COMMIT_SHA",
+  "verifierCommitSha": "${VERIFIER_COMMIT:-}",
+  "runId": "${RUNTIME_RUN_ID:-}",
+  "runToken": "$RUN_TOKEN",
+  "startedAt": "$STARTED_AT",
+  "finalizedAt": "$(date -u +%Y-%m-%dT%H:%M:%SZ)",
+  "finalExit": $FINAL_EXIT
+}
+JSON
+    echo
+    log "===================================================================="
+    log "Run directory: $RUN_DIR"
+    log "Report:        $ARTIFACT_DIR/stage-5-17-c-report.txt"
+    log "Screenshots:   $ARTIFACT_DIR/screenshots/"
+    log "===================================================================="
+  fi
   if [ "$FINAL_EXIT" -eq 0 ]; then
     log "Home Admin Browser QA PASSED — every required test PASS, cleanup verified, 0 fixtures remain, checksums and Home baseline unchanged."
   else
@@ -131,9 +164,21 @@ trap 'FINAL_EXIT=130; exit 130' INT TERM
 trap 'FINAL_EXIT=129; exit 129' HUP
 trap 'FINAL_EXIT=141; exit 141' PIPE
 
-mkdir -p "$RUN_DIR"
-find "$RUN_DIR" -mindepth 1 -maxdepth 1 -exec rm -rf {} + 2>/dev/null
-chmod 777 "$RUN_DIR"   # the backend/playwright containers write here as their own users
+# Fresh, unique, never-reused (a plain `mkdir` that fails if the directory exists). The previous
+# `find … rm -rf … 2>/dev/null` "clean" silently ignored failures on root-owned files and is gone.
+RUN_DIR="$(fresh_run_dir "$REPORT_BASE" "$RUN_TOKEN")" || die "could not create a fresh run directory under $REPORT_BASE"
+ARTIFACT_DIR="$RUN_DIR/artifact"
+cat > "$RUN_DIR/run-manifest.json" <<JSON
+{
+  "workflowSha": "$WORKFLOW_SHA",
+  "workflowRunId": "$WORKFLOW_RUN_ID",
+  "serverSha": "$COMMIT_SHA",
+  "runToken": "$RUN_TOKEN",
+  "startedAt": "$STARTED_AT",
+  "runDir": "$RUN_DIR"
+}
+JSON
+log "run directory: $RUN_DIR (fresh; nothing from any previous run can be in it)"
 
 cd "$REPO_DIR"
 

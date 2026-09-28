@@ -545,7 +545,8 @@ const startedAt = new Date().toISOString();
 let crashed: string | undefined;
 
 function writeResults(): void {
-  const payload = { outcomes, startedAt, endedAt: new Date().toISOString(), crashed };
+  // runId (Stage 5.17-G): the identity of THIS execution, taken from the manifest control.js wrote for it — so a stale results file can never pass as current.
+  const payload = { runId: manifest.runId, outcomes, startedAt, endedAt: new Date().toISOString(), crashed };
   writeFileSync(`${RUN_DIR}/${RUN_FILES.browserResults}`, clean(JSON.stringify(payload, null, 2)), 'utf8');
   writeFileSync(`${RUN_DIR}/${RUN_FILES.firewallEvents}`, clean(JSON.stringify(firewallEvents, null, 2)), 'utf8');
 }

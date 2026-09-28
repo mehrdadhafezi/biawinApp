@@ -61,6 +61,7 @@ import {
   RUN_FILES,
   assertValidBodySlug,
   checkProvenanceChain,
+  checkRunIdConsistency,
   countFirewallViolations,
   formatAuditResidue,
   type AuditResidue,
@@ -499,8 +500,16 @@ function qaPng(): Buffer {
 async function setup(): Promise<number> {
   mkdirSync(`${RUN_DIR}/${RUN_FILES.screenshotsDir}`, { recursive: true });
   const startedAt = new Date().toISOString();
+  // The runtime run id is generated HERE, before anything can block, so even a BLOCKED setup-result.json
+  // carries the identity of THIS execution (Stage 5.17-G) — never a value from a previous run.
+  const run = makeQaRun(makeRunId(Date.now(), randomBytes(3).toString('hex')));
   const blocked = (reason: string): number => {
-    writeJson(RUN_FILES.setupResult, { status: 'BLOCKED', reason, startedAt });
+    writeJson(RUN_FILES.setupResult, {
+      status: 'BLOCKED',
+      reason,
+      startedAt,
+      runId: run.runId,
+    });
     log(`BLOCKED: ${reason}`);
     return 3;
   };
@@ -510,7 +519,6 @@ async function setup(): Promise<number> {
       'ADMIN_SEED_EMAIL/ADMIN_SEED_PASSWORD are not available to the container (no credentials — nothing was created)',
     );
 
-  const run = makeQaRun(makeRunId(Date.now(), randomBytes(3).toString('hex')));
   const reg = new PersistentRegistry(run, startedAt);
   reg.save(); // an (empty) state exists from the very start, so teardown always has something to read
   log(`run ${run.runId}; tag ${run.tag}; slug prefix ${run.slugPrefix}`);
@@ -933,6 +941,7 @@ async function setup(): Promise<number> {
   writeJson(RUN_FILES.manifest, manifest); // ids/tags/slugs only — never secrets
   writeJson(RUN_FILES.setupResult, {
     status: 'READY',
+    runId: run.runId,
     startedAt,
     fixtureCount: fixtures.length,
     fixtureErrors: Object.keys(errors).length,
@@ -1355,6 +1364,8 @@ async function findRemaining(
 // ===========================================================================
 
 interface BrowserResults {
+  /** Written by the verifier from its own manifest (Stage 5.17-G) — must equal this run's runtime run id. */
+  runId?: string;
   outcomes: BrowserOutcome[];
   startedAt?: string;
   endedAt?: string;
@@ -1367,6 +1378,7 @@ async function verify(): Promise<number> {
     status: string;
     reason?: string;
     startedAt?: string;
+    runId?: string;
   }>(RUN_FILES.setupResult);
   const blockedReason =
     setupResult?.status === 'BLOCKED'
@@ -1491,6 +1503,29 @@ async function verify(): Promise<number> {
     if (verdict.status === 'PASS')
       Object.assign(verdict, { status: 'FAIL', exitCode: 1 });
   }
+  // Stage 5.17-G: every per-run file must carry THIS execution's runtime run id.
+  const runIdCheck = checkRunIdConsistency(
+    reg?.run.runId ?? setupResult?.runId ?? null,
+    [
+      { file: RUN_FILES.setupResult, runId: setupResult?.runId },
+      {
+        file: RUN_FILES.browserResults,
+        runId: browser ? (browser.runId ?? null) : undefined,
+        optional: true,
+      },
+      {
+        file: RUN_FILES.manifest,
+        runId: manifest ? (manifest.runId ?? null) : undefined,
+        optional: true,
+      },
+    ],
+  );
+  if (!runIdCheck.ok) {
+    for (const r of runIdCheck.reasons)
+      verdict.reasons.push(`run isolation: ${r}`);
+    if (verdict.status === 'PASS')
+      Object.assign(verdict, { status: 'FAIL', exitCode: 1 });
+  }
 
   const tempUsers = reg
     ? reg.registry.all().filter((f) => f.type === 'admin-user')
@@ -1523,6 +1558,7 @@ async function verify(): Promise<number> {
     tag: reg?.run.tag ?? null,
     commitSha: COMMIT_SHA,
     provenance: provenanceCheck,
+    runIsolation: runIdCheck,
     startedAt: setupResult?.startedAt ?? null,
     endedAt,
     apiOrigin: manifest?.apiOrigin ?? BROWSER_API_ORIGIN,

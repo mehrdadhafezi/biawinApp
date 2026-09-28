@@ -456,3 +456,44 @@ export function checkProvenanceChain(
     chain: { workflowSha, serverSha, verifierSha, reportedSha },
   };
 }
+
+// ---------------------------------------------------------------------------
+// Stage 5.17-G — run isolation: every per-run file must carry THIS run's runId
+// ---------------------------------------------------------------------------
+
+export interface RunIdEntry {
+  file: string;
+  runId: string | null | undefined;
+  /** An absent file is acceptable (e.g. the browser never ran); a file that IS present must still match. */
+  optional?: boolean;
+}
+
+/**
+ * `expected` is the runtime run id of the current execution (from its own state file). A file that
+ * carries a different run id is leftover from another run; a file that carries none cannot be proven
+ * to belong to this run. Neither is ever accepted silently.
+ */
+export function checkRunIdConsistency(
+  expected: string | null,
+  entries: readonly RunIdEntry[],
+): { ok: boolean; reasons: string[] } {
+  const reasons: string[] = [];
+  if (!expected) {
+    reasons.push(
+      'this execution has no runtime run id (no state file) — no per-run file can be proven to belong to it',
+    );
+    return { ok: false, reasons };
+  }
+  for (const e of entries) {
+    if (e.runId === undefined && e.optional) continue;
+    if (!e.runId)
+      reasons.push(
+        `${e.file} carries no runId — it cannot be proven to belong to run ${expected}`,
+      );
+    else if (e.runId !== expected)
+      reasons.push(
+        `${e.file} belongs to run ${e.runId}, not the current run ${expected} — stale file from a previous execution`,
+      );
+  }
+  return { ok: reasons.length === 0, reasons };
+}
