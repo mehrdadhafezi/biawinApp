@@ -327,3 +327,44 @@ describe('Stage 5.17-G checkRunIdConsistency (control.js verify)', () => {
     );
   });
 });
+
+// ---------------------------------------------------------------------------
+// Stage 5.17-G — summarizeError (diagnostic-detail preservation)
+// ---------------------------------------------------------------------------
+import { summarizeError } from '../../scripts/staging-qa/stage-5-17-c/qa-orchestration';
+
+describe('Stage 5.17-G summarizeError', () => {
+  it('CONFIRMED regression case: keeps the locator detail a real Playwright timeout carries on later lines', () => {
+    const playwrightTimeout = [
+      'locator.waitFor: Timeout 20000ms exceeded.',
+      'Call log:',
+      '  - waiting for locator(\'table.biawin-home-list-table tbody tr, p:has-text("هنوز")\').first()',
+      '    - locator resolved to hidden <tr></tr>',
+    ].join('\n');
+    const oldBehavior = playwrightTimeout.split('\n')[0];
+    expect(oldBehavior).not.toContain('waiting for locator');
+
+    const fixed = summarizeError(playwrightTimeout);
+    expect(fixed).toContain('Timeout 20000ms exceeded');
+    expect(fixed).toContain('waiting for locator');
+    expect(fixed).toContain('biawin-home-list-table');
+    expect(fixed).not.toContain('\n');
+  });
+
+  it('collapses newlines/whitespace into a single line', () => {
+    expect(summarizeError('a\n\n  b\tc  \n d')).toBe('a b c d');
+  });
+
+  it('caps pathologically long messages instead of blowing up the report', () => {
+    const long = 'x'.repeat(1000);
+    const out = summarizeError(long, 50);
+    expect(out.length).toBe(51); // 50 chars + the ellipsis marker
+    expect(out.endsWith('…')).toBe(true);
+  });
+
+  it('leaves a short single-line message unchanged', () => {
+    expect(summarizeError('save news abc failed: HTTP 422')).toBe(
+      'save news abc failed: HTTP 422',
+    );
+  });
+});

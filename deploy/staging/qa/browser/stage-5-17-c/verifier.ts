@@ -50,6 +50,7 @@ import {
   deriveCapabilities,
   redact,
   screenshotName,
+  summarizeError,
   type BrowserOutcome,
   type FirewallEvent,
   type Manifest,
@@ -577,7 +578,7 @@ async function runTest(spec: QaTestSpec, context: () => Promise<BrowserContext>,
       outcome.detail = clean(err.message);
     } else {
       outcome.status = 'FAIL';
-      outcome.detail = clean(err instanceof Error ? err.message.split('\n')[0] : String(err));
+      outcome.detail = clean(err instanceof Error ? summarizeError(err.message) : String(err));
       if (blockedThisTest.length > 0) outcome.detail += ` | firewall blocked: ${blockedThisTest.join('; ')}`;
     }
   } finally {

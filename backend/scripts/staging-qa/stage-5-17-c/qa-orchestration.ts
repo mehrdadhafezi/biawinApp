@@ -497,3 +497,25 @@ export function checkRunIdConsistency(
   }
   return { ok: reasons.length === 0, reasons };
 }
+
+// ---------------------------------------------------------------------------
+// Stage 5.17-G — preserve enough of a thrown error to classify it later
+// ---------------------------------------------------------------------------
+
+/**
+ * Confirmed verifier defect (Stage 5.17-G forensic report, docs/STAGE-5.17-G-FAILURE-
+ * CLASSIFICATION.md): Playwright's own timeout errors are MULTI-LINE — e.g.
+ * "locator.waitFor: Timeout 20000ms exceeded.\nCall log:\n  - waiting for locator('...')
+ *  to be visible" — and the line carrying the actual locator/selector is never the first
+ * one. Keeping only `message.split('\n')[0]` (every runTest catch block before this fix)
+ * discarded exactly the detail needed to tell WHICH element timed out, making every
+ * generic "Timeout Nms exceeded" failure unclassifiable after the fact. This collapses
+ * the WHOLE message onto one line (so the report stays one line per test) instead of
+ * truncating it, capped only so a pathological message can't blow up the report.
+ */
+export function summarizeError(message: string, maxLen = 600): string {
+  const collapsed = message.replace(/\s+/g, ' ').trim();
+  return collapsed.length > maxLen
+    ? `${collapsed.slice(0, maxLen)}…`
+    : collapsed;
+}
